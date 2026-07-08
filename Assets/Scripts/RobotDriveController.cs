@@ -6,7 +6,12 @@ public class RobotDriveController : MonoBehaviour
 {
     [Header("Movement Settings")]
     public float moveSpeed = 15f;
-    public float turnSpeed = 10f;
+    public float turnSpeed = 120f; // degrees per second at full stick
+
+    [Header("Turn Pivots (local space — set by the Fix Robot Drive Collider tool)")]
+    [SerializeField] private Vector3 leftPivotOffset;   // Left drivetrain rail center
+    [SerializeField] private Vector3 rightPivotOffset;  // Right drivetrain rail center
+    [SerializeField] private Vector3 centerOffset;      // Chassis center (used when driving straight)
 
     [Header("Input Actions")]
     [SerializeField] private InputActionReference leftJoystickAction;
@@ -15,6 +20,9 @@ public class RobotDriveController : MonoBehaviour
     private Rigidbody rb;
     private Vector2 leftStickInput;
     private Vector2 rightStickInput;
+
+    // Below this stick magnitude we don't consider the robot to be turning.
+    private const float TurnDeadzone = 0.05f;
 
     void Awake()
     {
@@ -28,12 +36,11 @@ public class RobotDriveController : MonoBehaviour
         rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
 
-        // Pivot turns around the chassis center. The imported drivetrain is offset from
-        // this object's origin, so the auto-computed center of mass sits off to one side;
-        // anchor it to the chassis BoxCollider's center instead (added by the Fix Robot
-        // Collider editor tool). Falls back to the implicit COM if no box is present yet.
-        BoxCollider chassis = GetComponent<BoxCollider>();
-        if (chassis != null) rb.centerOfMass = chassis.center;
+        // Turning rotates the body about its center of mass, so we steer the pivot by
+        // moving the center of mass between the two drivetrain rails (see FixedUpdate).
+        // Start centered for driving straight. The pivot offsets are filled in by the
+        // Fix Robot Drive Collider editor tool; until then they're zero (pivots at origin).
+        rb.centerOfMass = centerOffset;
     }
 
     void OnEnable()
@@ -70,9 +77,15 @@ public class RobotDriveController : MonoBehaviour
         Vector3 desired = transform.forward * (forwardInput * moveSpeed);
         rb.linearVelocity = new Vector3(desired.x, rb.linearVelocity.y, desired.z);
 
-        // Turn Left/Right
-        float turn = turnInput * turnSpeed;
-        Quaternion turnRotation = Quaternion.Euler(0f, turn * Time.fixedDeltaTime, 0f);
-        rb.MoveRotation(rb.rotation * turnRotation);
+        // Turn by spinning about the inner drivetrain rail: move the center of mass to the
+        // rail on the side we're turning toward, then apply angular velocity. Physics
+        // rotation pivots about the center of mass, so the robot pivots on that wheel
+        // (and arcs when also driving forward). Centered when going straight.
+        if (turnInput > TurnDeadzone) rb.centerOfMass = rightPivotOffset;
+        else if (turnInput < -TurnDeadzone) rb.centerOfMass = leftPivotOffset;
+        else rb.centerOfMass = centerOffset;
+
+        // If the robot turns the wrong way, negate this term (and the pivot sides still match).
+        rb.angularVelocity = new Vector3(0f, turnInput * turnSpeed * Mathf.Deg2Rad, 0f);
     }
 }
