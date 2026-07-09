@@ -81,9 +81,17 @@ public class RobotDriveController : MonoBehaviour
         // rail on the side we're turning toward, then apply angular velocity. Physics
         // rotation pivots about the center of mass, so the robot pivots on that wheel
         // (and arcs when also driving forward). Centered when going straight.
+        bool turning = turnInput > TurnDeadzone || turnInput < -TurnDeadzone;
+
         if (turnInput > TurnDeadzone) rb.centerOfMass = rightPivotOffset;
         else if (turnInput < -TurnDeadzone) rb.centerOfMass = leftPivotOffset;
         else rb.centerOfMass = centerOffset;
+
+        // Lock the heading (freeze yaw) when driving straight so the off-center chassis dragging
+        // on the ground can't leak a bit of rotation and drift the robot sideways. Free the yaw
+        // axis only while actively turning.
+        RigidbodyConstraints keepUpright = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+        rb.constraints = turning ? keepUpright : keepUpright | RigidbodyConstraints.FreezeRotationY;
 
         // If the robot turns the wrong way, negate this term (and the pivot sides still match).
         rb.angularVelocity = new Vector3(0f, turnInput * turnSpeed * Mathf.Deg2Rad, 0f);
