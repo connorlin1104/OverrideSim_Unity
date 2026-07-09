@@ -120,12 +120,14 @@ public class MatchLoaderController : MonoBehaviour
         // Spawns exactly ONE cup/pin unit at the anchor position and rotation
         currentItem = Instantiate(elementPrefab, spawnPoint.position, spawnPoint.rotation);
 
-        // Zero out physics velocity instantly at birth so it drops cleanly. The prefab root
-        // has no Rigidbody, so reset the child bodies (cup + pin) instead.
+        // Zero out physics velocity instantly at birth so it drops cleanly, and give each body
+        // a MinHeightClamp so it can't be crushed through the floor. The prefab root has no
+        // Rigidbody, so reset the child bodies (cup + pin) instead.
         foreach (Rigidbody rb in currentItem.GetComponentsInChildren<Rigidbody>())
         {
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
+            if (rb.GetComponent<MinHeightClamp>() == null) rb.gameObject.AddComponent<MinHeightClamp>();
         }
     }
 
