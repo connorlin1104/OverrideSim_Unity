@@ -48,9 +48,11 @@ public class FixAllPins : EditorWindow
                 rb.isKinematic = false; 
                 rb.useGravity = true;
 
-                // Fix for modern Unity versions (CS0618)
-                rb.linearDamping = 1.0f;   // Replaces rb.drag
-                rb.angularDamping = 5.0f;  // Replaces rb.angularDrag
+                // Damping controls how quickly a knocked pin coasts/rolls to a stop. Keep it low so
+                // pins roll a while when hit; the old 1/5 killed rolls almost instantly. The single
+                // source of truth for piece feel is Tools/VEX/Tune Piece Physics — keep these in sync.
+                rb.linearDamping = 0.1f;   // Replaces rb.drag
+                rb.angularDamping = 0.1f;  // Replaces rb.angularDrag
 
                 Collider[] oldColliders = child.GetComponents<Collider>();
                 foreach (var col in oldColliders) Undo.DestroyObjectImmediate(col);

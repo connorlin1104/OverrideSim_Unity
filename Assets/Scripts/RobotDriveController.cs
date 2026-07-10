@@ -13,11 +13,16 @@ public class RobotDriveController : MonoBehaviour
     [SerializeField] private Vector3 rightPivotOffset;  // Right drivetrain rail center
     [SerializeField] private Vector3 centerOffset;      // Chassis center (used when driving straight)
 
+    [Header("Ground")]
+    [Tooltip("World Y of the floor surface. On the flat field the robot's wheels are pinned here so it can't climb over pieces.")]
+    [SerializeField] private float floorY = 0.72f;
+
     [Header("Input Actions")]
     [SerializeField] private InputActionReference leftJoystickAction;
     [SerializeField] private InputActionReference rightJoystickAction;
 
     private Rigidbody rb;
+    private Collider[] cols;
     private Vector2 leftStickInput;
     private Vector2 rightStickInput;
 
@@ -28,18 +33,34 @@ public class RobotDriveController : MonoBehaviour
     {
         // RequireComponent guarantees this exists, so grab it early (before OnEnable/Start)
         rb = GetComponent<Rigidbody>();
-        // Ensure the robot doesn't randomly tip over easily
-        rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+        cols = GetComponentsInChildren<Collider>();
 
-        // Continuous detection + interpolation stop the robot from tunneling through
-        // (and getting flung by) walls when driving at speed.
-        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+        // Speculative CCD + interpolation stop the robot from tunneling through walls AND game
+        // pieces when driving at speed. We must use ContinuousSpeculative (not ContinuousDynamic):
+        // ContinuousDynamic only sweeps against static colliders and other Continuous* bodies, so
+        // against the pins/cups — which are plain Discrete dynamic bodies — it silently degrades to
+        // discrete detection and the fast robot skips right through them between physics steps.
+        // ContinuousSpeculative sweeps against ALL colliders regardless of their mode, so it catches
+        // the pieces too without us having to reconfigure every piece's rigidbody.
+        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
 
-        // Turning rotates the body about its center of mass, so we steer the pivot by
-        // moving the center of mass between the two drivetrain rails (see FixedUpdate).
-        // Start centered for driving straight. The pivot offsets are filled in by the
-        // Fix Robot Drive Collider editor tool; until then they're zero (pivots at origin).
+        // The robot force-sets its own velocity every FixedUpdate (see below) and never yields to
+        // contacts, so when it drives into a light pin at full speed the solver has to eject the
+        // piece within a single step. With the default iteration counts (6/1) a deep overlap
+        // sometimes gets resolved by squirting the piece out the far side — it looks like the robot
+        // "phased through" it. More iterations enforce the contact harder so the piece is shoved
+        // aside instead of tunneling. Cheap: it's one rigidbody, not every piece.
+        rb.solverIterations = 16;
+        rb.solverVelocityIterations = 8;
+
+        // The robot's height is pinned to the floor each frame (see FixedUpdate), so gravity would
+        // only fight that pin — and its downward weight was helping crush pieces into the floor.
+        rb.useGravity = false;
+
+        // Center of mass stays put; we produce the inner-wheel pivot by choosing the linear
+        // velocity that holds the pivot point still (see FixedUpdate), which is far more stable
+        // than shoving the center of mass around each frame.
         rb.centerOfMass = centerOffset;
     }
 
@@ -71,29 +92,52 @@ public class RobotDriveController : MonoBehaviour
         float forwardInput = leftStickInput.y;
         float turnInput = rightStickInput.x;
 
-        // Drive by setting velocity (not MovePosition) so walls physically stop the robot
-        // instead of it being forced through them. Preserve the vertical component so
-        // gravity still applies.
-        Vector3 desired = transform.forward * (forwardInput * moveSpeed);
-        rb.linearVelocity = new Vector3(desired.x, rb.linearVelocity.y, desired.z);
-
-        // Turn by spinning about the inner drivetrain rail: move the center of mass to the
-        // rail on the side we're turning toward, then apply angular velocity. Physics
-        // rotation pivots about the center of mass, so the robot pivots on that wheel
-        // (and arcs when also driving forward). Centered when going straight.
         bool turning = turnInput > TurnDeadzone || turnInput < -TurnDeadzone;
 
-        if (turnInput > TurnDeadzone) rb.centerOfMass = rightPivotOffset;
-        else if (turnInput < -TurnDeadzone) rb.centerOfMass = leftPivotOffset;
-        else rb.centerOfMass = centerOffset;
+        // Straight-line drive velocity (planar).
+        Vector3 driveVel = transform.forward * (forwardInput * moveSpeed);
 
-        // Lock the heading (freeze yaw) when driving straight so the off-center chassis dragging
-        // on the ground can't leak a bit of rotation and drift the robot sideways. Free the yaw
-        // axis only while actively turning.
-        RigidbodyConstraints keepUpright = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
-        rb.constraints = turning ? keepUpright : keepUpright | RigidbodyConstraints.FreezeRotationY;
+        // Inner-wheel pivot: spin about the drivetrain rail on the side we're turning toward.
+        // Instead of moving the center of mass, we set the exact linear velocity that keeps the
+        // pivot point stationary while the body rotates (v_pivot = v_com + w x (pivot - com) = 0),
+        // so the robot cleanly rotates about that wheel instead of lurching across the field.
+        Vector3 angVel = Vector3.zero;
+        Vector3 pivotVel = Vector3.zero;
+        if (turning)
+        {
+            angVel = new Vector3(0f, turnInput * turnSpeed * Mathf.Deg2Rad, 0f);
+            Vector3 pivotLocal = turnInput > 0f ? rightPivotOffset : leftPivotOffset;
+            Vector3 pivotWorld = transform.TransformPoint(pivotLocal);
+            pivotVel = Vector3.Cross(angVel, rb.worldCenterOfMass - pivotWorld);
+        }
 
-        // If the robot turns the wrong way, negate this term (and the pivot sides still match).
-        rb.angularVelocity = new Vector3(0f, turnInput * turnSpeed * Mathf.Deg2Rad, 0f);
+        // Drive by setting velocity (not MovePosition) so walls physically stop the robot instead
+        // of it being forced through them. Preserve the vertical component so gravity still applies.
+        Vector3 planar = driveVel + pivotVel;
+        rb.linearVelocity = new Vector3(planar.x, rb.linearVelocity.y, planar.z);
+        rb.angularVelocity = angVel;
+
+        // Keep the robot upright, and lock its heading when driving straight so the off-center
+        // chassis can't drift sideways. Free the yaw axis only while actively turning.
+        RigidbodyConstraints held = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+        rb.constraints = turning ? held : held | RigidbodyConstraints.FreezeRotationY;
+
+        // Pin the robot's wheels to the floor plane. On the flat field this keeps it from riding
+        // up over pieces (the reason it "climbed" cups/pins): shift it so its lowest collider point
+        // sits at the floor, and cancel any vertical velocity.
+        float lowest = LowestColliderY();
+        if (!float.IsInfinity(lowest))
+        {
+            rb.position += new Vector3(0f, floorY - lowest, 0f);
+            Vector3 lv = rb.linearVelocity; lv.y = 0f; rb.linearVelocity = lv;
+        }
+    }
+
+    private float LowestColliderY()
+    {
+        float lowest = float.PositiveInfinity;
+        if (cols != null)
+            foreach (Collider c in cols) lowest = Mathf.Min(lowest, c.bounds.min.y);
+        return lowest;
     }
 }
