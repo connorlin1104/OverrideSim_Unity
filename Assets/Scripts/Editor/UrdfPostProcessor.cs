@@ -104,6 +104,25 @@ public class UrdfPostProcessor : EditorWindow
         if (links.Length == 0)
             throw new InvalidOperationException($"'{root.name}' has no UrdfLink children — not an imported URDF robot.");
 
+        // Idempotency guard: the scale bake is destructive (a second run turns a 10x robot into
+        // a 100x one). A processed robot always carries RobotMotorController; a scaled
+        // Visuals/Collisions group is the fallback signal for robots with no matched wheels.
+        if (root.GetComponent<RobotMotorController>() != null)
+            throw new InvalidOperationException(
+                $"'{root.name}' already has a RobotMotorController — it has been post-processed. " +
+                "Re-import the URDF to start over; running the scale bake twice would double it.");
+        foreach (UrdfLink link in links)
+        {
+            foreach (Transform child in link.transform)
+            {
+                bool isGroup = child.GetComponent<UrdfVisuals>() != null || child.GetComponent<UrdfCollisions>() != null;
+                if (isGroup && child.localScale.x >= scaleFactor * 0.9f)
+                    throw new InvalidOperationException(
+                        $"'{root.name}' looks already scaled ('{link.name}/{child.name}' localScale " +
+                        $"{child.localScale.x:F1}) — running the scale bake twice would compound it.");
+            }
+        }
+
         Undo.IncrementCurrentGroup();
         Undo.SetCurrentGroupName(UndoName);
         int undoGroup = Undo.GetCurrentGroup();
@@ -217,8 +236,7 @@ public class UrdfPostProcessor : EditorWindow
 
         // -- 6) Wheel wiring: revolute/continuous links named like wheels become velocity-driven
         //       motors, split left/right by which side of the chassis they sit on.
-        List<ArticulationBody> leftWheels = new List<ArticulationBody>();
-        List<ArticulationBody> rightWheels = new List<ArticulationBody>();
+        List<ArticulationBody> wheels = new List<ArticulationBody>();
         foreach (UrdfJoint joint in root.GetComponentsInChildren<UrdfJoint>(true))
         {
             if (!(joint is UrdfJointContinuous) && !(joint is UrdfJointRevolute)) continue;
@@ -233,11 +251,58 @@ public class UrdfPostProcessor : EditorWindow
             drive.damping = WheelDriveDamping;
             drive.stiffness = 0f; // pure velocity control — no position spring
             wheel.xDrive = drive;
+            wheels.Add(wheel);
+        }
 
-            // Root-local X sign splits the sides (URDF x-forward imports facing Unity +Z, so
-            // +X is the robot's right). A dead-center wheel counts as right.
+        // If the part-box pass ran, it has just boxed the wheels too (its sphere path only
+        // recognizes the FBX drivetrain's wheel names) — square low-friction wheels can't roll.
+        // Give every wheel link a rolling SphereCollider sized from its renderers instead.
+        if (replaceColliders)
+        {
+            PhysicsMaterial wheelMaterial = AssetDatabase.LoadAssetAtPath<PhysicsMaterial>("Assets/WheelPhysics.physicMaterial");
+            foreach (ArticulationBody wheel in wheels)
+            {
+                foreach (Collider stale in wheel.GetComponentsInChildren<Collider>(true))
+                    Undo.DestroyObjectImmediate(stale);
+
+                Renderer[] renderers = wheel.GetComponentsInChildren<Renderer>(true);
+                if (renderers.Length == 0)
+                {
+                    Debug.LogWarning($"Post-Process URDF Robot: wheel '{wheel.name}' has no renderers to size a sphere from.", wheel);
+                    continue;
+                }
+                Bounds worldBounds = renderers[0].bounds;
+                for (int i = 1; i < renderers.Length; i++) worldBounds.Encapsulate(renderers[i].bounds);
+
+                SphereCollider sphere = Undo.AddComponent<SphereCollider>(wheel.gameObject);
+                sphere.center = wheel.transform.InverseTransformPoint(worldBounds.center);
+                float maxLossy = Mathf.Max(Mathf.Abs(wheel.transform.lossyScale.x),
+                                           Mathf.Abs(wheel.transform.lossyScale.y),
+                                           Mathf.Abs(wheel.transform.lossyScale.z));
+                sphere.radius = Mathf.Max(worldBounds.extents.x, worldBounds.extents.y, worldBounds.extents.z)
+                                / Mathf.Max(maxLossy, 1e-6f);
+                if (wheelMaterial != null) sphere.sharedMaterial = wheelMaterial;
+
+                // Step 4 rebuilt inertia while this wheel still wore the part boxes.
+                wheel.ResetCenterOfMass();
+                wheel.ResetInertiaTensor();
+            }
+        }
+
+        // Side split: relative to the MEAN wheel X, not the raw local-X sign — an off-center
+        // root origin (the FBX drivetrain's pivot sits ~1.2 units to one side; URDF base_link
+        // origins can do the same) puts every wheel on one side of x=0, but the two rails
+        // always straddle their own average. (+X is the robot's right.)
+        List<ArticulationBody> leftWheels = new List<ArticulationBody>();
+        List<ArticulationBody> rightWheels = new List<ArticulationBody>();
+        float meanWheelX = 0f;
+        foreach (ArticulationBody wheel in wheels)
+            meanWheelX += root.transform.InverseTransformPoint(wheel.transform.position).x;
+        if (wheels.Count > 0) meanWheelX /= wheels.Count;
+        foreach (ArticulationBody wheel in wheels)
+        {
             float x = root.transform.InverseTransformPoint(wheel.transform.position).x;
-            (x < 0f ? leftWheels : rightWheels).Add(wheel);
+            (x < meanWheelX ? leftWheels : rightWheels).Add(wheel);
         }
 
         RobotMotorController motor = root.GetComponent<RobotMotorController>();
@@ -322,14 +387,15 @@ public class UrdfPostProcessor : EditorWindow
             if (robot == null)
                 throw new InvalidOperationException("URDF batch validation FAILED: import produced no robot GameObject.");
 
-            // 3) Ground plane (top face at y = 0) and the standard post-process at 10x, keeping
-            // the imported primitive colliders (GeneratePartColliders targets mesh-based robots).
+            // 3) Ground plane (top face at y = 0) and the standard post-process at 10x with the
+            // DEFAULT collider replacement on — this is the path the docs tell users to run, so
+            // it is the one worth validating (part boxes on the chassis, spheres on wheel links).
             GameObject ground = new GameObject("Ground");
             BoxCollider groundBox = ground.AddComponent<BoxCollider>();
             groundBox.size = new Vector3(200f, 1f, 200f);
             ground.transform.position = new Vector3(0f, -0.5f, 0f);
 
-            PostProcess(robot, 10f, false, "wheel");
+            PostProcess(robot, 10f, true, "wheel");
             robot.transform.position = new Vector3(0f, 1f, 0f); // ~1 unit above the ground
 
             RobotMotorController motor = robot.GetComponent<RobotMotorController>();

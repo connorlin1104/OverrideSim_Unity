@@ -38,6 +38,11 @@ public static class GeneratePartColliders
     // higher-priority combine of the two materials — Average(0) < Multiply(1) < Minimum(2) <
     // Maximum(3) — so Maximum on the wheel wins and wheel-ground friction = max(0.8, 0.6) = 0.8.
     // With Average or Minimum the field would drag the wheels down to <= 0.6.
+    // Known tradeoff: Maximum also outranks the pieces' 0.2/Minimum material, so a wheel that
+    // touches a cup/pin grips it at 0.8 instead of the tuned 0.2 slide. Piece feel is tuned for
+    // chassis/field contacts (which keep their combines); a gripping wheel reads as realistic
+    // rubber-on-plastic, and PhysX has no per-pair combine override short of contact-modification
+    // callbacks — accepted deliberately.
     private const string WheelMaterialPath = "Assets/WheelPhysics.physicMaterial";
     private const float WheelDynamicFriction = 0.8f;
     private const float WheelStaticFriction = 0.9f;

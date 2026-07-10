@@ -37,6 +37,10 @@ public class RobotMotorController : MonoBehaviour
     public bool invertLeft;
     [Tooltip("Flip if the right side empirically drives backward.")]
     public bool invertRight;
+    [Tooltip("Solver iterations for the robot's articulation. ArticulationBody.solverIterations is NOT serialized, so setting it in the editor silently reverts to the project default (6) in play mode — it must be applied at runtime, here.")]
+    public int solverIterations = 16;
+    [Tooltip("Solver velocity iterations for the robot's articulation (project default is 1; see solverIterations).")]
+    public int solverVelocityIterations = 8;
 
     private Vector2 leftStickInput;
     private Vector2 rightStickInput;
@@ -48,6 +52,16 @@ public class RobotMotorController : MonoBehaviour
 
     void Awake()
     {
+        // Firm contacts against the mass-1 pieces. solverIterations is a runtime-only
+        // property (not serialized), so the rig tool's edit-time values never survive into
+        // play mode — this is the authoritative place to set them.
+        ArticulationBody root = GetComponent<ArticulationBody>();
+        if (root != null)
+        {
+            root.solverIterations = solverIterations;
+            root.solverVelocityIterations = solverVelocityIterations;
+        }
+
         // Bake the motor model into every wheel joint's X drive. Velocity drives need
         // stiffness 0 (no position spring) and damping > 0 (the velocity gain); forceLimit
         // is what makes this behave like a torque-limited motor instead of a hard constraint.

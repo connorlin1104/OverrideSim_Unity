@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using TMPro;
 using UnityEngine;
@@ -81,12 +82,42 @@ public class BuildHomeScene
         BuildHomeSceneContents(catalog);
         EditorSceneManager.SaveScene(homeScene, HomeScenePath);
 
-        // 4) Build settings: home screen boots the app, the field scene is loaded from it.
-        EditorBuildSettings.scenes = new[]
+        // Cross-asset references can fail to persist when the referenced asset was created in
+        // the same batch as the scene save (the shipped scene once carried catalog: {fileID: 0}
+        // and the model list was silently dead on device). Reload from disk and prove the
+        // catalog reference survived.
+        Scene reloaded = EditorSceneManager.OpenScene(HomeScenePath, OpenSceneMode.Single);
+        HomeScreenController saved = null;
+        foreach (GameObject rootGo in reloaded.GetRootGameObjects())
+        {
+            saved = rootGo.GetComponentInChildren<HomeScreenController>(true);
+            if (saved != null) break;
+        }
+        SerializedProperty savedCatalog = saved != null
+            ? new SerializedObject(saved).FindProperty("catalog") : null;
+        if (savedCatalog == null || savedCatalog.objectReferenceValue == null)
+        {
+            const string msg = "Build Home Scene: the saved HomeScene lost its RobotModelCatalog " +
+                               "reference — the model list would never build at runtime.";
+            Debug.LogError(msg);
+            if (interactive) { EditorUtility.DisplayDialog("Build Home Scene", msg, "OK"); return; }
+            throw new InvalidOperationException(msg);
+        }
+
+        // 4) Build settings: home screen boots the app at index 0, the field scene follows.
+        //    Scenes this tool doesn't know about are preserved (re-running must not clobber
+        //    scenes added later).
+        var buildScenes = new List<EditorBuildSettingsScene>
         {
             new EditorBuildSettingsScene(HomeScenePath, true),
             new EditorBuildSettingsScene(SampleScenePath, true),
         };
+        foreach (EditorBuildSettingsScene existing in EditorBuildSettings.scenes)
+        {
+            if (existing.path != HomeScenePath && existing.path != SampleScenePath)
+                buildScenes.Add(existing);
+        }
+        EditorBuildSettings.scenes = buildScenes.ToArray();
 
         // 5) Give the field scene a way back to the home screen.
         Scene sampleScene = EditorSceneManager.OpenScene(SampleScenePath, OpenSceneMode.Single);
@@ -241,7 +272,11 @@ public class BuildHomeScene
         GameObject homeRoot = new GameObject("HomeScreen");
         HomeScreenController controller = homeRoot.AddComponent<HomeScreenController>();
         SerializedObject so = new SerializedObject(controller);
-        so.FindProperty("catalog").objectReferenceValue = catalog;
+        // Re-load rather than trusting the instance loaded before NewScene: the scene swap can
+        // destroy the native object behind an already-loaded asset reference, and a destroyed
+        // object silently serializes as {fileID: 0} — the shipped-dead-model-list bug.
+        RobotModelCatalog freshCatalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        so.FindProperty("catalog").objectReferenceValue = freshCatalog != null ? freshCatalog : catalog;
         so.FindProperty("mainPanel").objectReferenceValue = mainPanel;
         so.FindProperty("settingsPanel").objectReferenceValue = settingsPanel;
         so.FindProperty("modelListParent").objectReferenceValue = modelList.transform;
