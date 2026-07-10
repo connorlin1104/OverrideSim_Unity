@@ -95,11 +95,16 @@ public class MatchLoaderController : MonoBehaviour
         }
     }
 
-    // A collider belongs to the robot if its owning Rigidbody carries the robot tag.
+    // A collider belongs to the robot if its owning Rigidbody OR articulation link carries the
+    // robot tag (the articulation-rigged robot's colliders hang off ArticulationBody links,
+    // which never report an attachedRigidbody).
     private bool IsRobot(Collider other)
     {
         Rigidbody body = other.attachedRigidbody;
-        return body != null && body.CompareTag(robotTag);
+        if (body != null && body.CompareTag(robotTag)) return true;
+
+        ArticulationBody link = other.attachedArticulationBody;
+        return link != null && link.CompareTag(robotTag);
     }
 
     // True while our spawned piece is still sitting in the loader (not yet carried away).
