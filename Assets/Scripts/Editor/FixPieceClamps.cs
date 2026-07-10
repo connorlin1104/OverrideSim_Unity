@@ -21,7 +21,7 @@ public class FixPieceClamps
     [MenuItem("Tools/VEX/Add Height Clamp to Pieces")]
     private static void AddClamps()
     {
-        Rigidbody[] bodies = Object.FindObjectsByType<Rigidbody>(FindObjectsSortMode.None);
+        Rigidbody[] bodies = Object.FindObjectsByType<Rigidbody>(FindObjectsInactive.Exclude);
         int added = 0, synced = 0;
         foreach (Rigidbody body in bodies)
         {

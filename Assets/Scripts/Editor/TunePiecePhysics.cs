@@ -46,7 +46,7 @@ public static class TunePiecePhysics
 
         // Pieces already placed on the field (the ones the robot mostly drives into).
         int sceneBodies = 0;
-        foreach (Rigidbody body in Object.FindObjectsByType<Rigidbody>(FindObjectsSortMode.None))
+        foreach (Rigidbody body in Object.FindObjectsByType<Rigidbody>(FindObjectsInactive.Exclude))
         {
             if (!IsPiece(body.gameObject.name)) continue;
             Undo.RecordObject(body, "Tune Piece Physics");
