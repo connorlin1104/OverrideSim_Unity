@@ -120,6 +120,37 @@ public class PhysicsSmokeTest
             Fail($"settle: root slid {horizontal:F2} units horizontally (limit {MaxSettleHorizontal}) — unstable rig.");
 
         Debug.Log($"PhysicsSmokeTest PASS settle: vertical {vertical:F3}, horizontal {horizontal:F3} after {StepsPerPhase} steps.");
+        LogSupportDiagnostics(root);
+    }
+
+    // What is the robot actually standing on? Logs each wheel sphere's lowest point and the
+    // five lowest non-wheel colliders — if a chassis box bottoms out at or below the wheel
+    // spheres, the wheels are unloaded and can only spin in place.
+    private static void LogSupportDiagnostics(ArticulationBody root)
+    {
+        var wheelBottoms = new List<string>();
+        float lowestWheelY = float.PositiveInfinity;
+        foreach (ArticulationBody ab in root.GetComponentsInChildren<ArticulationBody>())
+        {
+            if (ab.isRoot || ab.jointType != ArticulationJointType.RevoluteJoint) continue;
+            foreach (Collider c in ab.GetComponentsInChildren<Collider>())
+            {
+                lowestWheelY = Mathf.Min(lowestWheelY, c.bounds.min.y);
+                wheelBottoms.Add($"{ab.name}:{c.GetType().Name} bottom {c.bounds.min.y:F3}");
+            }
+        }
+
+        var chassis = new List<(float y, string desc)>();
+        foreach (Collider c in root.GetComponentsInChildren<Collider>())
+        {
+            if (c.GetComponentInParent<ArticulationBody>().isRoot)
+                chassis.Add((c.bounds.min.y, $"{c.transform.parent?.name}/{c.name} bottom {c.bounds.min.y:F3}"));
+        }
+        chassis.Sort((a, b) => a.y.CompareTo(b.y));
+
+        Debug.Log("PhysicsSmokeTest wheels: " + string.Join("; ", wheelBottoms));
+        Debug.Log($"PhysicsSmokeTest lowest wheel point {lowestWheelY:F3}; lowest chassis colliders: " +
+                  string.Join("; ", chassis.GetRange(0, Mathf.Min(5, chassis.Count)).ConvertAll(t => t.desc)));
     }
 
     private static void RunDriveTest(ArticulationBody root, ArticulationBody[] wheels)
@@ -161,7 +192,17 @@ public class PhysicsSmokeTest
 
         FailIfNotFinite();
         if (planar <= MinDrivePlanar)
+        {
+            var spins = new List<string>();
+            for (int i = 0; i < wheels.Length; i++)
+                spins.Add($"{wheels[i].name} spun {(JointPositionRad(wheels[i]) - jointStart[i]) * Mathf.Rad2Deg:F0}°, " +
+                          $"vel {(wheels[i].jointVelocity.dofCount > 0 ? wheels[i].jointVelocity[0] : 0f):F1} rad/s, " +
+                          $"worldAngVel {wheels[i].angularVelocity.ToString("F1")}");
+            Debug.Log("PhysicsSmokeTest drive diagnostics: " + string.Join("; ", spins));
+            Debug.Log($"PhysicsSmokeTest drive diagnostics: root delta {delta.ToString("F4")}, " +
+                      $"root linVel {root.linearVelocity.ToString("F3")}, root angVel {root.angularVelocity.ToString("F3")}");
             Fail($"drive: planar displacement {planar:F2} units (need > {MinDrivePlanar}) — wheels are not propelling the robot.");
+        }
         if (maxSpinRad <= MinWheelSpinRad)
             Fail($"drive: max wheel spin {maxSpinRad * Mathf.Rad2Deg:F1}° (need > 90°) — joints are not rotating.");
 

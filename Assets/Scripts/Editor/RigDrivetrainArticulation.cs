@@ -152,6 +152,15 @@ public class RigDrivetrainArticulation
         List<ArticulationBody> rightLinks = new List<ArticulationBody>();
         StringBuilder linkSummary = new StringBuilder();
 
+        // The wrapper's origin sits well off the chassis center (the FBX pivot is ~1.2 units to
+        // one side), so the sign of a cluster's local X says nothing about its side — every wheel
+        // lands negative. Split against the MEAN X of all clusters instead: the two rails
+        // straddle their own average.
+        float meanClusterX = 0f;
+        foreach (RobotPartClassifier.WheelCluster cluster in clusters)
+            meanClusterX += robot.transform.InverseTransformPoint(cluster.Center).x;
+        meanClusterX /= clusters.Count;
+
         foreach (RobotPartClassifier.WheelCluster cluster in clusters)
         {
             // Axle axis = the world axis of the cluster's smallest AABB extent (wheels are thin
@@ -173,9 +182,9 @@ public class RigDrivetrainArticulation
             }
             Vector3 axleWrapperSpace = wrapper.InverseTransformDirection(axleWorld);
 
-            // Side: geometric (sign of the cluster center's wrapper-local X; +X = robot right),
-            // cross-checked against the FBX group names ("Drivetrain LS"/"Drivetrain RS").
-            bool isLeft = wrapper.InverseTransformPoint(cluster.Center).x < 0f;
+            // Side: geometric (wrapper-local X relative to the clusters' mean X; +X = robot
+            // right), cross-checked against the FBX group names ("Drivetrain LS"/"Drivetrain RS").
+            bool isLeft = wrapper.InverseTransformPoint(cluster.Center).x < meanClusterX;
             string nameSide = AncestorSideTag(cluster.topmost, wrapper);
             if (nameSide != null && (nameSide == "LS") != isLeft)
                 Debug.LogWarning($"{UndoName}: cluster '{cluster.topmost.name}' sits on the " +
@@ -208,6 +217,12 @@ public class RigDrivetrainArticulation
             ArticulationBody ab = Undo.AddComponent<ArticulationBody>(link);
             ab.jointType = ArticulationJointType.RevoluteJoint; // set BEFORE drive config (type changes reset drives)
             ab.matchAnchors = true;
+            // Unity seeds a NEW ArticulationBody's anchor with a +90°-about-Z rotation (anchor X
+            // → link Y), which makes the revolute twist axis VERTICAL — wheels spin like tops at
+            // full speed while the robot goes nowhere. Force the anchor to identity so the twist
+            // axis is the link's +X (the axle); matchAnchors recomputes the parent side.
+            ab.anchorPosition = Vector3.zero;
+            ab.anchorRotation = Quaternion.identity;
             ab.mass = WheelMass;
             ab.jointFriction = 0.05f;
             ab.angularDamping = 0.05f;
