@@ -8,9 +8,11 @@ using Touch = UnityEngine.InputSystem.EnhancedTouch.Touch;
 //   1 finger  drag  -> orbit/pivot around that point
 //   2 fingers pinch -> zoom (dolly the camera in/out along its view)
 //   2 fingers drag  -> pan the focus point laterally across the field
-// It ignores any finger that lands on a UI element, so touching the on-screen drive joysticks
-// never moves the camera. A mouse fallback (left-drag orbit / right- or middle-drag pan / scroll
-// zoom) lets you test in the plain Game view without the Device Simulator.
+// A drag that STARTS on a UI element (the on-screen drive joysticks) belongs to that element for
+// its whole life, so the camera never steals it — a joystick drag normally travels well outside
+// the stick's own graphic, and only testing where the pointer is right now would hand the drag to
+// the camera partway through. A mouse fallback (left-drag orbit / right- or middle-drag pan /
+// scroll zoom) lets you test in the plain Game view without the Device Simulator.
 [RequireComponent(typeof(Camera))]
 public class TouchCameraController : MonoBehaviour
 {
@@ -45,6 +47,12 @@ public class TouchCameraController : MonoBehaviour
     private readonly List<RaycastResult> uiHits = new List<RaycastResult>();
     private PointerEventData pointerData;
 
+    // A drag is claimed by the UI at the moment it STARTS, and stays claimed until it ends.
+    // Testing "is the pointer over UI right now" each frame is not enough: a joystick drag
+    // routinely travels outside the stick's own graphic, and the camera would grab it midway.
+    private readonly HashSet<int> uiTouchIds = new HashSet<int>();
+    private bool mouseDragStartedOverUI;
+
     void Awake() => cam = GetComponent<Camera>();
 
     void OnEnable() => EnhancedTouchSupport.Enable();
@@ -77,19 +85,41 @@ public class TouchCameraController : MonoBehaviour
     // Returns true if touch input was present (so we skip the mouse fallback).
     private bool HandleTouch()
     {
-        // Only fingers that AREN'T on a joystick / UI element control the camera.
+        // Only fingers that didn't START on a joystick / UI element control the camera.
         var active = Touch.activeTouches;
+        if (active.Count == 0)
+        {
+            uiTouchIds.Clear();
+            return false;
+        }
+
         int usable = 0;
         Touch a = default, b = default;
         foreach (var touch in active)
         {
-            if (IsOverUI(touch.screenPosition)) continue;
+            UnityEngine.InputSystem.TouchPhase phase = touch.phase;
+
+            // Claim the finger for the UI on the frame it lands. It stays claimed for its whole
+            // lifetime, so dragging a joystick beyond its graphic never leaks into the camera.
+            if (phase == UnityEngine.InputSystem.TouchPhase.Began && IsOverUI(touch.screenPosition))
+                uiTouchIds.Add(touch.touchId);
+
+            // A lifted finger is still listed for this one frame: release its id and ignore it.
+            if (phase == UnityEngine.InputSystem.TouchPhase.Ended ||
+                phase == UnityEngine.InputSystem.TouchPhase.Canceled)
+            {
+                uiTouchIds.Remove(touch.touchId);
+                continue;
+            }
+
+            if (uiTouchIds.Contains(touch.touchId)) continue;
+
             if (usable == 0) a = touch;
             else if (usable == 1) b = touch;
             usable++;
         }
 
-        if (usable == 0) return active.Count > 0; // fingers exist but all on UI: eat them, no camera move
+        if (usable == 0) return true; // fingers exist but all on UI: eat them, no camera move
 
         if (usable == 1)
         {
@@ -114,15 +144,30 @@ public class TouchCameraController : MonoBehaviour
     {
         var mouse = UnityEngine.InputSystem.Mouse.current;
         if (mouse == null) return;
-        if (IsOverUI(mouse.position.ReadValue())) return;
 
-        Vector2 delta = mouse.delta.ReadValue();
-        if (mouse.leftButton.isPressed) Orbit(delta);
-        else if (mouse.rightButton.isPressed || mouse.middleButton.isPressed) Pan(delta);
+        bool held = mouse.leftButton.isPressed || mouse.rightButton.isPressed || mouse.middleButton.isPressed;
+        bool pressedNow = mouse.leftButton.wasPressedThisFrame || mouse.rightButton.wasPressedThisFrame ||
+                          mouse.middleButton.wasPressedThisFrame;
 
+        // Decide once, when the button goes down. Dragging a joystick sweeps the cursor off the
+        // stick's graphic almost immediately, so a per-frame test would hand the drag to the
+        // camera halfway through — the "joysticks also move the camera" bug.
+        if (pressedNow) mouseDragStartedOverUI = IsOverUI(mouse.position.ReadValue());
+        if (!held) mouseDragStartedOverUI = false;
+
+        if (held && !mouseDragStartedOverUI)
+        {
+            Vector2 delta = mouse.delta.ReadValue();
+            if (mouse.leftButton.isPressed) Orbit(delta);
+            else Pan(delta);
+        }
+
+        // Scrolling has no press/release, so it just checks where the cursor is right now.
         float scroll = mouse.scroll.ReadValue().y;
-        if (Mathf.Abs(scroll) > 0.01f) Zoom(scroll * scrollZoomSpeed * distance / 120f);
+        if (Mathf.Abs(scroll) > 0.01f && !IsOverUI(mouse.position.ReadValue()))
+            Zoom(scroll * scrollZoomSpeed * distance / 120f);
     }
+
 
     private void Orbit(Vector2 pixels)
     {

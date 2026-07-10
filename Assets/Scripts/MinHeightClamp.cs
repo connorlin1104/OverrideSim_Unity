@@ -25,8 +25,8 @@ public class MinHeightClamp : MonoBehaviour
 
     [Header("Visual only")]
     [Tooltip("How far to raise this piece's meshes above its colliders, in world units (1 unit ≈ 0.10 m, so 0.03 ≈ 3 mm real). Drag this up until the cup stops looking sunk into the floor. Does not affect physics.")]
-    public float visualLift = 0.03f;
-
+    public float visualLift = 0.1f;
+    
     // How much lift is already baked into the mesh transforms. Serialized so a lift applied in the
     // editor isn't applied a second time on scene load or on entering play mode.
     [SerializeField, HideInInspector] private float appliedLift;
