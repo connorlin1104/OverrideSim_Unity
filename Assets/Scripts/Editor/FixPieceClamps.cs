@@ -18,7 +18,7 @@ public class FixPieceClamps
     private const float Tolerance = 0.05f;
     private const float VisualLift = 0.03f; // cosmetic mesh lift only — see MinHeightClamp
 
-    [MenuItem("Tools/VEX/Add Height Clamp to Pieces")]
+    [MenuItem("Tools/RoboSim/Game Pieces/Add Floor Clamp to Pieces", false, 3)]
     private static void AddClamps()
     {
         Rigidbody[] bodies = Object.FindObjectsByType<Rigidbody>(FindObjectsInactive.Exclude);

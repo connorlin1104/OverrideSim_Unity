@@ -4,7 +4,7 @@ using System.Collections.Generic;
 
 public class FixRollers : EditorWindow
 {
-    [MenuItem("Tools/VEX Fixer/Roller Joint Spawner")]
+    [MenuItem("Tools/RoboSim/Field/Rig Rollers (Hinge Joints)", false, 3)]
     public static void ShowWindow()
     {
         GetWindow<FixRollers>("Roller Fixer");

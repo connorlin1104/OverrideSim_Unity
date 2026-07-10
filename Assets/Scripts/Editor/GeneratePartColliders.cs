@@ -18,7 +18,7 @@ using UnityEditor.SceneManagement;
 // Like Fix Robot Drive Collider it also writes the turn pivots, mass 30, and the Player tag —
 // but only when those components exist, so it runs cleanly on URDF/ArticulationBody hierarchies.
 //
-// Usage: select the Robot root in the Hierarchy, then Tools > VEX > Generate Part Colliders.
+// Usage: select the Robot root in the Hierarchy, then Tools > RoboSim > Robot > Advanced > Rebuild Part Colliders.
 // Batch:  Unity -executeMethod GeneratePartColliders.RunBatchOnRobot (opens SampleScene, finds
 //         the robot, regenerates, verifies 6 wheel clusters, saves).
 public static class GeneratePartColliders
@@ -74,7 +74,7 @@ public static class GeneratePartColliders
         public List<RobotPartClassifier.WheelCluster> wheelClusters;
     }
 
-    [MenuItem("Tools/VEX/Generate Part Colliders")]
+    [MenuItem("Tools/RoboSim/Robot/Advanced/Rebuild Part Colliders", false, 1)]
     private static void GenerateFromSelection()
     {
         GameObject robot = Selection.activeGameObject;
@@ -122,7 +122,9 @@ public static class GeneratePartColliders
     }
 
     // Rebuilds all colliders under root. One collapsed Undo group so a single Ctrl+Z reverts it.
-    public static Report Generate(GameObject root)
+    // wheelNamePrefix selects which nodes get rolling SphereColliders instead of boxes; null
+    // uses this project's drivetrain wheel name. Pass a new robot's wheel prefix when importing.
+    public static Report Generate(GameObject root, string wheelNamePrefix = null)
     {
         Undo.SetCurrentGroupName(UndoName);
         int undoGroup = Undo.GetCurrentGroup();
@@ -148,7 +150,7 @@ public static class GeneratePartColliders
         }
 
         // 2) Wheels: one sphere per physical wheel, on the cluster's shallowest node.
-        var clusters = RobotPartClassifier.FindWheelClusters(root);
+        var clusters = RobotPartClassifier.FindWheelClusters(root, wheelNamePrefix);
         report.wheelClusters = clusters;
         var consumed = new HashSet<MeshFilter>();
         foreach (RobotPartClassifier.WheelCluster cluster in clusters)

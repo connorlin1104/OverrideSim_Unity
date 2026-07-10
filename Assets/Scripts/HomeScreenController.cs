@@ -12,7 +12,7 @@ using UnityEngine.UI;
 // RobotModelCatalog.SelectedModelId (PlayerPrefs-backed) and shown by tinting the selected
 // entry's button image with the accent color.
 //
-// Usage: the Tools > VEX > Build Home Scene tool creates the HomeScene, adds this component,
+// Usage: the Tools > RoboSim > Scenes > Build Home Screen tool creates the HomeScene, adds this component,
 // and wires all references + button onClicks. Drive loads SampleScene.
 public class HomeScreenController : MonoBehaviour
 {

@@ -4,7 +4,7 @@ using System.Collections.Generic;
 
 public class FixCups : EditorWindow 
 { 
-    [MenuItem("Tools/VEX Fixer/Fix Cups")] 
+    [MenuItem("Tools/RoboSim/Game Pieces/Rebuild Cup Colliders", false, 1)]
     public static void CleanAndOptimizeCups() 
     { 
         GameObject selectedParent = Selection.activeGameObject; 

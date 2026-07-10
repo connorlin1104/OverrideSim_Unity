@@ -15,7 +15,7 @@ using UnityEngine.InputSystem;
 // exist because an empirically flipped wheel mesh/axle can still reverse a side in practice.
 //
 // Usage: added and fully wired (wheel arrays + input actions) by
-// Tools > VEX > Rig Drivetrain Articulation. Nothing to set up by hand.
+// Tools > RoboSim > Robot > Advanced > Rig Motors and Wheel Joints. Nothing to set up by hand.
 public class RobotMotorController : MonoBehaviour
 {
     [Header("Wheel Links (set by the Rig Drivetrain Articulation tool)")]
@@ -33,6 +33,9 @@ public class RobotMotorController : MonoBehaviour
     public float wheelStallTorque = 700f;
     [Tooltip("Velocity drives use damping as the velocity-tracking gain. MUST be > 0 or the drive produces no torque at all (stiffness stays 0 for pure velocity control).")]
     public float velocityDriveDamping = 1000f;
+    [Tooltip("How much of full wheel speed the turn stick commands. At 1 a full turn spins the wheels as fast as full throttle does, which pivots the robot faster than a driver can catch. Lower = calmer turning; straight-line speed is unaffected.")]
+    [Range(0.1f, 1f)]
+    public float turnRate = 0.5f;
     [Tooltip("Flip if the left side empirically drives backward (see sign convention in the file header).")]
     public bool invertLeft;
     [Tooltip("Flip if the right side empirically drives backward.")]
@@ -106,7 +109,7 @@ public class RobotMotorController : MonoBehaviour
     {
         // Arcade Drive (Left Stick controls Forward/Backward, Right Stick controls Turning)
         float throttle = manualInput ? manualThrottle : leftStickInput.y;
-        float turn = manualInput ? manualTurn : rightStickInput.x;
+        float turn = (manualInput ? manualTurn : rightStickInput.x) * turnRate;
 
         float left = Mathf.Clamp(throttle + turn, -1f, 1f);
         float right = Mathf.Clamp(throttle - turn, -1f, 1f);

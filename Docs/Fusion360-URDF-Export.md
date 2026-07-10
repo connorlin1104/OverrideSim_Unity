@@ -43,23 +43,26 @@ URDF is much stricter than Fusion about how a robot is structured. Do these befo
 3. Drag that **entire folder** into this project's `Assets/` folder (the `.urdf` must stay
    next to its meshes) and let Unity finish importing the meshes.
 
-## 4. Import and post-process in Unity
+## 4. Import and set up in Unity
 
 1. In Unity: **GameObject > 3D Object > URDF Model (import)**, pick your `.urdf` file,
    keep the default axis (Y) and import. A robot hierarchy appears in the scene.
-2. Select the imported robot root, then run **Tools > VEX > Post-Process Imported URDF
-   Robot** and press **Run**. The options:
-   - **Scale Factor (10)** — this project's world is 10x life size (1 unit = 0.1 m,
-     gravity −98.1) so small VEX parts don't jitter in the physics engine. Real-meter
-     URDFs must be baked up to match; leave it at 10.
-   - **Replace Colliders With Part Boxes (on)** — swaps the importer's convex mesh hulls
-     for tight per-part boxes and wheel spheres. Cheaper and rounder-rolling; turn it off
-     only if your robot has weird shapes the boxes get wrong.
-   - **Wheel Name Substring ("wheel")** — how the tool finds drive wheels. Must match the
-     naming from step 2.4.
-3. The tool scales the rig, rebuilds inertia, wires the wheels to on-screen joystick
-   driving, tags the robot for the match loaders, and adds it to the home-screen robot
-   list. Press Play and drive.
+2. Select the imported robot root, then run **Tools > RoboSim > Robot > Set Up Imported
+   Robot** and press **Set Up Robot**. That is the only tool you need — it recognizes a
+   URDF robot and does everything: bakes the 10x world scale (1 unit = 0.1 m, gravity
+   −98.1, so small VEX parts don't jitter), rebuilds inertia, replaces the importer's
+   lumpy convex hulls with tight per-part boxes and rolling wheel spheres, wires the
+   wheels to the on-screen joysticks, tags the robot for the match loaders, and adds it
+   to the home-screen robot list.
+   - **Wheel Name Contains ("wheel")** — how the tool finds your drive wheels. Must match
+     the naming from step 2.4.
+   - **Validate Physics After (on)** — saves the scene, then simulates the robot headlessly
+     to confirm it settles, drives, and turns before you ever press Play.
+3. Press Play and drive.
+
+> The individual stages live under **Robot > Advanced** if you ever need to redo just one.
+> Never use anything under **Legacy — Old Velocity Drive**; those rebuild the pre-motor
+> setup and would strip the rig. (Unity greys them out on a motor-driven robot.)
 
 ## 5. Pneumatics
 

@@ -11,7 +11,7 @@ public class FixAllPins : EditorWindow
         public Vector3 rotation;
     }
 
-    [MenuItem("Tools/VEX Fixer/Fix All Pins (Any Color)")]
+    [MenuItem("Tools/RoboSim/Game Pieces/Rebuild Pin Colliders (Any Color)", false, 2)]
     public static void CleanAndOptimizePins()
     {
         GameObject selectedParent = Selection.activeGameObject;
@@ -50,7 +50,7 @@ public class FixAllPins : EditorWindow
 
                 // Damping controls how quickly a knocked pin coasts/rolls to a stop. Keep it low so
                 // pins roll a while when hit; the old 1/5 killed rolls almost instantly. The single
-                // source of truth for piece feel is Tools/VEX/Tune Piece Physics — keep these in sync.
+                // source of truth for piece feel is Tools > RoboSim > Game Pieces > Tune Roll and Friction — keep these in sync.
                 rb.linearDamping = 0.1f;   // Replaces rb.drag
                 rb.angularDamping = 0.1f;  // Replaces rb.angularDrag
 

@@ -26,7 +26,7 @@ using Scene = UnityEngine.SceneManagement.Scene;
 //   - registers HomeScene + SampleScene in Build Settings (home first, so it boots the app),
 //   - adds a "Home" button to the field scene's Canvas that loads back into HomeScene.
 //
-// Usage: Tools > VEX > Build Home Scene (safe to re-run; every step skips if already done,
+// Usage: Tools > RoboSim > Scenes > Build Home Screen (safe to re-run; every step skips if already done,
 // except the HomeScene itself which is rebuilt). Batch: -executeMethod BuildHomeScene.RunBatch.
 public class BuildHomeScene
 {
@@ -48,7 +48,7 @@ public class BuildHomeScene
     private static readonly Color NeutralColor = new Color(0.23f, 0.25f, 0.30f);
     private static readonly Color TextColor = new Color32(0xE8, 0xEA, 0xF0, 0xFF);
 
-    [MenuItem("Tools/VEX/Build Home Scene")]
+    [MenuItem("Tools/RoboSim/Scenes/Build Home Screen", false, 1)]
     private static void BuildInteractive()
     {
         Build(true);
@@ -160,7 +160,7 @@ public class BuildHomeScene
         {
             EditorUtility.DisplayDialog("Build Home Scene",
                 "TMP Essential Resources are still importing. Wait for the import to finish, " +
-                "then run Tools > VEX > Build Home Scene again.", "OK");
+                "then run Tools > RoboSim > Scenes > Build Home Screen again.", "OK");
             return false;
         }
         Debug.LogError("Build Home Scene: TMP Essential Resources missing after import.");

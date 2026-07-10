@@ -38,7 +38,7 @@ public static class TunePiecePhysics
     // Minimum so the lower of the two wins and the piece material above becomes the single authority.
     private const string FieldMaterialPath = "Assets/ZeroBounce.physicMaterial";
 
-    [MenuItem("Tools/VEX/Tune Piece Physics")]
+    [MenuItem("Tools/RoboSim/Game Pieces/Tune Roll and Friction", false, 4)]
     private static void Tune()
     {
         PhysicsMaterial mat = GetOrCreateMaterial();

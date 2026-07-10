@@ -3,19 +3,22 @@ using UnityEngine;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 
-// One-click setup for the driving robot's physics.
+// LEGACY — superseded by Tools > RoboSim > Robot > Set Up Imported Robot.
 //
-// The imported drivetrain gives the robot hundreds of concave MeshColliders, which Unity
-// cannot solve on a moving (non-kinematic) Rigidbody: the robot passes through walls and
-// then gets flung. This tool strips those colliders and rebuilds a small compound collider
-// that follows the chassis shape (one convex box per major sub-group: Left drivetrain, Right
-// drivetrain, Frame). It also:
-//   - records the left/right drivetrain box centers as the turn pivots on RobotDriveController
-//     (so turning pivots on the inner wheel),
-//   - bumps the robot mass so it shoves light game pieces instead of climbing over them,
-//   - tags the robot "Player" so the match loaders only react to the robot.
+// This built the physics for the OLD robot: a single Rigidbody driven by setting velocities
+// directly (RobotDriveController), wrapped in three hand-approximated boxes (Left drivetrain,
+// Right drivetrain, Frame) and pinned to the floor. The robot is now an ArticulationBody with
+// per-part colliders and torque-driven wheels, so running this on it would strip the rig's
+// colliders and leave a robot that cannot drive. It is kept only to rebuild the old setup if
+// the articulation experiment is ever reverted; the menu item asks for confirmation first.
 //
-// Usage: select the Robot object in the Hierarchy, then Tools > VEX > Fix Robot Drive Collider.
+// What it does: strips every collider under the robot, adds one convex box per sub-group,
+// records the drivetrain box centers as RobotDriveController's inner-wheel turn pivots, sets
+// mass 30, and tags the robot "Player".
+//
+// Usage: select the Robot object, then
+// Tools > RoboSim > Legacy — Old Velocity Drive > Rebuild Velocity-Drive Colliders.
+// The menu item is greyed out whenever the selected robot has an ArticulationBody.
 public class FixRobotCollider
 {
     // Major sub-assemblies of the drivetrain, matched by name substring.
@@ -25,14 +28,39 @@ public class FixRobotCollider
 
     private const float RobotMass = 30f;
 
-    [MenuItem("Tools/VEX/Fix Robot Drive Collider")]
+    // Greys the item out unless the selection is a robot this tool can safely act on: it is
+    // disabled for the motor-driven robot (whose rig it would destroy) and when nothing that
+    // looks like a robot is selected. Belt and braces with the confirmation dialog below.
+    [MenuItem("Tools/RoboSim/Legacy — Old Velocity Drive/Rebuild Velocity-Drive Colliders", true)]
+    private static bool FixColliderEnabled()
+    {
+        GameObject robot = Selection.activeGameObject;
+        return robot != null
+               && robot.GetComponentInChildren<MeshFilter>(true) != null
+               && robot.GetComponentInChildren<ArticulationBody>(true) == null;
+    }
+
+    [MenuItem("Tools/RoboSim/Legacy — Old Velocity Drive/Rebuild Velocity-Drive Colliders", false, 1000)]
     private static void FixCollider()
     {
         GameObject robot = Selection.activeGameObject;
         if (robot == null)
         {
-            EditorUtility.DisplayDialog("Fix Robot Drive Collider",
+            EditorUtility.DisplayDialog("Rebuild Velocity-Drive Colliders",
                 "Select your Robot GameObject in the Hierarchy first.", "OK");
+            return;
+        }
+
+        // The current robot is motor-driven; this tool would gut it. Make that impossible to
+        // do by accident.
+        if (robot.GetComponentInChildren<ArticulationBody>() != null &&
+            !EditorUtility.DisplayDialog("Rebuild Velocity-Drive Colliders",
+                $"'{robot.name}' is a motor-driven ArticulationBody robot.\n\n" +
+                "This legacy tool rebuilds the OLD velocity-drive setup: it will delete the " +
+                "per-part colliders and wheel spheres the rig depends on, and the robot will " +
+                "not drive until you re-rig it.\n\nContinue anyway?",
+                "Yes, revert to the old setup", "Cancel"))
+        {
             return;
         }
 

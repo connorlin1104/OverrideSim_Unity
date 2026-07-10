@@ -23,7 +23,7 @@ using UnityEngine.SceneManagement;
 // The simulation mutates the open scene; it is ALWAYS reloaded from disk afterwards so the
 // simulated poses are never saved.
 //
-// Usage: Tools > VEX > Validate Rigged Robot (validates the robot in the active scene).
+// Usage: Tools > RoboSim > Robot > Validate Robot Physics (validates the robot in the active scene).
 // Batch: -executeMethod PhysicsSmokeTest.RunBatchValidate (opens SampleScene; throws on FAIL,
 // which exits the editor nonzero).
 public class PhysicsSmokeTest
@@ -44,7 +44,7 @@ public class PhysicsSmokeTest
     private const float MinWheelSpinRad = Mathf.PI / 2f; // 90° — jointPosition reads in RADIANS
     private const float MinTurnYawDeg = 15f;
 
-    [MenuItem("Tools/VEX/Validate Rigged Robot")]
+    [MenuItem("Tools/RoboSim/Robot/Validate Robot Physics", false, 2)]
     private static void ValidateMenu()
     {
         // The simulation trashes the open scene and we reload it from disk afterwards, so give
@@ -74,16 +74,37 @@ public class PhysicsSmokeTest
     // Runs all three phases against the rigged robot in the active scene. Throws on FAIL.
     private static void ValidateActiveScene()
     {
-        Scene scene = SceneManager.GetActiveScene();
-        string scenePath = scene.path;
+        ValidateBody(FindRiggedRobotRoot());
+    }
+
+    // Validates one specific robot, for callers that just built it (Set Up Imported Robot) and
+    // know which one they mean — FindRiggedRobotRoot would be ambiguous with two robots present.
+    //
+    // IMPORTANT: the scene is reloaded from disk afterwards to discard the simulated poses, so
+    // the CALLER MUST SAVE THE SCENE FIRST or the robot it just built is thrown away.
+    public static void ValidateRobot(GameObject robotRoot)
+    {
+        if (robotRoot == null) throw new System.ArgumentNullException(nameof(robotRoot));
+
+        ArticulationBody body = robotRoot.GetComponent<ArticulationBody>()
+                                ?? robotRoot.GetComponentInChildren<ArticulationBody>(true);
+        if (body == null)
+            throw new System.InvalidOperationException(
+                $"PhysicsSmokeTest: '{robotRoot.name}' has no ArticulationBody — it is not a rigged robot.");
+
+        ValidateBody(body);
+    }
+
+    private static void ValidateBody(ArticulationBody root)
+    {
+        string scenePath = root.gameObject.scene.path;
         if (string.IsNullOrEmpty(scenePath))
             throw new System.InvalidOperationException(
-                "PhysicsSmokeTest: the active scene must be saved to disk — it is reloaded afterwards to discard the simulated state.");
+                "PhysicsSmokeTest: the scene must be saved to disk — it is reloaded afterwards to discard the simulated state.");
 
         SimulationMode previousMode = Physics.simulationMode;
         try
         {
-            ArticulationBody root = FindRiggedRobotRoot();
             ArticulationBody[] wheels = FindWheels(root, out ArticulationBody[] leftWheels, out ArticulationBody[] rightWheels);
             Debug.Log($"PhysicsSmokeTest: validating '{root.name}' — {leftWheels.Length} left / {rightWheels.Length} right wheel links.");
 
@@ -244,7 +265,7 @@ public class PhysicsSmokeTest
             if (ab.isRoot && ab.CompareTag("Player")) return ab;
         }
         throw new System.InvalidOperationException(
-            "PhysicsSmokeTest: no root ArticulationBody tagged 'Player' in the scene — run Tools > VEX > Rig Drivetrain Articulation first.");
+            "PhysicsSmokeTest: no root ArticulationBody tagged 'Player' in the scene — run Tools > RoboSim > Robot > Advanced > Rig Motors and Wheel Joints first.");
     }
 
     // All revolute links under the root, split by side (link names carry LS/RS; fall back to

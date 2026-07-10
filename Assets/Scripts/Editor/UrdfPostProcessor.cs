@@ -25,7 +25,7 @@ using UnityEngine.InputSystem;
 // and registers the robot in the home-screen model catalog.
 //
 // Usage: import a URDF (GameObject > 3D Object > URDF Model (import)), select the
-// imported root, then Tools > VEX > Post-Process Imported URDF Robot and press Run.
+// imported root, then Tools > RoboSim > Robot > Advanced > Post-Process Imported URDF Robot and press Run.
 // RunBatchValidateTestbot is the headless end-to-end check for -executeMethod runs.
 public class UrdfPostProcessor : EditorWindow
 {
@@ -43,7 +43,7 @@ public class UrdfPostProcessor : EditorWindow
     [SerializeField] private bool replaceCollidersWithPartBoxes = true;
     [SerializeField] private string wheelNameSubstring = "wheel";
 
-    [MenuItem("Tools/VEX/Post-Process Imported URDF Robot")]
+    [MenuItem("Tools/RoboSim/Robot/Advanced/Post-Process Imported URDF Robot", false, 3)]
     private static void ShowWindow()
     {
         UrdfPostProcessor window = GetWindow<UrdfPostProcessor>("URDF Post-Process");
@@ -507,7 +507,9 @@ public class UrdfPostProcessor : EditorWindow
     // same wiring the scene's RobotDriveController uses. InputActionReference.Create would
     // instead make a NEW in-memory ScriptableObject that persists nowhere and goes null on
     // the next domain reload.
-    private static InputActionReference LoadActionReference(string actionName)
+    // Public because the drivetrain rig tool needs the same wiring when it rigs a freshly
+    // imported robot that has no old controller to lift the references from.
+    public static InputActionReference LoadActionReference(string actionName)
     {
         foreach (UnityEngine.Object obj in AssetDatabase.LoadAllAssetRepresentationsAtPath(InputActionsPath))
         {
@@ -515,7 +517,7 @@ public class UrdfPostProcessor : EditorWindow
             if (reference != null && reference.action != null && reference.action.name == actionName)
                 return reference;
         }
-        Debug.LogWarning($"Post-Process URDF Robot: action '{actionName}' not found in {InputActionsPath}; " +
+        Debug.LogWarning($"Action '{actionName}' not found in {InputActionsPath}; " +
                          "assign it on the RobotMotorController manually.");
         return null;
     }

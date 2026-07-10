@@ -26,7 +26,7 @@ public class FixFieldColliders
     private const string WallsName = "WallColliders";
     private const string LegacyRootName = "FieldPhysicsBounds"; // from the earlier version of this tool
 
-    [MenuItem("Tools/VEX/Setup Field Physics Bounds")]
+    [MenuItem("Tools/RoboSim/Field/Rebuild Floor and Wall Bounds", false, 1)]
     private static void SetupBounds()
     {
         GameObject floorTiles = GameObject.Find("FloorTiles");

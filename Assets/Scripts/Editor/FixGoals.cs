@@ -4,7 +4,7 @@ using System.Collections.Generic;
 
 public class FixGoals : EditorWindow
 {
-    [MenuItem("Tools/VEX Fixer/Goal Collider Spawner")]
+    [MenuItem("Tools/RoboSim/Field/Rebuild Goal Colliders", false, 2)]
     public static void ShowWindow()
     {
         GetWindow<FixGoals>("Goal Fixer");

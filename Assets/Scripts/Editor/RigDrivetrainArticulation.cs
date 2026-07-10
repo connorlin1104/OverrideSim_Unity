@@ -21,8 +21,9 @@ using UnityEngine.SceneManagement;
 // rotation, so link-local +X is already the axle (the wrapper's right axis) and no
 // anchorRotation gymnastics are needed.
 //
-// Usage: select the Robot object in the Hierarchy, then Tools > VEX > Rig Drivetrain
-// Articulation. Batch: -executeMethod RigDrivetrainArticulation.RunBatchOnRobot
+// Usage: select the Robot object in the Hierarchy, then
+// Tools > RoboSim > Robot > Advanced > Rig Motors and Wheel Joints.
+// Batch: -executeMethod RigDrivetrainArticulation.RunBatchOnRobot
 // (opens SampleScene, rigs the Robot, saves).
 public class RigDrivetrainArticulation
 {
@@ -37,7 +38,7 @@ public class RigDrivetrainArticulation
     private const float WheelMaxJointVelocity = 44f; // rad/s — 360 RPM (37.7 rad/s) plus headroom
     private const float AxleAngleToleranceDeg = 10f;
 
-    [MenuItem("Tools/VEX/Rig Drivetrain Articulation")]
+    [MenuItem("Tools/RoboSim/Robot/Advanced/Rig Motors and Wheel Joints", false, 2)]
     private static void RigSelected()
     {
         GameObject robot = Selection.activeGameObject;
@@ -86,7 +87,9 @@ public class RigDrivetrainArticulation
     // Converts the given robot wrapper into an ArticulationBody rig. Throws
     // InvalidOperationException with a user-readable message on any precondition failure
     // (all validation happens BEFORE the first mutation, so a throw leaves the scene intact).
-    public static void Rig(GameObject robot)
+    // wheelNamePrefix: null uses this project's drivetrain wheel name; pass a new robot's wheel
+    // node prefix when rigging a freshly imported mesh robot.
+    public static void Rig(GameObject robot, string wheelNamePrefix = null)
     {
         if (robot == null) throw new System.ArgumentNullException(nameof(robot));
         Transform wrapper = robot.transform;
@@ -97,7 +100,7 @@ public class RigDrivetrainArticulation
         // the links inherit them by reparenting, and inertia tensors are derived from them.
         if (robot.GetComponentsInChildren<Collider>(true).Length == 0)
             throw new System.InvalidOperationException(
-                $"No colliders found under '{robot.name}'. Run Tools > VEX > Generate Part Colliders first — " +
+                $"No colliders found under '{robot.name}'. Run Tools > RoboSim > Robot > Advanced > Rebuild Part Colliders first — " +
                 "wheel links need their sphere colliders before rigging.");
 
         // Idempotency guard: never double-rig.
@@ -105,12 +108,12 @@ public class RigDrivetrainArticulation
             throw new System.InvalidOperationException(
                 $"'{robot.name}' already contains an ArticulationBody — it appears to be rigged already.");
 
+        // A RobotDriveController is only present on the ORIGINAL velocity-driven robot; we lift
+        // its joystick action references before deleting it. A freshly imported robot has none,
+        // which is fine — the actions are then loaded straight from the input asset.
         RobotDriveController drive = robot.GetComponent<RobotDriveController>();
-        if (drive == null)
-            throw new System.InvalidOperationException(
-                $"'{robot.name}' has no RobotDriveController. Select the drive robot wrapper.");
 
-        List<RobotPartClassifier.WheelCluster> clusters = RobotPartClassifier.FindWheelClusters(robot);
+        List<RobotPartClassifier.WheelCluster> clusters = RobotPartClassifier.FindWheelClusters(robot, wheelNamePrefix);
         if (clusters == null || clusters.Count == 0)
             throw new System.InvalidOperationException(
                 $"RobotPartClassifier found no wheel clusters under '{robot.name}'; cannot rig.");
@@ -126,13 +129,23 @@ public class RigDrivetrainArticulation
 
         // 1) Capture the input action references off the old controller, then remove the old
         //    stack. The controller must go FIRST: its [RequireComponent(typeof(Rigidbody))]
-        //    blocks destroying the Rigidbody while the controller still exists.
-        SerializedObject driveSo = new SerializedObject(drive);
-        Object leftActionRef = driveSo.FindProperty("leftJoystickAction").objectReferenceValue;
-        Object rightActionRef = driveSo.FindProperty("rightJoystickAction").objectReferenceValue;
+        //    blocks destroying the Rigidbody while the controller still exists. When there is no
+        //    old controller (a fresh import), take the actions straight from the input asset.
+        Object leftActionRef, rightActionRef;
+        if (drive != null)
+        {
+            SerializedObject driveSo = new SerializedObject(drive);
+            leftActionRef = driveSo.FindProperty("leftJoystickAction").objectReferenceValue;
+            rightActionRef = driveSo.FindProperty("rightJoystickAction").objectReferenceValue;
+        }
+        else
+        {
+            leftActionRef = UrdfPostProcessor.LoadActionReference("LeftStick");
+            rightActionRef = UrdfPostProcessor.LoadActionReference("RightStick");
+        }
 
         Rigidbody oldBody = robot.GetComponent<Rigidbody>();
-        Undo.DestroyObjectImmediate(drive);
+        if (drive != null) Undo.DestroyObjectImmediate(drive);
         if (oldBody != null) Undo.DestroyObjectImmediate(oldBody);
 
         // 2) Root ArticulationBody on the wrapper — the free-floating chassis base. Same

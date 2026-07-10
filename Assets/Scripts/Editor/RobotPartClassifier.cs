@@ -12,7 +12,7 @@ using UnityEngine;
 //   - how to measure a named sub-group's bounds in the robot root's local space
 //     (same semantics as FixRobotCollider, shared here for reuse).
 //
-// Editor-only (lives in Editor/); used by Tools > VEX > Generate Part Colliders and rigging tools.
+// Editor-only (lives in Editor/); used by Tools > RoboSim > Robot > Advanced > Rebuild Part Colliders and rigging tools.
 public static class RobotPartClassifier
 {
     // Name tokens (checked case-insensitively against normalized names) for hardware that should
@@ -110,13 +110,16 @@ public static class RobotPartClassifier
     // bounds centers coincide (the FBX models each omni wheel as two stacked halves). Greedy
     // clustering is enough here: pair members are essentially concentric while distinct wheels are
     // several world units apart, so the first-match assignment can never straddle two wheels.
-    public static List<WheelCluster> FindWheelClusters(GameObject root)
+    // wheelNamePrefix defaults to this project's drivetrain ("3.25 AS Omni"); pass the wheel
+    // node prefix of a different robot to reuse the clustering on a new import.
+    public static List<WheelCluster> FindWheelClusters(GameObject root, string wheelNamePrefix = null)
     {
+        if (string.IsNullOrEmpty(wheelNamePrefix)) wheelNamePrefix = WheelNamePrefix;
         var clusters = new List<WheelCluster>();
 
         foreach (Transform node in root.GetComponentsInChildren<Transform>(true))
         {
-            if (!NormalizeName(node.name).StartsWith(WheelNamePrefix, System.StringComparison.OrdinalIgnoreCase))
+            if (!NormalizeName(node.name).StartsWith(wheelNamePrefix, System.StringComparison.OrdinalIgnoreCase))
                 continue;
 
             // Combined world bounds of the wheel subtree's renderers.
@@ -149,7 +152,17 @@ public static class RobotPartClassifier
             home.nodes.Add(node);
         }
 
-        if (clusters.Count != ExpectedWheelClusters)
+        // The 6-wheel expectation only describes THIS project's drivetrain, so it is only worth
+        // warning about when we searched with its wheel name. A different robot can legitimately
+        // have any number of wheels — but zero always means the name didn't match anything.
+        bool usingDefaultPrefix = wheelNamePrefix == WheelNamePrefix;
+        if (clusters.Count == 0)
+        {
+            Debug.LogWarning($"RobotPartClassifier: no wheel nodes under '{root.name}' start with " +
+                             $"'{wheelNamePrefix}'. Wheels will get box colliders and cannot be rigged " +
+                             "as motors — check the wheel node names.", root);
+        }
+        else if (usingDefaultPrefix && clusters.Count != ExpectedWheelClusters)
         {
             Debug.LogWarning($"RobotPartClassifier: expected {ExpectedWheelClusters} wheel clusters under " +
                              $"'{root.name}' but found {clusters.Count}. Check '{WheelNamePrefix}' node names " +
