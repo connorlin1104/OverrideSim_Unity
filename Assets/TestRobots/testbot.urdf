@@ -1,0 +1,134 @@
+<?xml version="1.0"?>
+<!--
+  Minimal hand-written differential-drive robot used to validate the URDF import
+  pipeline end-to-end (UrdfPostProcessor.RunBatchValidateTestbot, and handy for
+  manual testing of Tools > VEX > Post-Process Imported URDF Robot).
+
+  Authored in REAL units (meters, kilograms) in standard ROS frames (x forward,
+  y left, z up), exactly like a Fusion 360 / ACDC4Robot export - the post-processor
+  bakes the sim's 10x world scale afterwards. The importer's default Y-up conversion
+  (x,y,z)ros -> (-y,z,x)unity turns this into a level, +Z-facing robot in Unity.
+
+  Layout (base_link origin sits at wheel-axle height, 0.05 m above the ground):
+    - chassis: 0.4 x 0.3 x 0.1 m box, 3 kg, raised so its floor clears the ground
+    - two drive wheels: cylinders r=0.05 l=0.03, 0.3 kg, on continuous joints at
+      y = +/-0.17; axles along +y so EQUAL POSITIVE joint velocities drive forward
+    - rear sphere caster (fixed joint) sized so the robot rests level
+  All inertia tensors are the exact solid-primitive values for the given masses.
+-->
+<robot name="testbot">
+
+  <link name="base_link">
+    <inertial>
+      <mass value="3.0"/>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <!-- solid box m/12*(b^2+c^2) with x=0.4 y=0.3 z=0.1 -->
+      <inertia ixx="0.025" ixy="0" ixz="0" iyy="0.0425" iyz="0" izz="0.0625"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.4 0.3 0.1"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.4 0.3 0.1"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="left_wheel">
+    <inertial>
+      <mass value="0.3"/>
+      <!-- inertial frame rotated with the cylinder: izz is the spin axis term m*r^2/2,
+           ixx/iyy are m*(3r^2+h^2)/12 -->
+      <origin xyz="0 0 0" rpy="1.5707963267948966 0 0"/>
+      <inertia ixx="0.00021" ixy="0" ixz="0" iyy="0.00021" iyz="0" izz="0.000375"/>
+    </inertial>
+    <visual>
+      <!-- URDF cylinders stand along local z; roll them 90 deg about x so the
+           axle lies along the joint's y axis -->
+      <origin xyz="0 0 0" rpy="1.5707963267948966 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.03"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5707963267948966 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.03"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="right_wheel">
+    <inertial>
+      <mass value="0.3"/>
+      <origin xyz="0 0 0" rpy="1.5707963267948966 0 0"/>
+      <inertia ixx="0.00021" ixy="0" ixz="0" iyy="0.00021" iyz="0" izz="0.000375"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5707963267948966 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.03"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5707963267948966 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.03"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="caster">
+    <inertial>
+      <mass value="0.1"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <!-- solid sphere 2/5*m*r^2 -->
+      <inertia ixx="0.000025" ixy="0" ixz="0" iyy="0.000025" iyz="0" izz="0.000025"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.025"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.025"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Both wheel axes point along +y (robot left), so positive rotation moves the
+       tire's contact patch backward and the same positive velocity on both joints
+       drives the robot forward - no per-side sign flip needed. -->
+  <joint name="left_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="left_wheel"/>
+    <origin xyz="0.1 0.17 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="5" velocity="50"/>
+  </joint>
+
+  <joint name="right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="right_wheel"/>
+    <origin xyz="0.1 -0.17 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="5" velocity="50"/>
+  </joint>
+
+  <!-- Caster contact point = -0.025 (center) - 0.025 (radius) = -0.05, the same
+       height as the wheel contact patches, so the robot rests level. -->
+  <joint name="caster_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="caster"/>
+    <origin xyz="-0.18 0 -0.025" rpy="0 0 0"/>
+  </joint>
+
+</robot>
