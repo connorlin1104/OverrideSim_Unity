@@ -31,6 +31,10 @@ public class RobotModelCatalog : ScriptableObject
     {
         public string id;           // stable identifier persisted in PlayerPrefs
         public string displayName;  // what the home screen shows
+        // The robot prefab RobotSpawner instantiates into the field scene when this model is
+        // selected. Built by the Build Robot Prefabs & Spawner tool; null entries are skipped
+        // by the spawner (it falls back to the first entry that has one).
+        public GameObject prefab;
         public List<MechanismInfo> mechanisms = new List<MechanismInfo>();
     }
 
@@ -60,6 +64,22 @@ public class RobotModelCatalog : ScriptableObject
         {
             PlayerPrefs.SetString(SelectedModelPrefKey, value);
             PlayerPrefs.Save(); // flush immediately so a crash/force-quit doesn't lose the choice
+        }
+    }
+
+    // The Entry for the current selection (mirrors SelectedModelId's fallback), or null if the
+    // catalog is empty. RobotSpawner reads this to know which prefab to place on the field.
+    public Entry SelectedModel
+    {
+        get
+        {
+            string id = SelectedModelId;
+            if (id == null || models == null) return null;
+            foreach (Entry entry in models)
+            {
+                if (entry != null && entry.id == id) return entry;
+            }
+            return null;
         }
     }
 }

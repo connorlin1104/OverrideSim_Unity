@@ -1,7 +1,9 @@
+using System.Collections.Generic;
 using UnityEngine;
 
-// Applies the player's on-screen control settings — size (JoystickSettings.Scale) and opacity
-// (ControlsOpacitySettings.Opacity) — to the field scene's joysticks and controller buttons.
+// Applies the player's on-screen control settings — size (JoystickSettings.Scale), opacity
+// (ControlsOpacitySettings.Opacity), and per-group position (ControlsLayoutSettings) — to the
+// field scene's joysticks and controller buttons.
 // Supersedes the old JoystickScaler (size-only, sticks-only). Lives on the field scene's
 // Canvas; the Build Drive Controls tool wires the joystick backgrounds, the four button
 // cluster roots, and the CanvasGroups that carry the opacity.
@@ -39,6 +41,11 @@ public class ControlsAppearance : MonoBehaviour
     [Tooltip("CanvasGroups on every on-screen control root; alpha = the opacity setting.")]
     [SerializeField] private CanvasGroup[] opacityGroups;
 
+    // Each control's authored anchoredPosition, captured the first time Apply() runs (the scene
+    // loads fresh with the authored values, before any offset is applied). Saved offsets are
+    // added to THIS base every Apply, so re-applying never compounds.
+    private readonly Dictionary<RectTransform, Vector2> basePositions = new Dictionary<RectTransform, Vector2>();
+
     void OnEnable()
     {
         Apply();
@@ -53,7 +60,9 @@ public class ControlsAppearance : MonoBehaviour
         {
             foreach (RectTransform joystick in joysticks)
             {
-                if (joystick != null) joystick.localScale = new Vector3(scale, scale, 1f);
+                if (joystick == null) continue;
+                joystick.localScale = new Vector3(scale, scale, 1f);
+                ApplyPosition(joystick);
             }
         }
 
@@ -67,7 +76,9 @@ public class ControlsAppearance : MonoBehaviour
         {
             foreach (RectTransform cluster in buttonClusters)
             {
-                if (cluster != null) cluster.localScale = new Vector3(buttonScale, buttonScale, 1f);
+                if (cluster == null) continue;
+                cluster.localScale = new Vector3(buttonScale, buttonScale, 1f);
+                ApplyPosition(cluster);
             }
         }
 
@@ -79,5 +90,19 @@ public class ControlsAppearance : MonoBehaviour
                 if (group != null) group.alpha = opacity;
             }
         }
+    }
+
+    // Offset a control from its authored position by the player's saved layout delta. The base is
+    // captured once (keyed by the control's GameObject name, which matches ControlsLayout), so
+    // repeated Apply() calls never accumulate. The delta is a screen-space (right/up) offset in
+    // reference pixels — the same axes as anchoredPosition — so it transfers straight through.
+    private void ApplyPosition(RectTransform control)
+    {
+        if (!basePositions.TryGetValue(control, out Vector2 basePosition))
+        {
+            basePosition = control.anchoredPosition;
+            basePositions[control] = basePosition;
+        }
+        control.anchoredPosition = basePosition + ControlsLayoutSettings.GetOffset(control.name);
     }
 }

@@ -715,7 +715,7 @@ public class UrdfPostProcessor : EditorWindow
     // Shared batch-import boilerplate: scratch scene + synchronous URDF import. The scratch
     // scene must exist FIRST so the importer instantiates the robot into it; the selection is
     // cleared because ImportPipelinePostCreate parents the new robot under Selection.activeObject.
-    private static GameObject ImportUrdfIntoScratchScene(string urdfAssetPath)
+    internal static GameObject ImportUrdfIntoScratchScene(string urdfAssetPath)
     {
         AssetDatabase.Refresh(); // a freshly copied .urdf must be known to the asset database
         string urdfFullPath = Path.GetFullPath(urdfAssetPath);

@@ -55,16 +55,25 @@ public class BuildHomeScene
     [MenuItem("Tools/RoboSim/Scenes/Build Home Screen", false, 1)]
     private static void BuildInteractive()
     {
-        Build(true);
+        Build(true, false);
     }
 
-    // Batch entry point for -executeMethod: no dialogs, throws on failure (nonzero exit).
+    // Force a full rebuild even when a valid HomeScene already exists — use after changing the
+    // home-screen UI code. The default menu item above skips the rebuild when it isn't needed.
+    [MenuItem("Tools/RoboSim/Scenes/Rebuild Home Screen (Force)", false, 3)]
+    private static void RebuildInteractive()
+    {
+        Build(true, true);
+    }
+
+    // Batch entry point for -executeMethod: no dialogs, throws on failure (nonzero exit). Always
+    // forces a clean rebuild so CI is deterministic from any checkout.
     public static void RunBatch()
     {
-        Build(false);
+        Build(false, true);
     }
 
-    private static void Build(bool interactive)
+    private static void Build(bool interactive, bool force)
     {
         // 1) TMP essential resources (fonts/shaders/settings) must exist before we create
         //    any TextMeshProUGUI, or the labels have no default font.
@@ -75,53 +84,34 @@ public class BuildHomeScene
         bool catalogCreated;
         RobotModelCatalog catalog = EnsureCatalog(out catalogCreated);
 
-        // 3) Rebuild the home scene from scratch (idempotent by construction).
         string previousScenePath = SceneManager.GetActiveScene().path;
         if (interactive && !EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
         {
             Debug.Log("Build Home Scene: cancelled at the save prompt; nothing changed.");
             return;
         }
-        Scene homeScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-        BuildHomeSceneContents(catalog);
-        EditorSceneManager.SaveScene(homeScene, HomeScenePath);
 
-        // Cross-asset references can fail to persist when the referenced asset was created in
-        // the same batch as the scene save (the shipped scene once carried catalog: {fileID: 0}
-        // and the model list was silently dead on device). Reload from disk and prove the
-        // catalog reference survived.
-        Scene reloaded = EditorSceneManager.OpenScene(HomeScenePath, OpenSceneMode.Single);
-        HomeScreenController saved = null;
-        foreach (GameObject rootGo in reloaded.GetRootGameObjects())
+        // 3) Rebuild the home scene ONLY when needed: a full teardown+rebuild is skipped when a
+        //    valid HomeScene already exists (fast, no scene churn). Force (or a missing/broken
+        //    scene) does the from-scratch rebuild. The field-scene edits below run either way and
+        //    are idempotent.
+        string rebuildStatus;
+        if (!force && HomeSceneIsValid())
         {
-            saved = rootGo.GetComponentInChildren<HomeScreenController>(true);
-            if (saved != null) break;
+            rebuildStatus = "skipped (already built; use Rebuild Home Screen (Force) to regenerate)";
         }
-        SerializedProperty savedCatalog = saved != null
-            ? new SerializedObject(saved).FindProperty("catalog") : null;
-        if (savedCatalog == null || savedCatalog.objectReferenceValue == null)
+        else
         {
-            const string msg = "Build Home Scene: the saved HomeScene lost its RobotModelCatalog " +
-                               "reference — the model list would never build at runtime.";
-            Debug.LogError(msg);
-            if (interactive) { EditorUtility.DisplayDialog("Build Home Scene", msg, "OK"); return; }
-            throw new InvalidOperationException(msg);
-        }
-        ControllerConfigScreen savedConfig = null;
-        foreach (GameObject rootGo in reloaded.GetRootGameObjects())
-        {
-            savedConfig = rootGo.GetComponentInChildren<ControllerConfigScreen>(true);
-            if (savedConfig != null) break;
-        }
-        SerializedProperty savedConfigCatalog = savedConfig != null
-            ? new SerializedObject(savedConfig).FindProperty("catalog") : null;
-        if (savedConfigCatalog == null || savedConfigCatalog.objectReferenceValue == null)
-        {
-            const string msg = "Build Home Scene: the saved HomeScene lost the ControllerConfigScreen's " +
-                               "RobotModelCatalog reference — the mapping screen would show no mechanisms.";
-            Debug.LogError(msg);
-            if (interactive) { EditorUtility.DisplayDialog("Build Home Scene", msg, "OK"); return; }
-            throw new InvalidOperationException(msg);
+            Scene homeScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            BuildHomeSceneContents(catalog);
+            EditorSceneManager.SaveScene(homeScene, HomeScenePath);
+
+            // Cross-asset references can fail to persist when the referenced asset was created in
+            // the same batch as the scene save (the shipped scene once carried catalog: {fileID: 0}
+            // and the model list was silently dead on device). Reload from disk and prove the
+            // catalog reference survived.
+            if (!VerifySavedWiring(interactive)) return;
+            rebuildStatus = force ? "rebuilt (forced)" : "rebuilt (was missing or invalid)";
         }
 
         // 4) Build settings: home screen boots the app at index 0, the field scene follows.
@@ -152,8 +142,78 @@ public class BuildHomeScene
 
         Debug.Log($"Build Home Scene: TMP essentials {(tmpImported ? "imported" : "already present")}, " +
                   $"catalog {(catalogCreated ? "created at " + CatalogPath : "found")}, " +
-                  $"rebuilt {HomeScenePath}, build settings = [HomeScene, SampleScene], " +
+                  $"HomeScene {rebuildStatus}, build settings = [HomeScene, SampleScene], " +
                   $"field Home button {homeButtonStatus}, controls appearance {appearanceStatus}.");
+    }
+
+    // Is there already a valid HomeScene so a full rebuild can be skipped? True when the scene
+    // exists and its HomeScreenController's catalog + controller-config + controls-layout
+    // references all survived (an older scene missing the layout screen counts as invalid, so the
+    // first run after adding it rebuilds once, then subsequent runs skip). Opens the scene to
+    // inspect it — the caller has already offered to save the current one.
+    private static bool HomeSceneIsValid()
+    {
+        if (!File.Exists(HomeScenePath)) return false;
+        Scene scene = EditorSceneManager.OpenScene(HomeScenePath, OpenSceneMode.Single);
+        HomeScreenController controller = null;
+        foreach (GameObject rootGo in scene.GetRootGameObjects())
+        {
+            controller = rootGo.GetComponentInChildren<HomeScreenController>(true);
+            if (controller != null) break;
+        }
+        if (controller == null) return false;
+        SerializedObject so = new SerializedObject(controller);
+        return IsRefSet(so, "catalog") && IsRefSet(so, "controllerConfig") && IsRefSet(so, "controlsLayout");
+    }
+
+    private static bool IsRefSet(SerializedObject so, string propertyName)
+    {
+        SerializedProperty property = so.FindProperty(propertyName);
+        return property != null && property.objectReferenceValue != null;
+    }
+
+    // Reloads the just-saved HomeScene from disk and proves the critical cross-asset references
+    // survived the save. Returns false (after logging + a dialog in interactive mode) when a
+    // reference was lost; throws in batch mode so -executeMethod exits nonzero.
+    private static bool VerifySavedWiring(bool interactive)
+    {
+        Scene reloaded = EditorSceneManager.OpenScene(HomeScenePath, OpenSceneMode.Single);
+        HomeScreenController saved = null;
+        foreach (GameObject rootGo in reloaded.GetRootGameObjects())
+        {
+            saved = rootGo.GetComponentInChildren<HomeScreenController>(true);
+            if (saved != null) break;
+        }
+        SerializedProperty savedCatalog = saved != null
+            ? new SerializedObject(saved).FindProperty("catalog") : null;
+        if (savedCatalog == null || savedCatalog.objectReferenceValue == null)
+        {
+            const string msg = "Build Home Scene: the saved HomeScene lost its RobotModelCatalog " +
+                               "reference — the model list would never build at runtime.";
+            Debug.LogError(msg);
+            if (!interactive) throw new InvalidOperationException(msg);
+            EditorUtility.DisplayDialog("Build Home Scene", msg, "OK");
+            return false;
+        }
+
+        ControllerConfigScreen savedConfig = null;
+        foreach (GameObject rootGo in reloaded.GetRootGameObjects())
+        {
+            savedConfig = rootGo.GetComponentInChildren<ControllerConfigScreen>(true);
+            if (savedConfig != null) break;
+        }
+        SerializedProperty savedConfigCatalog = savedConfig != null
+            ? new SerializedObject(savedConfig).FindProperty("catalog") : null;
+        if (savedConfigCatalog == null || savedConfigCatalog.objectReferenceValue == null)
+        {
+            const string msg = "Build Home Scene: the saved HomeScene lost the ControllerConfigScreen's " +
+                               "RobotModelCatalog reference — the mapping screen would show no mechanisms.";
+            Debug.LogError(msg);
+            if (!interactive) throw new InvalidOperationException(msg);
+            EditorUtility.DisplayDialog("Build Home Scene", msg, "OK");
+            return false;
+        }
+        return true;
     }
 
     // --- Step 1: TMP essentials ---
@@ -312,6 +372,11 @@ public class BuildHomeScene
             "Configure Controller", 40f, AccentColor);
         SetLayoutHeight(configureButton.gameObject, 84f);
 
+        // Entry point to the drag-to-reposition control layout screen.
+        Button editLayoutButton = CreateButton("EditLayoutButton", settingsPanel.transform,
+            "Edit Control Layout", 40f, AccentColor);
+        SetLayoutHeight(editLayoutButton.gameObject, 84f);
+
         Button backButton = CreateButton("BackButton", settingsPanel.transform, "Back", 44f, AccentColor);
         SetLayoutHeight(backButton.gameObject, 96f);
 
@@ -319,6 +384,9 @@ public class BuildHomeScene
 
         // Controller config panel (inactive; opened from Settings > Configure Controller).
         ControllerConfigParts configParts = BuildControllerConfigPanel(canvasGo.transform);
+
+        // Control layout panel (inactive; opened from Settings > Edit Control Layout).
+        ControlsLayoutParts layoutParts = BuildControlsLayoutPanel(canvasGo.transform);
 
         // Controller root: wire the private serialized refs (same SerializedObject pattern
         // as the Fix Robot Drive Collider tool) and persistent onClicks so everything
@@ -365,6 +433,18 @@ public class BuildHomeScene
         configSo.ApplyModifiedPropertiesWithoutUndo();
 
         so.FindProperty("controllerConfig").objectReferenceValue = configScreen;
+
+        // Controls layout screen: same root object, wired to the preview it drives.
+        ControlsLayoutScreen layoutScreen = homeRoot.AddComponent<ControlsLayoutScreen>();
+        SerializedObject layoutSo = new SerializedObject(layoutScreen);
+        layoutSo.FindProperty("panel").objectReferenceValue = layoutParts.panel;
+        SerializedProperty proxiesProp = layoutSo.FindProperty("proxies");
+        proxiesProp.arraySize = layoutParts.proxies.Length;
+        for (int i = 0; i < layoutParts.proxies.Length; i++)
+            proxiesProp.GetArrayElementAtIndex(i).objectReferenceValue = layoutParts.proxies[i];
+        layoutSo.ApplyModifiedPropertiesWithoutUndo();
+
+        so.FindProperty("controlsLayout").objectReferenceValue = layoutScreen;
         so.ApplyModifiedPropertiesWithoutUndo();
 
         UnityEventTools.AddPersistentListener(driveButton.onClick, controller.OnDrivePressed);
@@ -372,6 +452,9 @@ public class BuildHomeScene
         UnityEventTools.AddPersistentListener(backButton.onClick, controller.OnBackPressed);
         UnityEventTools.AddPersistentListener(configureButton.onClick, controller.OnConfigureControllerPressed);
         UnityEventTools.AddPersistentListener(configParts.backButton.onClick, controller.OnConfigBackPressed);
+        UnityEventTools.AddPersistentListener(editLayoutButton.onClick, controller.OnEditLayoutPressed);
+        UnityEventTools.AddPersistentListener(layoutParts.backButton.onClick, controller.OnLayoutBackPressed);
+        UnityEventTools.AddPersistentListener(layoutParts.resetButton.onClick, layoutScreen.OnResetPressed);
     }
 
     // --- Controller config panel ---
@@ -592,6 +675,113 @@ public class BuildHomeScene
         captionRect.pivot = new Vector2(0.5f, 0.5f);
         captionRect.anchoredPosition = new Vector2(position.x, position.y - 92f);
         captionRect.sizeDelta = new Vector2(240f, 28f);
+    }
+
+    // --- Control layout panel ---
+
+    private class ControlsLayoutParts
+    {
+        public GameObject panel;
+        public DraggableControlProxy[] proxies;
+        public Button resetButton;
+        public Button backButton;
+    }
+
+    // Near-fullscreen panel for repositioning the on-screen controls: a scaled 1920x1080 preview
+    // of the field with one draggable proxy tile per control group (joysticks, shoulder pairs,
+    // arrow diamond, XYAB diamond). The preview's LOCAL space is the 1920x1080 reference (a
+    // localScale shrinks it to fit), so a proxy's anchoredPosition is in reference pixels and the
+    // drag delta transfers 1:1 to the real control. DraggableControlProxy saves the deltas;
+    // ControlsAppearance applies them in the field scene.
+    private static ControlsLayoutParts BuildControlsLayoutPanel(Transform canvas)
+    {
+        var parts = new ControlsLayoutParts();
+
+        GameObject panel = CreatePanel("ControlsLayoutPanel", canvas, new Vector2(1700f, 980f));
+        parts.panel = panel;
+
+        TextMeshProUGUI header = CreateText("LayoutHeader", panel.transform, "Edit Control Layout", 48f);
+        header.fontStyle = FontStyles.Bold;
+        RectTransform headerRect = header.rectTransform;
+        headerRect.anchorMin = headerRect.anchorMax = new Vector2(0.5f, 1f);
+        headerRect.pivot = new Vector2(0.5f, 1f);
+        headerRect.anchoredPosition = new Vector2(0f, -20f);
+        headerRect.sizeDelta = new Vector2(1200f, 60f);
+
+        TextMeshProUGUI hint = CreateText("LayoutHint", panel.transform,
+            "Drag each control to reposition it. Arrows and X/Y/A/B each move as one group.", 26f);
+        RectTransform hintRect = hint.rectTransform;
+        hintRect.anchorMin = hintRect.anchorMax = new Vector2(0.5f, 1f);
+        hintRect.pivot = new Vector2(0.5f, 1f);
+        hintRect.anchoredPosition = new Vector2(0f, -82f);
+        hintRect.sizeDelta = new Vector2(1500f, 40f);
+
+        // The preview: local space = 1920x1080 reference, scaled to fit under the header.
+        GameObject preview = CreateUIObject("LayoutPreview", panel.transform);
+        RectTransform previewRect = (RectTransform)preview.transform;
+        previewRect.anchorMin = previewRect.anchorMax = new Vector2(0.5f, 0.5f);
+        previewRect.pivot = new Vector2(0.5f, 0.5f);
+        previewRect.anchoredPosition = new Vector2(0f, -20f);
+        previewRect.sizeDelta = new Vector2(1920f, 1080f);
+        previewRect.localScale = new Vector3(0.7f, 0.7f, 1f); // 1344x756 on screen
+        Image previewImage = preview.AddComponent<Image>();
+        previewImage.sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Background.psd");
+        previewImage.type = Image.Type.Sliced;
+        previewImage.color = ListColor;
+        previewImage.raycastTarget = false; // drags belong to the proxies, not the backdrop
+
+        parts.proxies = new DraggableControlProxy[ControlsLayout.Controls.Length];
+        for (int i = 0; i < ControlsLayout.Controls.Length; i++)
+            parts.proxies[i] = BuildLayoutProxy(previewRect, ControlsLayout.Controls[i]);
+
+        parts.resetButton = CreateButton("LayoutResetButton", panel.transform, "Reset", 34f, NeutralColor);
+        RectTransform resetRect = (RectTransform)parts.resetButton.transform;
+        resetRect.anchorMin = resetRect.anchorMax = new Vector2(0.5f, 0f);
+        resetRect.pivot = new Vector2(1f, 0f);
+        resetRect.anchoredPosition = new Vector2(-12f, 18f);
+        resetRect.sizeDelta = new Vector2(240f, 64f);
+
+        parts.backButton = CreateButton("LayoutBackButton", panel.transform, "Back", 34f, AccentColor);
+        RectTransform backRect = (RectTransform)parts.backButton.transform;
+        backRect.anchorMin = backRect.anchorMax = new Vector2(0.5f, 0f);
+        backRect.pivot = new Vector2(0f, 0f);
+        backRect.anchoredPosition = new Vector2(12f, 18f);
+        backRect.sizeDelta = new Vector2(240f, 64f);
+
+        panel.SetActive(false); // ControlsLayoutScreen.Open shows it
+        return parts;
+    }
+
+    // One draggable proxy tile (label + image) inside the preview, standing in for a field control.
+    private static DraggableControlProxy BuildLayoutProxy(RectTransform previewRect, ControlsLayout.ControlInfo info)
+    {
+        GameObject go = CreateUIObject(info.name + "Proxy", previewRect);
+        RectTransform rect = (RectTransform)go.transform;
+        rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = info.previewCenter;
+        rect.sizeDelta = info.previewSize;
+
+        Image image = go.AddComponent<Image>();
+        image.sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+        image.type = Image.Type.Sliced;
+        image.color = AccentColor;
+        // raycastTarget stays true: the image is the drag handle.
+
+        TextMeshProUGUI label = CreateText("Label", go.transform, info.label, 30f);
+        label.fontStyle = FontStyles.Bold;
+        label.raycastTarget = false;
+        RectTransform labelRect = label.rectTransform;
+        labelRect.anchorMin = Vector2.zero;
+        labelRect.anchorMax = Vector2.one;
+        labelRect.offsetMin = Vector2.zero;
+        labelRect.offsetMax = Vector2.zero;
+
+        DraggableControlProxy proxy = go.AddComponent<DraggableControlProxy>();
+        proxy.controlName = info.name;
+        proxy.dragArea = previewRect;
+        proxy.basePosition = info.previewCenter;
+        return proxy;
     }
 
     // Point the UI module at the package's DefaultInputActions asset (what the field scene's

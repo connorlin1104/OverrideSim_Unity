@@ -49,6 +49,10 @@ public class HomeScreenController : MonoBehaviour
     [Tooltip("The Configure Controller sub-screen (button -> mechanism mapping).")]
     [SerializeField] private ControllerConfigScreen controllerConfig;
 
+    [Header("Controls Layout")]
+    [Tooltip("The Edit Control Layout sub-screen (drag on-screen controls to reposition them).")]
+    [SerializeField] private ControlsLayoutScreen controlsLayout;
+
     // Clones built from the template, paired with the catalog id each one selects.
     private readonly List<KeyValuePair<Button, string>> modelButtons = new List<KeyValuePair<Button, string>>();
 
@@ -90,6 +94,19 @@ public class HomeScreenController : MonoBehaviour
     public void OnConfigBackPressed()
     {
         if (controllerConfig != null) controllerConfig.Close();
+        if (settingsPanel != null) settingsPanel.SetActive(true);
+    }
+
+    public void OnEditLayoutPressed()
+    {
+        if (controlsLayout == null) return; // older scene without the layout screen
+        if (settingsPanel != null) settingsPanel.SetActive(false);
+        controlsLayout.Open();
+    }
+
+    public void OnLayoutBackPressed()
+    {
+        if (controlsLayout != null) controlsLayout.Close();
         if (settingsPanel != null) settingsPanel.SetActive(true);
     }
 
