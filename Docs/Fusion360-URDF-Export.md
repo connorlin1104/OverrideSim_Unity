@@ -14,8 +14,7 @@ optional — you can fix mass and joints on the Unity side. Follow it top to bot
 4. Select the imported root → **Tools ▸ RoboSim ▸ Robot ▸ Set Up Imported Robot** → **Set Up Robot**.
 5. Any joint that came in wrong or welded? **Tools ▸ RoboSim ▸ Robot ▸ Advanced ▸ Add or Fix
    Mechanism Joint**.
-6. To put it in the home-screen picker: save it as a prefab in `Assets/Robots/` and link it in the
-   catalog (see §6).
+6. Put it in the home-screen picker: **Tools ▸ RoboSim ▸ Robot ▸ Save As Robot Prefab** (see §6).
 7. Press Play and drive.
 
 ---
@@ -118,18 +117,19 @@ re-modelling it in Fusion.
 
 ## 6. Make it selectable in the home-screen picker
 
-Set Up Imported Robot adds a **catalog entry** so your robot shows up in the model picker, but the
-picker spawns the entry's **prefab**, which a fresh import doesn't have yet. Link one:
+Set Up Imported Robot adds a **catalog entry** so your robot lists in the model picker, but the
+picker spawns the entry's **prefab**, which a fresh import doesn't have yet. One tool does both:
 
-1. With the set-up robot in the scene, drag its root into **`Assets/Robots/`** to save it as a
-   prefab (keep the whole thing — the internal wheel/mechanism refs travel with it).
-2. Open **`Assets/Settings/RobotModelCatalog.asset`**, find your robot's entry (its **Id** is the
-   slug of the robot's name), and set the entry's **Prefab** field to the prefab you just made.
-3. The **RobotSpawner** already in SampleScene spawns whatever the picker has selected, so it now
-   spawns yours. Delete any leftover inline copy of your robot from SampleScene.
+1. Select the set-up robot root, then **Tools ▸ RoboSim ▸ Robot ▸ Save As Robot Prefab**.
+2. Press **Save Prefab & Link to Picker**. It saves the robot to `Assets/Robots/<name>.prefab`,
+   links that prefab to its catalog entry, and — with **Remove Inline Copy** on — deletes the scene
+   instance so SampleScene's RobotSpawner doesn't spawn a duplicate at Play. Save the scene.
 
-> The **Build Robot Prefabs & Spawner** tool is specific to the built-in 360 RPM Drivetrain
-> migration — it won't build your bot's prefab, so do the two steps above by hand for a new robot.
+That's it: the robot now appears in the home-screen picker and spawns when selected.
+
+> By hand instead: drag the robot into `Assets/Robots/` to make a prefab, then set that prefab on
+> the robot's entry (Id = slug of its name) in `Assets/Settings/RobotModelCatalog.asset`. (The
+> **Build Robot Prefabs & Spawner** tool only handles the built-in 360 drivetrain.)
 
 ## 7. Known caveats
 
