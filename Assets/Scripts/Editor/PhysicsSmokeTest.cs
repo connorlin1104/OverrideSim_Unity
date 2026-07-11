@@ -55,7 +55,7 @@ public class PhysicsSmokeTest
         {
             ValidateActiveScene();
             EditorUtility.DisplayDialog(MenuTitle,
-                "All physics smoke tests PASSED (settle, drive, turn).\nSee the Console for details.", "OK");
+                "All physics smoke tests PASSED (settle, turn, drive).\nSee the Console for details.", "OK");
         }
         catch (System.Exception e)
         {
@@ -68,7 +68,7 @@ public class PhysicsSmokeTest
     {
         EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
         ValidateActiveScene();
-        Debug.Log("PhysicsSmokeTest: ALL PASS (settle, drive, turn).");
+        Debug.Log("PhysicsSmokeTest: ALL PASS (settle, turn, drive).");
     }
 
     // Runs all three phases against the rigged robot in the active scene. Throws on FAIL.
@@ -110,9 +110,14 @@ public class PhysicsSmokeTest
 
             Physics.simulationMode = SimulationMode.Script;
 
+            // Turn BEFORE drive: the turn is measured in place at the clean settled start pose.
+            // Driving first sent the robot ~12 units across the populated field, and what it
+            // plowed into decided whether the turn could happen at all — with the funnel's
+            // concave colliders actually catching pieces now, the robot ended the drive wedged
+            // on one and the turn assert failed for environmental (not rig) reasons.
             RunSettleTest(root);
-            RunDriveTest(root, wheels);
             RunTurnTest(root, leftWheels, rightWheels);
+            RunDriveTest(root, wheels);
         }
         finally
         {

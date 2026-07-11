@@ -106,6 +106,24 @@ public static class RobotPartClassifier
         return false;
     }
 
+    // Plastic/polycarb structural parts (funnels, web panels) — the parts whose shape matters
+    // enough for convex-hull decomposition instead of boxes. Name tokens observed in this
+    // project's Fusion exports: "Polycarb Funnel", "276-*-00N Web"; "Plastic"/"Lexan" cover
+    // other CAD naming conventions.
+    private static readonly string[] PlasticTokens = { "Polycarb", "Funnel", "Web", "Plastic", "Lexan" };
+
+    // True when the (normalized) name reads as a plastic/polycarb part. Same ancestor-chain
+    // caveat as IsFastener: meshes live on generic "Body1" leaves, test the whole chain.
+    public static bool IsPlastic(string rawName)
+    {
+        string name = NormalizeName(rawName);
+        foreach (string token in PlasticTokens)
+        {
+            if (name.IndexOf(token, System.StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        }
+        return false;
+    }
+
     // Finds every wheel-named node under root and greedily merges the ones whose subtree renderer
     // bounds centers coincide (the FBX models each omni wheel as two stacked halves). Greedy
     // clustering is enough here: pair members are essentially concentric while distinct wheels are

@@ -63,6 +63,26 @@ public static class GeneratePartColliders
     private const float ObbMinAngleDegrees = 2f;
     private const string ObbChildName = "_OBBCollider";
 
+    // --- Fill-ratio triage: tighter colliders for parts a single box grossly over-covers ---
+    // Everything below works from fill = meshVolume / referenceBoxVolume (the tighter of the
+    // AABB/OBB). Solid-ish parts (gears ~0.79, boxes 1.0) keep the classic single box.
+    private const float FillRatioSingleBox = 0.55f;
+    // Below this fill, PLASTIC parts (RobotPartClassifier.IsPlastic: the Polycarb Funnel and
+    // the 276-* Web panels) get VHACD convex hulls — the only shape that makes a dish/bend
+    // physically real in every axis on a dynamic articulation (non-convex MeshColliders are
+    // illegal there). The gate is name-based on purpose: a purely geometric one either missed
+    // the funnel (a near-flat dish) or hulled ~29 gears/motor caps for 282 colliders.
+    private const float FillRatioVhacd = 0.4f;
+    private const int MaxSlabs = 6;
+    // Slab decomposition is kept only when its boxes' total volume beats the single box by at
+    // least this margin; a FLAT panel fails this and falls back to its (already tight) box.
+    private const float SlabAcceptRatio = 0.7f;
+    private const string SlabChildName = "_SlabCollider";
+    private const uint VhacdMaxHulls = 10;
+    private const uint VhacdResolution = 100000;
+    // Hull meshes must be persisted or the saved scene's MeshColliders reference dead meshes.
+    private const string HullAssetRootFolder = "Assets/RobotColliders";
+
     // PCA axis fitting samples at most this many vertices (min/max projection still uses all
     // vertices, so the box always contains the whole mesh).
     private const int MaxPcaSamples = 5000;
@@ -71,6 +91,7 @@ public static class GeneratePartColliders
     public class Report
     {
         public int boxCount, obbChildCount, sphereCount, skippedFasteners, skippedDegenerate;
+        public int slabParts, slabBoxCount, vhacdParts, hullCount;
         public List<RobotPartClassifier.WheelCluster> wheelClusters;
     }
 
@@ -117,7 +138,8 @@ public static class GeneratePartColliders
             throw new System.InvalidOperationException($"Generate Part Colliders: failed to save {ScenePath}.");
 
         Debug.Log($"Generate Part Colliders (batch): '{robot.name}' in {ScenePath} → {report.sphereCount} wheel " +
-                  $"sphere(s), {report.boxCount} box(es), {report.obbChildCount} OBB box(es); skipped " +
+                  $"sphere(s), {report.boxCount} box(es), {report.obbChildCount} OBB box(es), " +
+                  $"{report.slabBoxCount} slab box(es), {report.hullCount} convex hull(s); skipped " +
                   $"{report.skippedFasteners} fastener(s), {report.skippedDegenerate} decal(s). Scene saved.");
     }
 
@@ -138,16 +160,18 @@ public static class GeneratePartColliders
         var report = new Report();
 
         // 1) Strip everything a previous run (or the old fix tools) left behind: the _OBBCollider
-        //    child objects first (so we don't orphan empties), then every remaining collider.
+        //    and _SlabCollider child objects first (so we don't orphan empties), then every
+        //    remaining collider, then the previous run's persisted hull meshes.
         foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
         {
-            if (t != null && t.gameObject != null && t.name == ObbChildName)
+            if (t != null && t.gameObject != null && (t.name == ObbChildName || t.name == SlabChildName))
                 Undo.DestroyObjectImmediate(t.gameObject);
         }
         foreach (Collider col in root.GetComponentsInChildren<Collider>(true))
         {
             if (col != null) Undo.DestroyObjectImmediate(col);
         }
+        AssetDatabase.DeleteAsset(HullAssetRootFolder + "/" + SanitizeFileName(root.name));
 
         // 2) Wheels: one sphere per physical wheel, on the cluster's shallowest node.
         var clusters = RobotPartClassifier.FindWheelClusters(root, wheelNamePrefix);
@@ -203,9 +227,37 @@ public static class GeneratePartColliders
             // space; an ancestor's uniform 10x scale applies to both identically.
             Vector3 aabbSize = mesh.bounds.size;
             float aabbVolume = aabbSize.x * aabbSize.y * aabbSize.z;
-            if (TryComputeObb(mesh, out Vector3 obbCenter, out Quaternion obbRotation, out Vector3 obbSize)
+            bool useObb = TryComputeObb(mesh, out Vector3 obbCenter, out Quaternion obbRotation, out Vector3 obbSize)
                 && obbSize.x * obbSize.y * obbSize.z < ObbMaxVolumeRatio * aabbVolume
-                && Quaternion.Angle(Quaternion.identity, obbRotation) > ObbMinAngleDegrees)
+                && Quaternion.Angle(Quaternion.identity, obbRotation) > ObbMinAngleDegrees;
+
+            // Fill-ratio triage: how much of its reference box does the part actually occupy?
+            // Open/non-manifold meshes yield garbage volumes (<= 0 or bigger than the box) —
+            // those read as "solid" and keep the single-box path.
+            Vector3 refSize = useObb ? obbSize : aabbSize;
+            float refVolume = refSize.x * refSize.y * refSize.z;
+            float meshVolume = ComputeMeshVolume(mesh);
+            float fill = (meshVolume > 0f && !float.IsNaN(meshVolume) && meshVolume <= refVolume)
+                ? meshVolume / Mathf.Max(refVolume, 1e-12f)
+                : 1f;
+
+            if (fill < FillRatioSingleBox)
+            {
+                // Very hollow plastic (the funnel's dish, the webs' bends): convex decomposition
+                // follows the shape in every axis. Falls through to slabs when VHACD is
+                // unavailable or produces nothing.
+                if (fill < FillRatioVhacd && IsUnderPlastic(mf.transform, root.transform) &&
+                    TryBuildVhacdHulls(mf, chassisMat, root.name, report))
+                    continue;
+
+                // Everything else hollow: slab boxes along the long axis; the volume-acceptance
+                // test inside falls back to the single box when slabs don't actually win.
+                if (TryBuildSlabColliders(mf, mesh, useObb ? obbRotation : Quaternion.identity,
+                        chassisMat, report))
+                    continue;
+            }
+
+            if (useObb)
             {
                 GameObject child = new GameObject(ObbChildName);
                 Undo.RegisterCreatedObjectUndo(child, UndoName);
@@ -227,6 +279,7 @@ public static class GeneratePartColliders
                 report.boxCount++;
             }
         }
+        AssetDatabase.SaveAssets(); // flush any hull meshes written above
 
         // 4) Drive setup — all conditional, so the tool also runs cleanly on URDF/ArticulationBody
         //    hierarchies that have none of these components.
@@ -270,9 +323,206 @@ public static class GeneratePartColliders
         Undo.CollapseUndoOperations(undoGroup);
 
         Debug.Log($"Generate Part Colliders: '{root.name}' → {report.sphereCount} wheel sphere(s), " +
-                  $"{report.boxCount} AABB box(es), {report.obbChildCount} OBB child box(es); skipped " +
+                  $"{report.boxCount} AABB box(es), {report.obbChildCount} OBB child box(es), " +
+                  $"{report.slabBoxCount} slab box(es) on {report.slabParts} sheet part(s), " +
+                  $"{report.hullCount} convex hull(s) on {report.vhacdParts} concave part(s); skipped " +
                   $"{report.skippedFasteners} fastener mesh(es), {report.skippedDegenerate} decal mesh(es).", root);
         return report;
+    }
+
+    // Signed tetrahedron sum over all triangles (all submeshes). Exact for closed manifold
+    // meshes; garbage (near zero or negative) for open ones — callers must guard on the result.
+    private static float ComputeMeshVolume(Mesh mesh)
+    {
+        Vector3[] vertices = mesh.vertices;
+        int[] triangles = mesh.triangles;
+        if (vertices == null || triangles == null || triangles.Length < 3) return -1f;
+        double volume = 0;
+        for (int i = 0; i < triangles.Length; i += 3)
+        {
+            Vector3 a = vertices[triangles[i]];
+            Vector3 b = vertices[triangles[i + 1]];
+            Vector3 c = vertices[triangles[i + 2]];
+            volume += Vector3.Dot(a, Vector3.Cross(b, c)) / 6.0;
+        }
+        return Mathf.Abs((float)volume);
+    }
+
+    // Slab decomposition along the part's longest axis (in the OBB frame when one exists):
+    // splits the vertices into MaxSlabs bins and fits one tight box per occupied bin. Every
+    // triangle edge that spans a bin boundary contributes its crossing point to BOTH sides, so
+    // no geometry escapes between two slab boxes. Accepted only when the slabs' total volume
+    // beats the single reference box by SlabAcceptRatio — a flat panel fails and falls back, a
+    // BENT panel's boxes hug the bend.
+    private static bool TryBuildSlabColliders(MeshFilter mf, Mesh mesh, Quaternion frame,
+        PhysicsMaterial material, Report report)
+    {
+        Vector3[] vertices = mesh.vertices;
+        int[] triangles = mesh.triangles;
+        if (vertices == null || vertices.Length < 3) return false;
+
+        Vector3 axis0 = frame * Vector3.right;
+        Vector3 axis1 = frame * Vector3.up;
+        Vector3 axis2 = frame * Vector3.forward;
+
+        var projected = new Vector3[vertices.Length];
+        Vector3 min = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+        Vector3 max = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            Vector3 v = vertices[i];
+            projected[i] = new Vector3(Vector3.Dot(v, axis0), Vector3.Dot(v, axis1), Vector3.Dot(v, axis2));
+            min = Vector3.Min(min, projected[i]);
+            max = Vector3.Max(max, projected[i]);
+        }
+        Vector3 frameSize = max - min;
+        int longAxis = frameSize.x >= frameSize.y && frameSize.x >= frameSize.z
+            ? 0 : (frameSize.y >= frameSize.z ? 1 : 2);
+        float slabWidth = frameSize[longAxis] / MaxSlabs;
+        if (slabWidth <= 1e-6f) return false;
+
+        var slabMin = new Vector3[MaxSlabs];
+        var slabMax = new Vector3[MaxSlabs];
+        var occupied = new bool[MaxSlabs];
+        for (int s = 0; s < MaxSlabs; s++)
+        {
+            slabMin[s] = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+            slabMax[s] = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+        }
+
+        int SlabOf(Vector3 p) =>
+            Mathf.Clamp((int)((p[longAxis] - min[longAxis]) / slabWidth), 0, MaxSlabs - 1);
+        void Grow(int slab, Vector3 p)
+        {
+            slabMin[slab] = Vector3.Min(slabMin[slab], p);
+            slabMax[slab] = Vector3.Max(slabMax[slab], p);
+            occupied[slab] = true;
+        }
+
+        foreach (Vector3 p in projected) Grow(SlabOf(p), p);
+
+        if (triangles != null)
+        {
+            for (int t = 0; t + 2 < triangles.Length; t += 3)
+            {
+                for (int e = 0; e < 3; e++)
+                {
+                    Vector3 a = projected[triangles[t + e]];
+                    Vector3 b = projected[triangles[t + (e + 1) % 3]];
+                    int slabA = SlabOf(a);
+                    int slabB = SlabOf(b);
+                    if (slabA == slabB) continue;
+                    int lo = Mathf.Min(slabA, slabB);
+                    int hi = Mathf.Max(slabA, slabB);
+                    float denominator = b[longAxis] - a[longAxis];
+                    if (Mathf.Abs(denominator) < 1e-9f) continue;
+                    for (int s = lo; s < hi; s++)
+                    {
+                        float boundary = min[longAxis] + slabWidth * (s + 1);
+                        Vector3 crossing = Vector3.Lerp(a, b, Mathf.Clamp01((boundary - a[longAxis]) / denominator));
+                        Grow(s, crossing);
+                        Grow(s + 1, crossing);
+                    }
+                }
+            }
+        }
+
+        float slabVolumeSum = 0f;
+        int slabCount = 0;
+        for (int s = 0; s < MaxSlabs; s++)
+        {
+            if (!occupied[s]) continue;
+            Vector3 size = Vector3.Max(slabMax[s] - slabMin[s], Vector3.one * 1e-4f);
+            slabVolumeSum += size.x * size.y * size.z;
+            slabCount++;
+        }
+        if (slabCount < 2) return false;
+        float referenceVolume = frameSize.x * frameSize.y * frameSize.z;
+        if (slabVolumeSum >= SlabAcceptRatio * referenceVolume) return false;
+
+        for (int s = 0; s < MaxSlabs; s++)
+        {
+            if (!occupied[s]) continue;
+            Vector3 size = Vector3.Max(slabMax[s] - slabMin[s], Vector3.one * 1e-4f);
+            Vector3 mid = (slabMax[s] + slabMin[s]) * 0.5f;
+            GameObject child = new GameObject(SlabChildName);
+            Undo.RegisterCreatedObjectUndo(child, UndoName);
+            child.transform.SetParent(mf.transform, false);
+            child.transform.localPosition = axis0 * mid.x + axis1 * mid.y + axis2 * mid.z;
+            child.transform.localRotation = frame;
+            BoxCollider box = Undo.AddComponent<BoxCollider>(child);
+            box.center = Vector3.zero;
+            box.size = size;
+            box.sharedMaterial = material;
+            report.slabBoxCount++;
+        }
+        report.slabParts++;
+        return true;
+    }
+
+    // VHACD convex decomposition (our own arm64 build — see VhacdNative; editor-time only)
+    // for hollow plastic parts like the Polycarb Funnel: several convex MeshColliders reproduce
+    // the concavity — a dish a game piece can actually sit inside — which no single box or
+    // hull can, and a dynamic articulation cannot carry non-convex MeshColliders. Hull meshes
+    // are persisted under Assets/RobotColliders/<root>/ (a scene MeshCollider referencing an
+    // in-memory mesh serializes as a dead reference).
+    //
+    // Known limitation: those assets are deleted/recreated OUTSIDE the Undo system, so undoing
+    // a regeneration restores the previous MeshColliders but their hull assets may already be
+    // gone (dead references). Re-run the tool instead of undoing it.
+    private static bool TryBuildVhacdHulls(MeshFilter mf, PhysicsMaterial material, string rootName,
+        Report report)
+    {
+        List<Mesh> hulls;
+        try
+        {
+            hulls = VhacdNative.GenerateConvexMeshes(mf.sharedMesh, VhacdMaxHulls, VhacdResolution);
+        }
+        catch (System.Exception e)
+        {
+            // Native plugin missing/failed: the slab/box fallbacks still produce a usable robot.
+            Debug.LogWarning($"Generate Part Colliders: VHACD failed on '{mf.name}' ({e.Message}); " +
+                             "falling back to slab boxes.", mf);
+            return false;
+        }
+        if (hulls == null || hulls.Count == 0) return false;
+
+        string folder = EnsureHullFolder(rootName);
+        // Mesh leaf nodes repeat generic names (Body1...), so the per-run part index keeps the
+        // asset paths unique and deterministic.
+        string baseName = $"{SanitizeFileName(mf.name)}_{report.vhacdParts}";
+        for (int i = 0; i < hulls.Count; i++)
+        {
+            Mesh hull = hulls[i];
+            hull.name = $"{baseName}_hull{i}";
+            AssetDatabase.CreateAsset(hull, $"{folder}/{hull.name}.asset");
+            MeshCollider collider = Undo.AddComponent<MeshCollider>(mf.gameObject);
+            collider.sharedMesh = hull;
+            collider.convex = true;
+            collider.sharedMaterial = material;
+            report.hullCount++;
+        }
+        report.vhacdParts++;
+        return true;
+    }
+
+    private static string EnsureHullFolder(string rootName)
+    {
+        if (!AssetDatabase.IsValidFolder(HullAssetRootFolder))
+            AssetDatabase.CreateFolder("Assets", "RobotColliders");
+        string sub = SanitizeFileName(rootName);
+        string folder = HullAssetRootFolder + "/" + sub;
+        if (!AssetDatabase.IsValidFolder(folder))
+            AssetDatabase.CreateFolder(HullAssetRootFolder, sub);
+        return folder;
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var sb = new System.Text.StringBuilder(name.Length);
+        foreach (char c in name)
+            sb.Append(char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_');
+        return sb.Length > 0 ? sb.ToString() : "part";
     }
 
     // True when the node or any ancestor up to (and including) root is deny-listed hardware.
@@ -281,6 +531,17 @@ public static class GeneratePartColliders
         for (Transform t = node; t != null; t = t.parent)
         {
             if (RobotPartClassifier.IsFastener(t.name)) return true;
+            if (t == root) break;
+        }
+        return false;
+    }
+
+    // True when the node or any ancestor up to (and including) root reads as a plastic part.
+    private static bool IsUnderPlastic(Transform node, Transform root)
+    {
+        for (Transform t = node; t != null; t = t.parent)
+        {
+            if (RobotPartClassifier.IsPlastic(t.name)) return true;
             if (t == root) break;
         }
         return false;
