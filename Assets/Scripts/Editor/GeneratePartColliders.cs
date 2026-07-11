@@ -332,7 +332,9 @@ public static class GeneratePartColliders
 
     // Signed tetrahedron sum over all triangles (all submeshes). Exact for closed manifold
     // meshes; garbage (near zero or negative) for open ones — callers must guard on the result.
-    private static float ComputeMeshVolume(Mesh mesh)
+    // Result is in the mesh's own local units cubed; scale by the transform determinant to get
+    // world/real volume. Public so RobotMassFromGeometry can size link masses from it.
+    public static float ComputeMeshVolume(Mesh mesh)
     {
         Vector3[] vertices = mesh.vertices;
         int[] triangles = mesh.triangles;

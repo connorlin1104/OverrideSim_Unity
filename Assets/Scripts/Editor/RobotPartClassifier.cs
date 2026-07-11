@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Unity.Robotics.UrdfImporter;
 
 // Shared name-based classification for the imported robot drivetrain FBX.
 //
@@ -120,6 +121,84 @@ public static class RobotPartClassifier
         foreach (string token in PlasticTokens)
         {
             if (name.IndexOf(token, System.StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        }
+        return false;
+    }
+
+    // --- Material density lookup (kg/m^3) for computing link mass from mesh volume ---
+    // VEX teams share a CAD library with consistent part names, so the part/material name is a
+    // reliable density source when a Fusion component was exported WITHOUT a physical material —
+    // those parts import at the URDF importer's 0.1 kg clamp (see RobotMassFromGeometry), which
+    // silently corrupts the robot's mass. Tokens are matched against a separator-normalized name
+    // (NormalizeForTokens). First match wins, so list more specific tokens before generic ones.
+    public static readonly (string token, float density)[] DensityByToken =
+    {
+        ("polycarbonate", 1200f), ("polycarb", 1200f), ("lexan", 1200f),
+        ("acetal", 1410f), ("delrin", 1410f),
+        ("nylon", 1140f),
+        ("abs", 1050f),
+        ("petg", 1270f), ("pvc", 1380f),
+        ("uhmw", 950f), ("hdpe", 950f),
+        ("stainless", 8000f), ("titanium", 4500f), ("brass", 8500f),
+        ("aluminium", 2700f), ("aluminum", 2700f), ("6061", 2700f), ("c chan", 2700f),
+        ("steel", 7850f),
+    };
+
+    // Neutral fallback (~rigid plastic) for a part whose name matches no token and that carries no
+    // genuinely-authored mass to trust. Exposed as an override on the setup tools.
+    public const float DefaultDensity = 1250f;
+
+    // Lower-case; map '_' '-' '/' and whitespace runs to single spaces; pad one space each side so
+    // a short token can be matched as " abs " (word boundary) without catching "absorber".
+    public static string NormalizeForTokens(string rawName)
+    {
+        if (string.IsNullOrEmpty(rawName)) return " ";
+        var sb = new System.Text.StringBuilder(rawName.Length + 2);
+        sb.Append(' ');
+        bool lastSpace = true;
+        foreach (char c in rawName)
+        {
+            char lc = char.ToLowerInvariant(c);
+            bool sep = lc == '_' || lc == '-' || lc == '/' || char.IsWhiteSpace(lc);
+            if (sep)
+            {
+                if (!lastSpace) { sb.Append(' '); lastSpace = true; }
+            }
+            else { sb.Append(lc); lastSpace = false; }
+        }
+        if (!lastSpace) sb.Append(' ');
+        return sb.ToString();
+    }
+
+    // Density for a single name. Tokens <= 3 chars match only on word boundaries (padded spaces),
+    // longer tokens match as substrings. False when nothing matches.
+    public static bool TryGetDensity(string rawName, out float density)
+    {
+        string name = NormalizeForTokens(rawName);
+        foreach ((string token, float d) in DensityByToken)
+        {
+            string needle = token.Length <= 3 ? " " + token + " " : token;
+            if (name.IndexOf(needle, System.StringComparison.Ordinal) >= 0) { density = d; return true; }
+        }
+        density = 0f;
+        return false;
+    }
+
+    // Density for a URDF link: its own name first (ACDC4Robot writes the Fusion component name
+    // there), then any node names under its visuals — mirrors the ancestor-chain search
+    // IsFastener/IsPlastic rely on. False when neither yields a token.
+    public static bool TryGetLinkDensity(UrdfLink link, out float density)
+    {
+        density = 0f;
+        if (link == null) return false;
+        if (TryGetDensity(link.name, out density)) return true;
+        foreach (Transform child in link.transform)
+        {
+            if (child.GetComponent<UrdfVisuals>() == null) continue;
+            foreach (Transform node in child.GetComponentsInChildren<Transform>(true))
+            {
+                if (TryGetDensity(node.name, out density)) return true;
+            }
         }
         return false;
     }

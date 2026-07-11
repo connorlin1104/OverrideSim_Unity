@@ -1,0 +1,142 @@
+<?xml version="1.0"?>
+<!--
+  Fixture for UrdfPostProcessor.RunBatchValidateJointTool. A drivable testbot whose lever arm is
+  authored as a FIXED joint — i.e. a mechanism the user "forgot" to articulate in Fusion. The
+  validator post-processes it (the arm is NOT wired, being fixed), then calls
+  AddMechanismJoint.Apply to convert the fixed arm into a revolute mechanism about y (+/-90 deg)
+  entirely in Unity, and asserts it registers in RobotMechanisms + the catalog and sweeps under its
+  motor. The arm sits on a virtual mast 0.25 m up so its full swing clears the sibling links (same
+  reasoning as testbot_mech.urdf).
+-->
+<robot name="testbot_jointtool">
+
+  <link name="base_link">
+    <inertial>
+      <mass value="3.0"/>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <inertia ixx="0.025" ixy="0" ixz="0" iyy="0.0425" iyz="0" izz="0.0625"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.4 0.3 0.1"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.4 0.3 0.1"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="left_wheel">
+    <inertial>
+      <mass value="0.3"/>
+      <origin xyz="0 0 0" rpy="1.5707963267948966 0 0"/>
+      <inertia ixx="0.00021" ixy="0" ixz="0" iyy="0.00021" iyz="0" izz="0.000375"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5707963267948966 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.03"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5707963267948966 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.03"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="right_wheel">
+    <inertial>
+      <mass value="0.3"/>
+      <origin xyz="0 0 0" rpy="1.5707963267948966 0 0"/>
+      <inertia ixx="0.00021" ixy="0" ixz="0" iyy="0.00021" iyz="0" izz="0.000375"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5707963267948966 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.03"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5707963267948966 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.03"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="caster">
+    <inertial>
+      <mass value="0.1"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.000025" ixy="0" ixz="0" iyy="0.000025" iyz="0" izz="0.000025"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.025"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.025"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="arm">
+    <inertial>
+      <mass value="0.3"/>
+      <origin xyz="-0.06 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.00008" ixy="0" ixz="0" iyy="0.0004" iyz="0" izz="0.0004"/>
+    </inertial>
+    <visual>
+      <origin xyz="-0.06 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.12 0.04 0.04"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="-0.06 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.12 0.04 0.04"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="left_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="left_wheel"/>
+    <origin xyz="0.1 0.17 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="5" velocity="50"/>
+  </joint>
+
+  <joint name="right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="right_wheel"/>
+    <origin xyz="0.1 -0.17 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="5" velocity="50"/>
+  </joint>
+
+  <joint name="caster_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="caster"/>
+    <origin xyz="-0.18 0 -0.025" rpy="0 0 0"/>
+  </joint>
+
+  <!-- The arm is authored as FIXED on purpose: the joint tool converts it to a revolute. -->
+  <joint name="arm_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="arm"/>
+    <origin xyz="-0.15 0 0.25" rpy="0 0 0"/>
+  </joint>
+
+</robot>

@@ -32,6 +32,7 @@ public class SetUpImportedRobot : EditorWindow
     [SerializeField] private string meshWheelNamePrefix = RobotPartClassifier.WheelNamePrefix;
     [SerializeField] private string urdfWheelNameSubstring = "wheel";
     [SerializeField] private bool keepUrdfInertials;
+    [SerializeField] private bool computeMassFromGeometry = true;
     [SerializeField] private bool validateAfterSetup = true;
 
     [MenuItem("Tools/RoboSim/Robot/Set Up Imported Robot", false, 1)]
@@ -73,6 +74,12 @@ public class SetUpImportedRobot : EditorWindow
                     "Keep the URDF-authored masses/COM/inertia (scaled to the 10x world) instead of " +
                     "recomputing from colliders — use when the CAD export carries accurate mass " +
                     "properties, for realistic tipping."), keepUrdfInertials);
+                using (new EditorGUI.DisabledScope(keepUrdfInertials))
+                    computeMassFromGeometry = EditorGUILayout.Toggle(new GUIContent("Compute Mass From Geometry",
+                        "Compute each link's mass from its mesh volume x a density looked up from the " +
+                        "part name, so parts exported without a Fusion physical material aren't stuck at " +
+                        "the importer's 0.1 kg clamp. Lets you skip assigning materials in Fusion. " +
+                        "Disabled when Keep URDF Inertials is on."), computeMassFromGeometry);
                 break;
 
             case RobotKind.Mesh:
@@ -102,7 +109,8 @@ public class SetUpImportedRobot : EditorWindow
 
         try
         {
-            string summary = Run(robotRoot, kind, meshWheelNamePrefix, urdfWheelNameSubstring, keepUrdfInertials);
+            string summary = Run(robotRoot, kind, meshWheelNamePrefix, urdfWheelNameSubstring, keepUrdfInertials,
+                computeMassFromGeometry);
             EditorUtility.DisplayDialog(Title, summary + Validate(robotRoot), "OK");
         }
         catch (Exception e)
@@ -169,17 +177,21 @@ public class SetUpImportedRobot : EditorWindow
     // Runs the full setup for the detected robot kind. Returns a human-readable summary.
     // Throws InvalidOperationException with a readable message on any precondition failure.
     public static string Run(GameObject root, RobotKind kind, string meshWheelPrefix, string urdfWheelSubstring,
-        bool keepUrdfInertials = false)
+        bool keepUrdfInertials = false, bool computeMassFromGeometry = true)
     {
         switch (kind)
         {
             case RobotKind.Urdf:
                 // Post-Process already does colliders + motors + mechanisms + catalog in one pass.
-                UrdfPostProcessor.PostProcess(root, UrdfScaleFactor, true, urdfWheelSubstring, keepUrdfInertials);
+                UrdfPostProcessor.PostProcess(root, UrdfScaleFactor, true, urdfWheelSubstring, keepUrdfInertials,
+                    computeMassFromGeometry);
                 MarkDirty(root);
                 return $"'{root.name}' (URDF) is set up:\n" +
                        $"  - baked to {UrdfScaleFactor}x world scale\n" +
                        "  - per-part colliders + wheel spheres\n" +
+                       (computeMassFromGeometry && !keepUrdfInertials
+                           ? "  - link masses computed from part geometry (see Console for the breakdown)\n"
+                           : keepUrdfInertials ? "  - kept the URDF mass properties\n" : "") +
                        "  - wheel motors wired to the joysticks\n" +
                        "  - arm/piston mechanisms wired for the controller buttons\n" +
                        "  - added to the home-screen robot list";

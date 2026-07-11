@@ -1,0 +1,122 @@
+<?xml version="1.0"?>
+<!--
+  Fixture for UrdfPostProcessor.RunBatchValidateMassFromGeometry. Four box-primitive links whose
+  volumes are exactly known, one per branch of the mass-from-geometry fallback chain
+  (RobotMassFromGeometry.Apply):
+
+    - polycarb_plate: 0.1 x 0.1 x 0.01 m (1e-4 m^3), <mass 0> -> the importer clamps to 0.1 kg,
+      but the name matches the "polycarb" density token (1200 kg/m^3) so it is re-massed to
+      ~0.12 kg. Tests the TOKEN branch overriding a clamped mass.
+    - mystery_block: 0.1 x 0.1 x 0.1 m (1e-3 m^3), <mass 0>, no material token -> DefaultDensity
+      (1250) -> ~1.25 kg. Tests the DEFAULT-DENSITY branch.
+    - billet: 0.05^3 m, <mass 2.5> and no token -> the authored mass is PRESERVED (a real material
+      was assigned in Fusion). Tests the KEEP-AUTHORED branch.
+    - base_link: the articulation root; authored mass, no token -> preserved (not asserted).
+
+  Everything hangs off base_link with fixed joints (no wheels/mechanisms — this fixture only
+  exercises the per-link mass pass, which runs regardless of joint type).
+-->
+<robot name="testbot_massgeom">
+
+  <link name="base_link">
+    <inertial>
+      <mass value="3.0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.2 0.2 0.05"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.2 0.2 0.05"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Materialless in Fusion (mass 0) but named for polycarbonate: re-massed by density token. -->
+  <link name="polycarb_plate">
+    <inertial>
+      <mass value="0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.1 0.1 0.01"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.1 0.1 0.01"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Materialless AND no recognizable material name: falls back to the default density. -->
+  <link name="mystery_block">
+    <inertial>
+      <mass value="0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.1 0.1 0.1"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.1 0.1 0.1"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- A real material was assigned (mass 2.5): no token, so the authored mass is kept. -->
+  <link name="billet">
+    <inertial>
+      <mass value="2.5"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.05 0.05 0.05"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.05 0.05 0.05"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="polycarb_plate_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="polycarb_plate"/>
+    <origin xyz="0 0.2 0" rpy="0 0 0"/>
+  </joint>
+
+  <joint name="mystery_block_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="mystery_block"/>
+    <origin xyz="0 -0.2 0" rpy="0 0 0"/>
+  </joint>
+
+  <joint name="billet_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="billet"/>
+    <origin xyz="0.2 0 0" rpy="0 0 0"/>
+  </joint>
+
+</robot>
