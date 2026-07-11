@@ -19,12 +19,14 @@ using Scene = UnityEngine.SceneManagement.Scene;
 // Creates Assets/Scenes/HomeScene.unity from scratch each run: a dark URP camera, an overlay
 // Canvas (same scaler settings as the field scene), an EventSystem on the Input System UI
 // module, and a TMP-based UI (title, Drive/Settings main panel, and a settings panel where
-// the player picks a robot model from the RobotModelCatalog). It also:
+// the player picks a robot model from the RobotModelCatalog and sizes the on-screen joysticks).
+// It also:
 //   - imports the TMP Essential Resources on first run (asset-only package: no scripts, so
 //     no domain reload — safe to keep building in the same run),
 //   - creates Assets/Settings/RobotModelCatalog.asset if missing,
 //   - registers HomeScene + SampleScene in Build Settings (home first, so it boots the app),
-//   - adds a "Home" button to the field scene's Canvas that loads back into HomeScene.
+//   - adds a "Home" button to the field scene's Canvas that loads back into HomeScene,
+//   - adds a JoystickScaler to the field Canvas so the joystick-size setting takes effect there.
 //
 // Usage: Tools > RoboSim > Scenes > Build Home Screen (safe to re-run; every step skips if already done,
 // except the HomeScene itself which is rebuilt). Batch: -executeMethod BuildHomeScene.RunBatch.
@@ -119,10 +121,12 @@ public class BuildHomeScene
         }
         EditorBuildSettings.scenes = buildScenes.ToArray();
 
-        // 5) Give the field scene a way back to the home screen.
+        // 5) Field scene edits: a way back to the home screen, and the JoystickScaler that
+        //    applies the home screen's joystick-size setting to the on-screen sticks.
         Scene sampleScene = EditorSceneManager.OpenScene(SampleScenePath, OpenSceneMode.Single);
         string homeButtonStatus = EnsureFieldHomeButton(sampleScene, interactive, out bool homeButtonAdded);
-        if (homeButtonAdded) EditorSceneManager.SaveScene(sampleScene);
+        string joystickScalerStatus = EnsureJoystickScaler(sampleScene, out bool joystickScalerChanged);
+        if (homeButtonAdded || joystickScalerChanged) EditorSceneManager.SaveScene(sampleScene);
 
         // Interactive runs put the user back where they were; batch leaves SampleScene open.
         if (interactive && !string.IsNullOrEmpty(previousScenePath) && previousScenePath != SampleScenePath)
@@ -131,7 +135,7 @@ public class BuildHomeScene
         Debug.Log($"Build Home Scene: TMP essentials {(tmpImported ? "imported" : "already present")}, " +
                   $"catalog {(catalogCreated ? "created at " + CatalogPath : "found")}, " +
                   $"rebuilt {HomeScenePath}, build settings = [HomeScene, SampleScene], " +
-                  $"field Home button {homeButtonStatus}.");
+                  $"field Home button {homeButtonStatus}, joystick scaler {joystickScalerStatus}.");
     }
 
     // --- Step 1: TMP essentials ---
@@ -239,8 +243,9 @@ public class BuildHomeScene
         SetLayoutHeight(settingsButton.gameObject, 110f);
 
         // Settings panel: model picker built at runtime from the catalog by cloning an
-        // inactive template button (so catalog edits need no scene change).
-        GameObject settingsPanel = CreatePanel("SettingsPanel", canvasGo.transform, new Vector2(680f, 760f));
+        // inactive template button (so catalog edits need no scene change), plus a joystick
+        // size slider. Taller than the main panel to fit the size control under the list.
+        GameObject settingsPanel = CreatePanel("SettingsPanel", canvasGo.transform, new Vector2(680f, 900f));
         AddVerticalLayout(settingsPanel, 40, 24f);
 
         TextMeshProUGUI header = CreateText("HeaderLabel", settingsPanel.transform, "Select Robot Model", 48f);
@@ -260,6 +265,16 @@ public class BuildHomeScene
         Button template = CreateButton("ModelButtonTemplate", modelList.transform, "Model", 40f, NeutralColor);
         SetLayoutHeight(template.gameObject, 84f);
         template.gameObject.SetActive(false); // template stays inactive; controller clones it
+
+        // Joystick size control: label (also the live percentage readout) + slider. The
+        // controller reads/writes JoystickSettings; the field scene's JoystickScaler applies it.
+        TextMeshProUGUI joystickLabel = CreateText("JoystickSizeLabel", settingsPanel.transform, "Joystick Size", 40f);
+        joystickLabel.fontStyle = FontStyles.Bold;
+        SetLayoutHeight(joystickLabel.gameObject, 56f);
+
+        Slider joystickSlider = CreateSlider("JoystickSizeSlider", settingsPanel.transform,
+            JoystickSettings.MinScale, JoystickSettings.MaxScale, JoystickSettings.DefaultScale);
+        SetLayoutHeight(joystickSlider.gameObject, 56f);
 
         Button backButton = CreateButton("BackButton", settingsPanel.transform, "Back", 44f, AccentColor);
         SetLayoutHeight(backButton.gameObject, 96f);
@@ -281,6 +296,8 @@ public class BuildHomeScene
         so.FindProperty("settingsPanel").objectReferenceValue = settingsPanel;
         so.FindProperty("modelListParent").objectReferenceValue = modelList.transform;
         so.FindProperty("modelButtonTemplate").objectReferenceValue = template;
+        so.FindProperty("joystickSizeSlider").objectReferenceValue = joystickSlider;
+        so.FindProperty("joystickSizeLabel").objectReferenceValue = joystickLabel;
         so.ApplyModifiedPropertiesWithoutUndo();
 
         UnityEventTools.AddPersistentListener(driveButton.onClick, controller.OnDrivePressed);
@@ -377,6 +394,57 @@ public class BuildHomeScene
         return "added";
     }
 
+    // --- Step 5b: field scene JoystickScaler ---
+
+    // Ensure a JoystickScaler on the field Canvas, wired to the two joystick backgrounds, so the
+    // sticks pick up the home screen's size setting at scene load. Idempotent: re-running finds
+    // the existing component and just re-asserts the references.
+    private static string EnsureJoystickScaler(Scene sampleScene, out bool changed)
+    {
+        changed = false;
+
+        RectTransform left = FindDescendantRect(sampleScene, "LeftJoystick_BG");
+        RectTransform right = FindDescendantRect(sampleScene, "RightJoystick_BG");
+        if (left == null || right == null)
+            return "skipped (joystick objects not found)";
+
+        GameObject canvasGo = null;
+        foreach (GameObject root in sampleScene.GetRootGameObjects())
+        {
+            if (root.name == "Canvas" && root.GetComponent<Canvas>() != null) { canvasGo = root; break; }
+        }
+        if (canvasGo == null) return "skipped (no root Canvas found)";
+
+        JoystickScaler scaler = canvasGo.GetComponent<JoystickScaler>();
+        if (scaler == null)
+        {
+            scaler = Undo.AddComponent<JoystickScaler>(canvasGo);
+            changed = true;
+        }
+
+        SerializedObject so = new SerializedObject(scaler);
+        SerializedProperty joysticks = so.FindProperty("joysticks");
+        joysticks.arraySize = 2;
+        joysticks.GetArrayElementAtIndex(0).objectReferenceValue = left;
+        joysticks.GetArrayElementAtIndex(1).objectReferenceValue = right;
+        if (so.ApplyModifiedPropertiesWithoutUndo()) changed = true;
+
+        if (changed) EditorSceneManager.MarkSceneDirty(sampleScene);
+        return changed ? "wired" : "already present";
+    }
+
+    private static RectTransform FindDescendantRect(Scene scene, string name)
+    {
+        foreach (GameObject root in scene.GetRootGameObjects())
+        {
+            foreach (RectTransform rect in root.GetComponentsInChildren<RectTransform>(true))
+            {
+                if (rect.name == name) return rect;
+            }
+        }
+        return null;
+    }
+
     // --- UI building helpers ---
 
     private static GameObject CreateUIObject(string name, Transform parent)
@@ -454,5 +522,42 @@ public class BuildHomeScene
         textRect.offsetMin = Vector2.zero;
         textRect.offsetMax = Vector2.zero;
         return button;
+    }
+
+    // Horizontal slider built from Unity's DefaultControls (same structure as GameObject > UI >
+    // Slider) so the Background/Fill/Handle wiring is correct, then themed to match the panel.
+    private static Slider CreateSlider(string name, Transform parent, float min, float max, float value)
+    {
+        var resources = new DefaultControls.Resources
+        {
+            standard = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd"),
+            background = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Background.psd"),
+            knob = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Knob.psd"),
+        };
+
+        GameObject go = DefaultControls.CreateSlider(resources);
+        go.name = name;
+        go.transform.SetParent(parent, false);
+        foreach (Transform child in go.GetComponentsInChildren<Transform>(true))
+            child.gameObject.layer = LayerMask.NameToLayer("UI");
+
+        // Theme the parts to match the dark panel: dark track, accent fill, light knob.
+        TintChildImage(go, "Background", ListColor);
+        TintChildImage(go, "Fill Area/Fill", AccentColor);
+        TintChildImage(go, "Handle Slide Area/Handle", TextColor);
+
+        Slider slider = go.GetComponent<Slider>();
+        slider.wholeNumbers = false;
+        slider.minValue = min;
+        slider.maxValue = max;
+        slider.value = value;
+        return slider;
+    }
+
+    private static void TintChildImage(GameObject root, string path, Color color)
+    {
+        Transform child = root.transform.Find(path);
+        Image image = child != null ? child.GetComponent<Image>() : null;
+        if (image != null) image.color = color;
     }
 }

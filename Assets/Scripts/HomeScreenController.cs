@@ -33,6 +33,12 @@ public class HomeScreenController : MonoBehaviour
     [SerializeField] private Color selectedTint = new Color(0.24f, 0.49f, 0.92f); // accent blue
     [SerializeField] private Color normalTint = new Color(0.23f, 0.25f, 0.30f);   // neutral dark
 
+    [Header("Joystick Size")]
+    [Tooltip("Slider that scales the on-screen driving joysticks (persisted via JoystickSettings).")]
+    [SerializeField] private Slider joystickSizeSlider;
+    [Tooltip("Label above the slider; shows the current size as a percentage.")]
+    [SerializeField] private TMP_Text joystickSizeLabel;
+
     // Clones built from the template, paired with the catalog id each one selects.
     private readonly List<KeyValuePair<Button, string>> modelButtons = new List<KeyValuePair<Button, string>>();
 
@@ -41,6 +47,7 @@ public class HomeScreenController : MonoBehaviour
         if (mainPanel != null) mainPanel.SetActive(true);
         if (settingsPanel != null) settingsPanel.SetActive(false);
         BuildModelList();
+        InitJoystickSizeControl();
     }
 
     // --- Button hooks (wired as persistent onClick listeners by the Build Home Scene tool) ---
@@ -107,5 +114,33 @@ public class HomeScreenController : MonoBehaviour
             if (pair.Key != null && pair.Key.image != null)
                 pair.Key.image.color = pair.Value == selected ? selectedTint : normalTint;
         }
+    }
+
+    // --- Joystick size ---
+
+    // Point the slider at the saved size and keep the label in sync. Guarded so an older
+    // HomeScene built before this control existed (slider unassigned) still runs without error.
+    private void InitJoystickSizeControl()
+    {
+        if (joystickSizeSlider == null) return;
+
+        joystickSizeSlider.minValue = JoystickSettings.MinScale;
+        joystickSizeSlider.maxValue = JoystickSettings.MaxScale;
+        joystickSizeSlider.wholeNumbers = false;
+        joystickSizeSlider.SetValueWithoutNotify(JoystickSettings.Scale); // don't persist on the initial set
+        joystickSizeSlider.onValueChanged.AddListener(OnJoystickSizeChanged);
+        UpdateJoystickSizeLabel(JoystickSettings.Scale);
+    }
+
+    private void OnJoystickSizeChanged(float value)
+    {
+        JoystickSettings.Scale = value; // JoystickScaler reads this when the field scene loads
+        UpdateJoystickSizeLabel(value);
+    }
+
+    private void UpdateJoystickSizeLabel(float value)
+    {
+        if (joystickSizeLabel != null)
+            joystickSizeLabel.text = $"Joystick Size — {Mathf.RoundToInt(value * 100f)}%";
     }
 }
