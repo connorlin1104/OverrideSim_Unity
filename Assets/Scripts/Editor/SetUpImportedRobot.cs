@@ -31,6 +31,7 @@ public class SetUpImportedRobot : EditorWindow
     [SerializeField] private GameObject robotRoot;
     [SerializeField] private string meshWheelNamePrefix = RobotPartClassifier.WheelNamePrefix;
     [SerializeField] private string urdfWheelNameSubstring = "wheel";
+    [SerializeField] private bool keepUrdfInertials;
     [SerializeField] private bool validateAfterSetup = true;
 
     [MenuItem("Tools/RoboSim/Robot/Set Up Imported Robot", false, 1)]
@@ -68,6 +69,10 @@ public class SetUpImportedRobot : EditorWindow
                 EditorGUILayout.HelpBox($"Detected: URDF robot. Will post-process at {UrdfScaleFactor}x scale.",
                     MessageType.None);
                 urdfWheelNameSubstring = EditorGUILayout.TextField("Wheel Name Contains", urdfWheelNameSubstring);
+                keepUrdfInertials = EditorGUILayout.Toggle(new GUIContent("Keep URDF Inertials",
+                    "Keep the URDF-authored masses/COM/inertia (scaled to the 10x world) instead of " +
+                    "recomputing from colliders — use when the CAD export carries accurate mass " +
+                    "properties, for realistic tipping."), keepUrdfInertials);
                 break;
 
             case RobotKind.Mesh:
@@ -97,7 +102,7 @@ public class SetUpImportedRobot : EditorWindow
 
         try
         {
-            string summary = Run(robotRoot, kind, meshWheelNamePrefix, urdfWheelNameSubstring);
+            string summary = Run(robotRoot, kind, meshWheelNamePrefix, urdfWheelNameSubstring, keepUrdfInertials);
             EditorUtility.DisplayDialog(Title, summary + Validate(robotRoot), "OK");
         }
         catch (Exception e)
@@ -145,10 +150,16 @@ public class SetUpImportedRobot : EditorWindow
 
     public static RobotKind Detect(GameObject root)
     {
-        // Order matters: a post-processed URDF robot has BOTH UrdfLinks and ArticulationBodies,
-        // and must read as already set up rather than as a fresh URDF import.
-        if (root.GetComponentInChildren<ArticulationBody>(true) != null) return RobotKind.AlreadySetUp;
+        // "Already set up" is marked by RobotMotorController — both pipelines end by wiring
+        // one, and UrdfPostProcessor's own idempotency guard keys on it. A bare
+        // ArticulationBody is NOT a valid marker for URDF robots: the importer itself creates
+        // ArticulationBodies on every link at import time (UrdfInertial and UrdfJoint both
+        // [RequireComponent] one), so a fresh URDF import always carries them and the old
+        // body-first check made the URDF setup path unreachable.
+        if (root.GetComponentInChildren<RobotMotorController>(true) != null) return RobotKind.AlreadySetUp;
         if (root.GetComponentsInChildren<UrdfLink>(true).Length > 0) return RobotKind.Urdf;
+        // Mesh robots rigged by hand (no controller) still read as set up via their bodies.
+        if (root.GetComponentInChildren<ArticulationBody>(true) != null) return RobotKind.AlreadySetUp;
         if (root.GetComponentInChildren<MeshFilter>(true) != null) return RobotKind.Mesh;
         return RobotKind.Unknown;
     }
@@ -157,18 +168,20 @@ public class SetUpImportedRobot : EditorWindow
 
     // Runs the full setup for the detected robot kind. Returns a human-readable summary.
     // Throws InvalidOperationException with a readable message on any precondition failure.
-    public static string Run(GameObject root, RobotKind kind, string meshWheelPrefix, string urdfWheelSubstring)
+    public static string Run(GameObject root, RobotKind kind, string meshWheelPrefix, string urdfWheelSubstring,
+        bool keepUrdfInertials = false)
     {
         switch (kind)
         {
             case RobotKind.Urdf:
-                // Post-Process already does colliders + motors + catalog registration in one pass.
-                UrdfPostProcessor.PostProcess(root, UrdfScaleFactor, true, urdfWheelSubstring);
+                // Post-Process already does colliders + motors + mechanisms + catalog in one pass.
+                UrdfPostProcessor.PostProcess(root, UrdfScaleFactor, true, urdfWheelSubstring, keepUrdfInertials);
                 MarkDirty(root);
                 return $"'{root.name}' (URDF) is set up:\n" +
                        $"  - baked to {UrdfScaleFactor}x world scale\n" +
-                       "  - per-part box colliders + wheel spheres\n" +
+                       "  - per-part colliders + wheel spheres\n" +
                        "  - wheel motors wired to the joysticks\n" +
+                       "  - arm/piston mechanisms wired for the controller buttons\n" +
                        "  - added to the home-screen robot list";
 
             case RobotKind.Mesh:

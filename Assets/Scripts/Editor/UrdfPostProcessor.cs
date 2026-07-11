@@ -42,6 +42,7 @@ public class UrdfPostProcessor : EditorWindow
     [SerializeField] private float scaleFactor = 10f;
     [SerializeField] private bool replaceCollidersWithPartBoxes = true;
     [SerializeField] private string wheelNameSubstring = "wheel";
+    [SerializeField] private bool keepUrdfInertials;
 
     [MenuItem("Tools/RoboSim/Robot/Advanced/Post-Process Imported URDF Robot", false, 3)]
     private static void ShowWindow()
@@ -67,6 +68,11 @@ public class UrdfPostProcessor : EditorWindow
         scaleFactor = EditorGUILayout.FloatField("Scale Factor", scaleFactor);
         replaceCollidersWithPartBoxes = EditorGUILayout.Toggle("Replace Colliders With Part Boxes", replaceCollidersWithPartBoxes);
         wheelNameSubstring = EditorGUILayout.TextField("Wheel Name Substring", wheelNameSubstring);
+        keepUrdfInertials = EditorGUILayout.Toggle(new GUIContent("Keep URDF Inertials",
+            "Keep the URDF-authored center of mass and inertia tensors (scaled to the 10x world) " +
+            "instead of recomputing them from the colliders. Use when the CAD export carries " +
+            "accurate mass properties — makes tipping behave like the real robot."),
+            keepUrdfInertials);
 
         EditorGUILayout.Space();
         if (!GUILayout.Button("Run")) return;
@@ -87,7 +93,7 @@ public class UrdfPostProcessor : EditorWindow
 
         try
         {
-            PostProcess(targetRoot, scaleFactor, replaceCollidersWithPartBoxes, wheelNameSubstring);
+            PostProcess(targetRoot, scaleFactor, replaceCollidersWithPartBoxes, wheelNameSubstring, keepUrdfInertials);
         }
         catch (Exception e)
         {
@@ -97,7 +103,8 @@ public class UrdfPostProcessor : EditorWindow
 
     // Core pipeline. Everything is collapsed into a single Undo group so one Ctrl+Z restores
     // the freshly imported robot.
-    public static void PostProcess(GameObject root, float scaleFactor, bool replaceColliders, string wheelNameSubstring)
+    public static void PostProcess(GameObject root, float scaleFactor, bool replaceColliders, string wheelNameSubstring,
+        bool keepUrdfInertials = false)
     {
         if (root == null) throw new ArgumentNullException(nameof(root));
         UrdfLink[] links = root.GetComponentsInChildren<UrdfLink>(true);
@@ -154,15 +161,31 @@ public class UrdfPostProcessor : EditorWindow
         {
             Undo.RecordObject(body, UndoName);
             // Anchors are link-local offsets, so they must scale with the link origins or the
-            // joints tear apart when the origins spread 10x. The importer actually leaves
-            // anchorPosition at (0,0,0) and only sets anchorRotation (UrdfJoint*.AdjustMovement),
-            // but scale it anyway in case the robot was hand-tweaked after import. matchAnchors
-            // stays at Unity's default (true), so the parent-side anchor is recomputed from this
-            // one automatically; only when it was turned off is parentAnchorPosition authored
-            // data (in the PARENT link's local frame) that needs the same scaling.
+            // joints snap back when the origins spread 10x. The importer leaves anchorPosition
+            // at (0,0,0) and only sets anchorRotation (UrdfJoint*.AdjustMovement), but scale it
+            // anyway in case the robot was hand-tweaked after import.
             body.anchorPosition *= scaleFactor;
-            if (!body.matchAnchors)
-                body.parentAnchorPosition *= scaleFactor;
+
+            // The parent-side anchor is what PhysX actually enforces when it builds the
+            // articulation — matchAnchors does NOT recompute it from the transforms, and the
+            // importer serializes it inconsistently (stale 1x link offsets on revolute/
+            // continuous joints, plain (0,0,0) on prismatic ones). Trusting or merely scaling
+            // it let the first Simulate() snap every link back to those poses: the whole robot
+            // collapsed to 1x link spacing under 10x geometry, and pistons teleported into the
+            // chassis (both caught by RunBatchValidateMechanisms). Re-derive it from the joint
+            // frame's actual scaled pose instead, and pin matchAnchors off so nothing recomputes
+            // it behind our back — the two sides are exactly consistent by construction.
+            ArticulationBody parentBody = FindParentBody(body);
+            if (parentBody != null)
+            {
+                Transform parentTransform = parentBody.transform;
+                Transform childTransform = body.transform;
+                body.matchAnchors = false;
+                body.parentAnchorPosition =
+                    parentTransform.InverseTransformPoint(childTransform.TransformPoint(body.anchorPosition));
+                body.parentAnchorRotation =
+                    Quaternion.Inverse(parentTransform.rotation) * (childTransform.rotation * body.anchorRotation);
+            }
         }
 
         // -- 2) Prismatic joints: linear limits and max linear velocity are lengths -> scale.
@@ -196,20 +219,38 @@ public class UrdfPostProcessor : EditorWindow
             GeneratePartColliders.Generate(root);
         }
 
-        // -- 4) Rebuild inertia from the 10x geometry. URDF masses are kept (mass untouched);
-        //       only the tensors/centers must match the new size or the robot wobbles like 1x.
-        foreach (ArticulationBody body in bodies)
+        // -- 4) Inertia for the 10x geometry. URDF masses are kept in both modes; the
+        //       tensors/centers must match the new size or the robot wobbles like 1x.
+        if (keepUrdfInertials)
         {
-            body.ResetCenterOfMass();
-            body.ResetInertiaTensor();
+            // Trust the URDF-authored mass properties (accurate CAD exports): scale the stored
+            // values into the 10x world — COM is a length (x10), the tensor is mass·length²
+            // (x100), rotations are scale-free — and push them onto the bodies now so edit-mode
+            // simulation matches what UrdfInertial.Start() re-applies at play time.
+            foreach (UrdfInertial inertial in root.GetComponentsInChildren<UrdfInertial>(true))
+            {
+                if (!inertial.useUrdfData) continue; // link had no <inertial> authored
+                Undo.RecordObject(inertial, UndoName);
+                inertial.centerOfMass *= scaleFactor;
+                inertial.inertiaTensor *= scaleFactor * scaleFactor;
+                inertial.UpdateLinkData();
+            }
         }
-        foreach (UrdfInertial inertial in root.GetComponentsInChildren<UrdfInertial>(true))
+        else
         {
-            // UrdfInertial.Start() re-applies the serialized 1x URDF tensors at play time while
-            // useUrdfData is set, silently undoing the reset above — switch it to the
-            // "recompute from colliders" mode instead.
-            Undo.RecordObject(inertial, UndoName);
-            inertial.useUrdfData = false;
+            foreach (ArticulationBody body in bodies)
+            {
+                body.ResetCenterOfMass();
+                body.ResetInertiaTensor();
+            }
+            foreach (UrdfInertial inertial in root.GetComponentsInChildren<UrdfInertial>(true))
+            {
+                // UrdfInertial.Start() re-applies the serialized 1x URDF tensors at play time while
+                // useUrdfData is set, silently undoing the reset above — switch it to the
+                // "recompute from colliders" mode instead.
+                Undo.RecordObject(inertial, UndoName);
+                inertial.useUrdfData = false;
+            }
         }
 
         // -- 5) Root body must be movable (the importer/issue-#210 family of bugs can leave
@@ -283,9 +324,13 @@ public class UrdfPostProcessor : EditorWindow
                                 / Mathf.Max(maxLossy, 1e-6f);
                 if (wheelMaterial != null) sphere.sharedMaterial = wheelMaterial;
 
-                // Step 4 rebuilt inertia while this wheel still wore the part boxes.
-                wheel.ResetCenterOfMass();
-                wheel.ResetInertiaTensor();
+                // Step 4 rebuilt inertia while this wheel still wore the part boxes. In
+                // keep-inertials mode the URDF values are authoritative — don't overwrite them.
+                if (!keepUrdfInertials)
+                {
+                    wheel.ResetCenterOfMass();
+                    wheel.ResetInertiaTensor();
+                }
             }
         }
 
@@ -317,8 +362,101 @@ public class UrdfPostProcessor : EditorWindow
             Debug.LogWarning($"Post-Process URDF Robot: no revolute/continuous links matching " +
                              $"'{wheelNameSubstring}' found — RobotMotorController has no wheels.", root);
 
+        // -- 6.5) Mechanisms: every remaining powered joint becomes a controllable mechanism —
+        //         non-wheel revolute/continuous joints get a hold-to-run MotorActuator, prismatic
+        //         joints get a binary PneumaticActuator (sliders are pneumatic pistons per the
+        //         Fusion export conventions). Drives are baked HERE, at edit time, because batch
+        //         validation steps physics without Awake ever running; the components re-bake the
+        //         same values at play time. The registry + ButtonRouter make the mechanisms
+        //         reachable from the player's saved button map, and the id list is mirrored onto
+        //         the catalog entry so the home screen can offer them without loading the scene.
+        string robotId = Slugify(root.name);
+        var mechanismInfos = new List<RobotModelCatalog.MechanismInfo>();
+        RobotMechanisms registry = root.GetComponent<RobotMechanisms>();
+        if (registry == null) registry = Undo.AddComponent<RobotMechanisms>(root);
+        Undo.RecordObject(registry, UndoName);
+        registry.robotId = robotId;
+        registry.mechanisms.Clear();
+
+        foreach (UrdfJoint joint in root.GetComponentsInChildren<UrdfJoint>(true))
+        {
+            ArticulationBody body = joint.GetComponent<ArticulationBody>();
+            if (body == null || wheels.Contains(body)) continue;
+
+            RobotMechanisms.Mechanism mechanism = null;
+            if (joint is UrdfJointContinuous || joint is UrdfJointRevolute)
+            {
+                MotorActuator motorActuator = Undo.AddComponent<MotorActuator>(joint.gameObject);
+                motorActuator.body = body;
+
+                // Same bake MotorActuator.Awake does at play time. Only the drive and the
+                // velocity cap — never the anchors; the importer's anchorRotation IS the axis.
+                ArticulationDrive mechDrive = body.xDrive;
+                mechDrive.driveType = ArticulationDriveType.Velocity;
+                mechDrive.stiffness = 0f;
+                mechDrive.damping = motorActuator.velocityDriveDamping;
+                mechDrive.forceLimit = motorActuator.stallTorque;
+                body.xDrive = mechDrive;
+                body.maxJointVelocity = motorActuator.maxRpm * Mathf.PI * 2f / 60f * 1.1f;
+
+                mechanism = new RobotMechanisms.Mechanism
+                {
+                    id = Slugify(joint.gameObject.name),
+                    displayName = PrettifyMechanismName(joint.gameObject.name),
+                    type = RobotMechanisms.TypeMotor,
+                    motor = motorActuator,
+                };
+            }
+            else if (joint is UrdfJointPrismatic)
+            {
+                PneumaticActuator piston = Undo.AddComponent<PneumaticActuator>(joint.gameObject);
+                piston.body = body;
+
+                // Joint limits were scaled x10 in step 2; they ARE the piston's two endpoints.
+                // Bake the Target drive the same way PneumaticActuator.Awake does at play time.
+                // The legacy per-piston toggleAction stays null — ButtonRouter owns input now.
+                ArticulationDrive mechDrive = body.xDrive;
+                piston.retractedTarget = mechDrive.lowerLimit;
+                piston.extendedTarget = mechDrive.upperLimit;
+                mechDrive.driveType = ArticulationDriveType.Target;
+                mechDrive.stiffness = piston.stiffness;
+                mechDrive.damping = piston.damping;
+                mechDrive.forceLimit = piston.cylinderForce;
+                mechDrive.target = piston.retractedTarget;
+                body.xDrive = mechDrive;
+
+                mechanism = new RobotMechanisms.Mechanism
+                {
+                    id = Slugify(joint.gameObject.name),
+                    displayName = PrettifyMechanismName(joint.gameObject.name),
+                    type = RobotMechanisms.TypePneumatic,
+                    pneumatic = piston,
+                };
+            }
+            if (mechanism == null) continue;
+
+            registry.mechanisms.Add(mechanism);
+            mechanismInfos.Add(new RobotModelCatalog.MechanismInfo
+            {
+                id = mechanism.id,
+                displayName = mechanism.displayName,
+                type = mechanism.type,
+            });
+        }
+        EditorUtility.SetDirty(registry);
+
+        ButtonRouter router = root.GetComponent<ButtonRouter>();
+        if (router == null) router = Undo.AddComponent<ButtonRouter>(root);
+        Undo.RecordObject(router, UndoName);
+        router.mechanisms = registry;
+        string[] buttonNames = Enum.GetNames(typeof(ControllerButton));
+        router.buttonActions = new InputActionReference[buttonNames.Length];
+        for (int i = 0; i < buttonNames.Length; i++)
+            router.buttonActions[i] = LoadActionReference(buttonNames[i]);
+        EditorUtility.SetDirty(router);
+
         // -- 7) Register the robot in the home-screen catalog (if the catalog asset exists).
-        bool catalogAdded = AddToCatalog(root);
+        bool catalogAdded = AddToCatalog(root, robotId, mechanismInfos);
 
         EditorUtility.SetDirty(root);
         if (root.scene.IsValid())
@@ -332,9 +470,12 @@ public class UrdfPostProcessor : EditorWindow
                   (replaceColliders
                       ? $"replaced {removedColliders} imported collider(s) with part boxes, "
                       : "kept the imported colliders, ") +
-                  $"reset inertia on {bodies.Length} articulation body(ies), wired {leftWheels.Count} left / " +
-                  $"{rightWheels.Count} right wheel(s), tagged '{root.name}' as Player" +
-                  (catalogAdded ? ", added a catalog entry." : "."), root);
+                  (keepUrdfInertials
+                      ? $"kept URDF inertials (scaled) on {bodies.Length} body(ies), "
+                      : $"reset inertia on {bodies.Length} articulation body(ies), ") +
+                  $"wired {leftWheels.Count} left / {rightWheels.Count} right wheel(s) and " +
+                  $"{registry.mechanisms.Count} mechanism(s), tagged '{root.name}' as Player" +
+                  (catalogAdded ? ", added a catalog entry." : ", refreshed the catalog entry."), root);
     }
 
     // Headless end-to-end validation for -executeMethod: imports Assets/TestRobots/testbot.urdf,
@@ -344,56 +485,20 @@ public class UrdfPostProcessor : EditorWindow
     public static void RunBatchValidateTestbot()
     {
         const string urdfAssetPath = "Assets/TestRobots/testbot.urdf";
+        const string catalogEntryId = "testbot";
 
-        // 1) Make sure a freshly copied testbot.urdf is known to the asset database.
-        AssetDatabase.Refresh();
-        string urdfFullPath = Path.GetFullPath(urdfAssetPath);
-        if (!File.Exists(urdfFullPath))
-            throw new FileNotFoundException($"URDF batch validation: '{urdfAssetPath}' not found.");
-
-        // PostProcess appends a catalog entry; remember whether it existed so cleanup can
+        // PostProcess upserts a catalog entry; remember whether it existed so cleanup can
         // remove only what this validation run added.
-        RobotModelCatalog catalogBefore = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
-        bool hadCatalogEntry = catalogBefore != null && catalogBefore.models != null &&
-                               catalogBefore.models.Exists(e => e != null && e.id == "testbot");
-
+        bool hadCatalogEntry = HasCatalogEntry(catalogEntryId);
         SimulationMode previousSimulationMode = Physics.simulationMode;
         try
         {
-            // 2) Scratch scene FIRST so the importer instantiates the robot into it. Clear the
-            // selection: ImportPipelinePostCreate parents the new robot under Selection.activeObject.
-            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            Selection.activeObject = null;
+            GameObject robot = ImportUrdfIntoScratchScene(urdfAssetPath);
 
-            // 'unity' convex method: primitive geometry keeps its primitive colliders and no
-            // VHACD decomposition runs — fully headless-safe and writes no per-hull mesh assets.
-            ImportSettings settings = new ImportSettings
-            {
-                chosenAxis = ImportSettings.axisType.yAxis,
-                convexMethod = ImportSettings.convexDecomposer.unity,
-            };
-
-            // With loadStatus=false the import coroutine never yields mid-pipeline: the first
-            // MoveNext() runs init -> hierarchy build -> post-create and then yields the finished
-            // robot, so this loop drives it synchronously. The null-refresh branch only matters
-            // if a future package version yields while waiting on assets.
-            IEnumerator<GameObject> import = UrdfRobotExtensions.Create(urdfFullPath, settings);
-            GameObject robot = null;
-            while (import.MoveNext())
-            {
-                if (import.Current != null) robot = import.Current;
-                else AssetDatabase.Refresh();
-            }
-            if (robot == null)
-                throw new InvalidOperationException("URDF batch validation FAILED: import produced no robot GameObject.");
-
-            // 3) Ground plane (top face at y = 0) and the standard post-process at 10x with the
+            // Ground plane (top face at y = 0) and the standard post-process at 10x with the
             // DEFAULT collider replacement on — this is the path the docs tell users to run, so
             // it is the one worth validating (part boxes on the chassis, spheres on wheel links).
-            GameObject ground = new GameObject("Ground");
-            BoxCollider groundBox = ground.AddComponent<BoxCollider>();
-            groundBox.size = new Vector3(200f, 1f, 200f);
-            ground.transform.position = new Vector3(0f, -0.5f, 0f);
+            CreateGroundPlane();
 
             PostProcess(robot, 10f, true, "wheel");
             robot.transform.position = new Vector3(0f, 1f, 0f); // ~1 unit above the ground
@@ -456,30 +561,246 @@ public class UrdfPostProcessor : EditorWindow
         }
         finally
         {
-            Physics.simulationMode = previousSimulationMode;
-
-            // 5) Discard the scratch scene — and the robot instance in it — without saving.
-            const string samplePath = "Assets/Scenes/SampleScene.unity";
-            if (File.Exists(samplePath)) EditorSceneManager.OpenScene(samplePath, OpenSceneMode.Single);
-            else EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-
-            // The importer writes assets next to the URDF: Materials/Default.mat (always) and
-            // meshes/Cylinder.asset (wheel collision cylinders). Delete both so repeat runs and
-            // version control stay clean; testbot.urdf itself is kept.
-            AssetDatabase.DeleteAsset("Assets/TestRobots/Materials");
-            AssetDatabase.DeleteAsset("Assets/TestRobots/meshes");
-
-            if (!hadCatalogEntry)
-            {
-                RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
-                if (catalog != null && catalog.models != null &&
-                    catalog.models.RemoveAll(e => e != null && e.id == "testbot") > 0)
-                {
-                    EditorUtility.SetDirty(catalog);
-                }
-            }
-            AssetDatabase.SaveAssets();
+            CleanupBatchImport(previousSimulationMode, catalogEntryId, hadCatalogEntry);
         }
+    }
+
+    // Headless end-to-end validation of the MECHANISM pipeline for -executeMethod: imports
+    // Assets/TestRobots/testbot_mech.urdf (testbot + a revolute arm + a prismatic piston),
+    // post-processes it, and proves in edit-mode physics that the non-wheel joints were found,
+    // wired, and actually move: the arm under its MotorActuator, the piston under its
+    // PneumaticActuator toggle. Throws (nonzero exit) on failure.
+    public static void RunBatchValidateMechanisms()
+    {
+        const string urdfAssetPath = "Assets/TestRobots/testbot_mech.urdf";
+        const string catalogEntryId = "testbot-mech";
+
+        bool hadCatalogEntry = HasCatalogEntry(catalogEntryId);
+        SimulationMode previousSimulationMode = Physics.simulationMode;
+        try
+        {
+            GameObject robot = ImportUrdfIntoScratchScene(urdfAssetPath);
+            CreateGroundPlane();
+
+            PostProcess(robot, 10f, true, "wheel");
+            robot.transform.position = new Vector3(0f, 1f, 0f); // ~1 unit above the ground
+
+            // 1) Structural asserts: registry, actuators, router, catalog metadata.
+            RobotMechanisms registry = robot.GetComponent<RobotMechanisms>();
+            if (registry == null)
+                throw new InvalidOperationException("Mechanism validation FAILED: no RobotMechanisms on the root.");
+            if (registry.robotId != catalogEntryId)
+                throw new InvalidOperationException(
+                    $"Mechanism validation FAILED: robotId '{registry.robotId}' != '{catalogEntryId}'.");
+            if (registry.mechanisms.Count != 2)
+                throw new InvalidOperationException(
+                    $"Mechanism validation FAILED: expected 2 mechanisms (arm motor + piston), got {registry.mechanisms.Count}.");
+
+            RobotMechanisms.Mechanism armMech = registry.Find("arm");
+            RobotMechanisms.Mechanism pistonMech = registry.Find("piston");
+            if (armMech == null || armMech.type != RobotMechanisms.TypeMotor || armMech.motor == null ||
+                armMech.motor.body == null)
+                throw new InvalidOperationException(
+                    "Mechanism validation FAILED: 'arm' is not a wired motor mechanism.");
+            if (pistonMech == null || pistonMech.type != RobotMechanisms.TypePneumatic ||
+                pistonMech.pneumatic == null || pistonMech.pneumatic.body == null)
+                throw new InvalidOperationException(
+                    "Mechanism validation FAILED: 'piston' is not a wired pneumatic mechanism.");
+
+            PneumaticActuator piston = pistonMech.pneumatic;
+            float pistonRange = piston.extendedTarget - piston.retractedTarget;
+            // URDF limits 0..0.05 m must arrive x10: retracted 0, extended 0.5 world units.
+            if (Mathf.Abs(piston.retractedTarget) > 0.01f || Mathf.Abs(piston.extendedTarget - 0.5f) > 0.05f)
+                throw new InvalidOperationException(
+                    $"Mechanism validation FAILED: piston targets [{piston.retractedTarget:F3}, " +
+                    $"{piston.extendedTarget:F3}] != expected [0, 0.5] — prismatic limits not scaled.");
+
+            ButtonRouter router = robot.GetComponent<ButtonRouter>();
+            if (router == null || router.buttonActions == null ||
+                router.buttonActions.Length != ControllerMapSettings.ButtonCount)
+                throw new InvalidOperationException(
+                    "Mechanism validation FAILED: ButtonRouter missing or button action array is the wrong size.");
+            for (int i = 0; i < router.buttonActions.Length; i++)
+            {
+                if (router.buttonActions[i] == null)
+                    throw new InvalidOperationException(
+                        $"Mechanism validation FAILED: button action {(ControllerButton)i} not wired — " +
+                        "is Assets/RobotControls.inputactions missing the button actions?");
+            }
+
+            RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+            RobotModelCatalog.Entry entry = catalog != null
+                ? catalog.models.Find(e => e != null && e.id == catalogEntryId) : null;
+            if (catalog != null && (entry == null || entry.mechanisms == null || entry.mechanisms.Count != 2))
+                throw new InvalidOperationException(
+                    "Mechanism validation FAILED: catalog entry is missing the 2 mechanism metadata records.");
+
+            // 2) Edit-mode physics: the arm must sweep under its motor, the piston must toggle
+            // between its endpoints — all WITHOUT Awake/Update ever running (drives are baked
+            // at edit time by the post-processor; SetInput/Toggle work from serialized state).
+            Physics.simulationMode = SimulationMode.Script;
+
+            for (int i = 0; i < 100; i++) Physics.Simulate(0.01f); // settle onto the ground
+
+            ArticulationBody armBody = armMech.motor.body;
+            if (armBody.dofCount < 1)
+                throw new InvalidOperationException(
+                    "EDITMODE_SIM_UNSUPPORTED: arm joint reports zero DOFs after Physics.Simulate — " +
+                    "the articulation was never built in edit mode.");
+
+            float armStart = armBody.jointPosition[0];
+            armMech.motor.SetInput(1f);
+            for (int i = 0; i < 200; i++) Physics.Simulate(0.01f);
+            float armDelta = armBody.jointPosition[0] - armStart;
+            armMech.motor.SetInput(0f);
+            if (float.IsNaN(armDelta))
+                throw new InvalidOperationException("Mechanism validation FAILED: arm joint position became NaN.");
+            if (Mathf.Abs(armDelta) < 0.3f)
+                throw new InvalidOperationException(
+                    $"Mechanism validation FAILED: arm swept only {armDelta:F3} rad over 2 s of full " +
+                    "input — the MotorActuator drive is not moving the joint.");
+
+            ArticulationBody pistonBody = piston.body;
+            float pistonStart = pistonBody.jointPosition[0];
+            piston.Toggle(); // retracted (baked start) -> extend
+            for (int i = 0; i < 200; i++) Physics.Simulate(0.01f);
+            float pistonExtended = pistonBody.jointPosition[0];
+            if (Mathf.Abs(pistonExtended - piston.extendedTarget) > 0.2f * Mathf.Abs(pistonRange))
+                throw new InvalidOperationException(
+                    $"Mechanism validation FAILED: piston reached {pistonExtended:F3} after Toggle(), " +
+                    $"expected ~{piston.extendedTarget:F3} — the pneumatic drive is not extending.");
+            piston.Toggle(); // -> retract
+            for (int i = 0; i < 200; i++) Physics.Simulate(0.01f);
+            float pistonRetracted = pistonBody.jointPosition[0];
+            if (Mathf.Abs(pistonRetracted - piston.retractedTarget) > 0.2f * Mathf.Abs(pistonRange))
+                throw new InvalidOperationException(
+                    $"Mechanism validation FAILED: piston sat at {pistonRetracted:F3} after the second " +
+                    $"Toggle(), expected ~{piston.retractedTarget:F3} — the pneumatic drive is not retracting.");
+
+            // 3) Keep-URDF-inertials mode spot check on a fresh import: the authored COM
+            // (base_link <inertial> origin z=0.03 m, Unity y after frame conversion) must land
+            // x10, the tensor x100, and useUrdfData must survive so play mode re-applies it.
+            Physics.simulationMode = previousSimulationMode;
+            GameObject robot2 = ImportUrdfIntoScratchScene(urdfAssetPath);
+            PostProcess(robot2, 10f, true, "wheel", keepUrdfInertials: true);
+            UrdfInertial baseInertial = null;
+            foreach (UrdfInertial inertial in robot2.GetComponentsInChildren<UrdfInertial>(true))
+            {
+                if (inertial.gameObject.name == "base_link") { baseInertial = inertial; break; }
+            }
+            if (baseInertial == null || !baseInertial.useUrdfData)
+                throw new InvalidOperationException(
+                    "Mechanism validation FAILED: keep-inertials mode lost useUrdfData on base_link.");
+            if (Mathf.Abs(baseInertial.centerOfMass.magnitude - 0.3f) > 0.02f)
+                throw new InvalidOperationException(
+                    $"Mechanism validation FAILED: keep-inertials COM magnitude {baseInertial.centerOfMass.magnitude:F3} " +
+                    "!= expected 0.3 (0.03 m x10).");
+            if (baseInertial.inertiaTensor.x < 1f || baseInertial.inertiaTensor.y < 1f || baseInertial.inertiaTensor.z < 1f)
+                throw new InvalidOperationException(
+                    $"Mechanism validation FAILED: keep-inertials tensor {baseInertial.inertiaTensor} looks " +
+                    "unscaled (authored 1x values are all < 0.07; x100 they must all exceed 1).");
+
+            Debug.Log($"Mechanism batch validation PASSED: arm swept {armDelta:F2} rad, piston toggled " +
+                      $"{pistonStart:F2} -> {pistonExtended:F2} -> {pistonRetracted:F2} " +
+                      "(targets 0 / 0.5 / 0), 12 button actions wired, catalog metadata present, " +
+                      "keep-inertials mode scales COM/tensor correctly.");
+        }
+        finally
+        {
+            PlayerPrefs.DeleteKey(ControllerMapSettings.PrefKey(catalogEntryId));
+            CleanupBatchImport(previousSimulationMode, catalogEntryId, hadCatalogEntry);
+        }
+    }
+
+    // Shared batch-import boilerplate: scratch scene + synchronous URDF import. The scratch
+    // scene must exist FIRST so the importer instantiates the robot into it; the selection is
+    // cleared because ImportPipelinePostCreate parents the new robot under Selection.activeObject.
+    private static GameObject ImportUrdfIntoScratchScene(string urdfAssetPath)
+    {
+        AssetDatabase.Refresh(); // a freshly copied .urdf must be known to the asset database
+        string urdfFullPath = Path.GetFullPath(urdfAssetPath);
+        if (!File.Exists(urdfFullPath))
+            throw new FileNotFoundException($"URDF batch validation: '{urdfAssetPath}' not found.");
+
+        EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        Selection.activeObject = null;
+
+        // 'unity' convex method: primitive geometry keeps its primitive colliders and no
+        // VHACD decomposition runs — fully headless-safe and writes no per-hull mesh assets.
+        ImportSettings settings = new ImportSettings
+        {
+            chosenAxis = ImportSettings.axisType.yAxis,
+            convexMethod = ImportSettings.convexDecomposer.unity,
+        };
+
+        // With loadStatus=false the import coroutine never yields mid-pipeline: the first
+        // MoveNext() runs init -> hierarchy build -> post-create and then yields the finished
+        // robot, so this loop drives it synchronously. The null-refresh branch only matters
+        // if a future package version yields while waiting on assets.
+        IEnumerator<GameObject> import = UrdfRobotExtensions.Create(urdfFullPath, settings);
+        GameObject robot = null;
+        while (import.MoveNext())
+        {
+            if (import.Current != null) robot = import.Current;
+            else AssetDatabase.Refresh();
+        }
+        if (robot == null)
+            throw new InvalidOperationException("URDF batch validation FAILED: import produced no robot GameObject.");
+        return robot;
+    }
+
+    // Ground plane with its top face at y = 0.
+    private static void CreateGroundPlane()
+    {
+        GameObject ground = new GameObject("Ground");
+        BoxCollider groundBox = ground.AddComponent<BoxCollider>();
+        groundBox.size = new Vector3(200f, 1f, 200f);
+        ground.transform.position = new Vector3(0f, -0.5f, 0f);
+    }
+
+    private static bool HasCatalogEntry(string id)
+    {
+        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        return catalog != null && catalog.models != null &&
+               catalog.models.Exists(e => e != null && e.id == id);
+    }
+
+    // Restores sim mode, discards the scratch scene (and the robot in it) without saving,
+    // deletes the assets the importer wrote next to the URDF (Materials/, meshes/ — the .urdf
+    // files themselves are kept), and removes the catalog entry if this run created it.
+    private static void CleanupBatchImport(SimulationMode previousSimulationMode, string catalogEntryId,
+        bool hadCatalogEntry)
+    {
+        Physics.simulationMode = previousSimulationMode;
+
+        const string samplePath = "Assets/Scenes/SampleScene.unity";
+        if (File.Exists(samplePath)) EditorSceneManager.OpenScene(samplePath, OpenSceneMode.Single);
+        else EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+
+        AssetDatabase.DeleteAsset("Assets/TestRobots/Materials");
+        AssetDatabase.DeleteAsset("Assets/TestRobots/meshes");
+
+        if (!hadCatalogEntry)
+        {
+            RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+            if (catalog != null && catalog.models != null &&
+                catalog.models.RemoveAll(e => e != null && e.id == catalogEntryId) > 0)
+            {
+                EditorUtility.SetDirty(catalog);
+            }
+        }
+        AssetDatabase.SaveAssets();
+    }
+
+    // Nearest ancestor ArticulationBody — the parent link this body's joint connects to.
+    private static ArticulationBody FindParentBody(ArticulationBody body)
+    {
+        for (Transform t = body.transform.parent; t != null; t = t.parent)
+        {
+            ArticulationBody ancestor = t.GetComponent<ArticulationBody>();
+            if (ancestor != null) return ancestor;
+        }
+        return null;
     }
 
     // The root body is the one with no ArticulationBody anywhere above it. Don't trust
@@ -522,26 +843,53 @@ public class UrdfPostProcessor : EditorWindow
         return null;
     }
 
-    // Appends {id: slug(root.name), displayName: root.name} to the model catalog if missing.
-    // Returns true when an entry was added. Quietly does nothing when the catalog asset
-    // doesn't exist yet (it's created by the Build Home Scene tool).
-    private static bool AddToCatalog(GameObject root)
+    // Upserts {id, displayName, mechanisms} into the model catalog. Returns true when a new
+    // entry was added; an existing entry gets its mechanism metadata refreshed either way, so
+    // re-importing a robot with new mechanisms updates the home screen's config UI. Quietly
+    // does nothing when the catalog asset doesn't exist yet (it's created by the Build Home
+    // Scene tool).
+    private static bool AddToCatalog(GameObject root, string id, List<RobotModelCatalog.MechanismInfo> mechanisms)
     {
         RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
         if (catalog == null) return false;
 
-        string id = Slugify(root.name);
         if (catalog.models == null) catalog.models = new List<RobotModelCatalog.Entry>();
+        RobotModelCatalog.Entry existing = null;
         foreach (RobotModelCatalog.Entry entry in catalog.models)
         {
-            if (entry != null && entry.id == id) return false;
+            if (entry != null && entry.id == id) { existing = entry; break; }
         }
 
         Undo.RecordObject(catalog, UndoName);
-        catalog.models.Add(new RobotModelCatalog.Entry { id = id, displayName = root.name });
+        bool added = existing == null;
+        if (added)
+        {
+            existing = new RobotModelCatalog.Entry { id = id, displayName = root.name };
+            catalog.models.Add(existing);
+        }
+        existing.mechanisms = mechanisms != null
+            ? new List<RobotModelCatalog.MechanismInfo>(mechanisms)
+            : new List<RobotModelCatalog.MechanismInfo>();
         EditorUtility.SetDirty(catalog);
         AssetDatabase.SaveAssets();
-        return true;
+        return added;
+    }
+
+    // "lift_arm" -> "Lift Arm"; a trailing "joint"/"link" token is dropped ("arm_joint" -> "Arm").
+    // Used for the mechanism names the config UI shows, sourced from URDF link names.
+    private static string PrettifyMechanismName(string name)
+    {
+        string[] words = name.Replace('_', ' ').Replace('-', ' ')
+            .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        var result = new List<string>(words.Length);
+        foreach (string word in words)
+            result.Add(char.ToUpperInvariant(word[0]) + word.Substring(1));
+        if (result.Count > 1)
+        {
+            string last = result[result.Count - 1].ToLowerInvariant();
+            if (last == "joint" || last == "link") result.RemoveAt(result.Count - 1);
+        }
+        return result.Count > 0 ? string.Join(" ", result) : name;
     }
 
     // Stable id from a display name: lowercase, runs of non-alphanumerics collapse to single

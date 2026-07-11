@@ -15,11 +15,23 @@ using UnityEngine;
 [CreateAssetMenu(menuName = "VEX/Robot Model Catalog", fileName = "RobotModelCatalog")]
 public class RobotModelCatalog : ScriptableObject
 {
+    // Mirror of a RobotMechanisms.Mechanism (id/displayName/type only, no component refs) so
+    // the home-screen controller-config UI can list a robot's mechanisms without loading the
+    // field scene. Written by the URDF post-processor alongside the scene-side registry.
+    [Serializable]
+    public class MechanismInfo
+    {
+        public string id;
+        public string displayName;
+        public string type; // RobotMechanisms.TypeMotor or RobotMechanisms.TypePneumatic
+    }
+
     [Serializable]
     public class Entry
     {
         public string id;           // stable identifier persisted in PlayerPrefs
         public string displayName;  // what the home screen shows
+        public List<MechanismInfo> mechanisms = new List<MechanismInfo>();
     }
 
     public List<Entry> models = new List<Entry>();

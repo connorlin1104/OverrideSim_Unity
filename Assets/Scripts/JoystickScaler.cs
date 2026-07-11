@@ -1,5 +1,10 @@
 using UnityEngine;
 
+// LEGACY — superseded by ControlsAppearance (size AND opacity, sticks AND buttons). The build
+// tools now remove this component from the field Canvas and wire ControlsAppearance instead;
+// the class is kept only so an unmigrated scene still compiles. Safe to delete once
+// Build Drive Controls has run and the scene is saved without it.
+//
 // Applies the player's chosen joystick size (JoystickSettings.Scale) to the on-screen joysticks
 // in the field scene. Lives on the field scene's Canvas; the Build Home Screen tool wires the
 // two joystick background RectTransforms (LeftJoystick_BG, RightJoystick_BG) into it.

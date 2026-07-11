@@ -34,10 +34,20 @@ public class HomeScreenController : MonoBehaviour
     [SerializeField] private Color normalTint = new Color(0.23f, 0.25f, 0.30f);   // neutral dark
 
     [Header("Joystick Size")]
-    [Tooltip("Slider that scales the on-screen driving joysticks (persisted via JoystickSettings).")]
+    [Tooltip("Slider that scales the on-screen controls (persisted via JoystickSettings).")]
     [SerializeField] private Slider joystickSizeSlider;
     [Tooltip("Label above the slider; shows the current size as a percentage.")]
     [SerializeField] private TMP_Text joystickSizeLabel;
+
+    [Header("Controls Opacity")]
+    [Tooltip("Slider for the on-screen controls' opacity (persisted via ControlsOpacitySettings).")]
+    [SerializeField] private Slider controlsOpacitySlider;
+    [Tooltip("Label above the slider; shows the current opacity as a percentage.")]
+    [SerializeField] private TMP_Text controlsOpacityLabel;
+
+    [Header("Controller Config")]
+    [Tooltip("The Configure Controller sub-screen (button -> mechanism mapping).")]
+    [SerializeField] private ControllerConfigScreen controllerConfig;
 
     // Clones built from the template, paired with the catalog id each one selects.
     private readonly List<KeyValuePair<Button, string>> modelButtons = new List<KeyValuePair<Button, string>>();
@@ -48,6 +58,7 @@ public class HomeScreenController : MonoBehaviour
         if (settingsPanel != null) settingsPanel.SetActive(false);
         BuildModelList();
         InitJoystickSizeControl();
+        InitControlsOpacityControl();
     }
 
     // --- Button hooks (wired as persistent onClick listeners by the Build Home Scene tool) ---
@@ -67,6 +78,19 @@ public class HomeScreenController : MonoBehaviour
     {
         if (settingsPanel != null) settingsPanel.SetActive(false);
         if (mainPanel != null) mainPanel.SetActive(true);
+    }
+
+    public void OnConfigureControllerPressed()
+    {
+        if (controllerConfig == null) return; // older scene without the config screen
+        if (settingsPanel != null) settingsPanel.SetActive(false);
+        controllerConfig.Open();
+    }
+
+    public void OnConfigBackPressed()
+    {
+        if (controllerConfig != null) controllerConfig.Close();
+        if (settingsPanel != null) settingsPanel.SetActive(true);
     }
 
     // --- Model list ---
@@ -142,5 +166,32 @@ public class HomeScreenController : MonoBehaviour
     {
         if (joystickSizeLabel != null)
             joystickSizeLabel.text = $"Joystick Size — {Mathf.RoundToInt(value * 100f)}%";
+    }
+
+    // --- Controls opacity ---
+
+    // Same pattern as the size control; guarded so an older HomeScene still runs without it.
+    private void InitControlsOpacityControl()
+    {
+        if (controlsOpacitySlider == null) return;
+
+        controlsOpacitySlider.minValue = ControlsOpacitySettings.MinOpacity;
+        controlsOpacitySlider.maxValue = ControlsOpacitySettings.MaxOpacity;
+        controlsOpacitySlider.wholeNumbers = false;
+        controlsOpacitySlider.SetValueWithoutNotify(ControlsOpacitySettings.Opacity);
+        controlsOpacitySlider.onValueChanged.AddListener(OnControlsOpacityChanged);
+        UpdateControlsOpacityLabel(ControlsOpacitySettings.Opacity);
+    }
+
+    private void OnControlsOpacityChanged(float value)
+    {
+        ControlsOpacitySettings.Opacity = value; // ControlsAppearance reads this in the field scene
+        UpdateControlsOpacityLabel(value);
+    }
+
+    private void UpdateControlsOpacityLabel(float value)
+    {
+        if (controlsOpacityLabel != null)
+            controlsOpacityLabel.text = $"Controls Opacity — {Mathf.RoundToInt(value * 100f)}%";
     }
 }
