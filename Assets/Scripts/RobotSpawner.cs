@@ -21,6 +21,9 @@ public class RobotSpawner : MonoBehaviour
     [Tooltip("World rotation (Euler degrees) the robot is spawned with.")]
     [SerializeField] private Vector3 spawnEuler = Vector3.zero;
 
+    [Tooltip("Keep the robot's collider footprint at least this far (world units) inside the field walls.")]
+    [SerializeField] private float wallClearance = 0.5f;
+
     void Awake()
     {
         if (catalog == null)
@@ -52,20 +55,100 @@ public class RobotSpawner : MonoBehaviour
     // Instantiate places the prefab's ROOT at the spawn point, but a prefab's root origin is its
     // CAD/FBX pivot — which Fusion often puts well off the robot's footprint (e.g. a corner). Left
     // as-is, an off-pivot bot lands offset from the spawn point and can drop onto a wall (the 654V
-    // did). Shift the root horizontally so the robot's footprint CENTER sits on the spawn point, so
-    // one standard spawn point works for any bot regardless of where its CAD origin is. Y is left
-    // alone so the drop height is unchanged. Done before the first physics step, so setting the
-    // root transform is the correct way to place the freshly-instantiated articulation.
+    // did). Two steps fix that: shift the root so the robot's collision footprint CENTER sits on the
+    // spawn point, then pull the footprint fully inside the field walls so a wide bot near the wall
+    // can't overlap it and get ejected on top. Y is left alone so the drop height is unchanged. Done
+    // before the first physics step, so setting the root transform is the correct way to place the
+    // freshly-instantiated articulation.
     private void RecenterFootprint(GameObject robot)
     {
-        Renderer[] renderers = robot.GetComponentsInChildren<Renderer>(true);
-        if (renderers.Length == 0) return;
-        Bounds bounds = renderers[0].bounds;
-        for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
+        if (!TryGetWorldFootprint(robot, out Bounds bounds)) return;
 
+        // 1) Center the footprint on the spawn point (X/Z only; keep the spawn Y as the drop height).
         Vector3 delta = spawnPosition - bounds.center;
-        delta.y = 0f; // re-center the footprint only; keep the spawn Y as the drop height
+        delta.y = 0f;
         robot.transform.position += delta;
+        bounds.center += delta;
+
+        // 2) Clamp the footprint inside the field walls. Uses the actual wall colliders, so it tracks
+        //    the field if it moves, and does nothing if the walls aren't found (falls back to (1)).
+        if (TryGetFieldInterior(out float minX, out float maxX, out float minZ, out float maxZ))
+        {
+            Vector3 push = Vector3.zero;
+            push.x = ClampAxis(bounds.center.x, bounds.extents.x, minX, maxX, wallClearance);
+            push.z = ClampAxis(bounds.center.z, bounds.extents.z, minZ, maxZ, wallClearance);
+            robot.transform.position += push;
+        }
+    }
+
+    // Combined WORLD-space collision footprint. Colliders (not renderers) are what actually contact
+    // the wall — a wheel sphere or part box can exceed the visual mesh. Triggers are skipped, and it
+    // falls back to renderers only if a bot somehow has no solid colliders yet.
+    private static bool TryGetWorldFootprint(GameObject robot, out Bounds bounds)
+    {
+        bounds = new Bounds();
+        bool has = false;
+        foreach (Collider col in robot.GetComponentsInChildren<Collider>())
+        {
+            if (col.isTrigger) continue;
+            if (!has) { bounds = col.bounds; has = true; }
+            else bounds.Encapsulate(col.bounds);
+        }
+        if (has) return true;
+        foreach (Renderer r in robot.GetComponentsInChildren<Renderer>())
+        {
+            if (!has) { bounds = r.bounds; has = true; }
+            else bounds.Encapsulate(r.bounds);
+        }
+        return has;
+    }
+
+    // Interior playfield extent (world X/Z) from the field's perimeter wall boxes: each thin wall's
+    // inner face bounds the play area. Returns false unless all four sides are found, so the caller
+    // can fall back to the plain recenter. Matches the walls built by FixFieldColliders under
+    // "Perimeter/WallColliders".
+    private static bool TryGetFieldInterior(out float minX, out float maxX, out float minZ, out float maxZ)
+    {
+        minX = float.NegativeInfinity; maxX = float.PositiveInfinity;
+        minZ = float.NegativeInfinity; maxZ = float.PositiveInfinity;
+
+        GameObject perimeter = GameObject.Find("Perimeter");
+        Transform wallHost = perimeter != null ? perimeter.transform.Find("WallColliders") : null;
+        if (wallHost == null) return false;
+        BoxCollider[] walls = wallHost.GetComponentsInChildren<BoxCollider>();
+        if (walls.Length == 0) return false;
+
+        // Field center, to tell a +X wall from a -X wall (and +Z from -Z).
+        Vector3 sum = Vector3.zero;
+        foreach (BoxCollider w in walls) sum += w.bounds.center;
+        Vector3 fieldCenter = sum / walls.Length;
+
+        foreach (BoxCollider w in walls)
+        {
+            Bounds b = w.bounds;
+            if (b.size.x <= b.size.z) // thin along X -> a +/-X wall; inner face bounds the play area
+            {
+                if (b.center.x >= fieldCenter.x) maxX = Mathf.Min(maxX, b.min.x);
+                else minX = Mathf.Max(minX, b.max.x);
+            }
+            else // thin along Z -> a +/-Z wall
+            {
+                if (b.center.z >= fieldCenter.z) maxZ = Mathf.Min(maxZ, b.min.z);
+                else minZ = Mathf.Max(minZ, b.max.z);
+            }
+        }
+        return !float.IsInfinity(minX) && !float.IsInfinity(maxX)
+            && !float.IsInfinity(minZ) && !float.IsInfinity(maxZ);
+    }
+
+    // Delta to move a footprint of half-width `half` (centered at `center`) so it stays within
+    // [min+clear, max-clear]. If the bot is too wide for that gap, it's centered in the gap instead.
+    private static float ClampAxis(float center, float half, float min, float max, float clear)
+    {
+        float lo = min + clear + half;
+        float hi = max - clear - half;
+        float target = lo > hi ? (min + max) * 0.5f : Mathf.Clamp(center, lo, hi);
+        return target - center;
     }
 
     private RobotModelCatalog.Entry FirstEntryWithPrefab()

@@ -49,6 +49,7 @@ public class UrdfPostProcessor : EditorWindow
     [SerializeField] private bool keepUrdfInertials;
     [SerializeField] private bool massFromGeometry = true;
     [SerializeField] private float defaultDensity = RobotPartClassifier.DefaultDensity;
+    [SerializeField] private bool mechanizeAllPoweredJoints;
 
     [MenuItem("Tools/RoboSim/Robot/Advanced/Post-Process Imported URDF Robot", false, 3)]
     private static void ShowWindow()
@@ -92,6 +93,12 @@ public class UrdfPostProcessor : EditorWindow
                     "~1250 = rigid plastic; use ~2700 for a mostly-aluminum robot."), defaultDensity);
         }
 
+        mechanizeAllPoweredJoints = EditorGUILayout.Toggle(new GUIContent("Mechanize All Powered Joints",
+            "OFF (default): only joints whose NAME reads as a mechanism (arm, intake, cylinder…) become " +
+            "controllable; every other powered joint is welded solid, so unscrewed/floating CAD parts stay " +
+            "put. Turn ON to trust the URDF and make every non-wheel revolute/prismatic joint a live mechanism."),
+            mechanizeAllPoweredJoints);
+
         EditorGUILayout.Space();
         if (!GUILayout.Button("Run")) return;
 
@@ -112,7 +119,7 @@ public class UrdfPostProcessor : EditorWindow
         try
         {
             PostProcess(targetRoot, scaleFactor, replaceCollidersWithPartBoxes, wheelNameSubstring, keepUrdfInertials,
-                massFromGeometry, defaultDensity);
+                massFromGeometry, defaultDensity, mechanizeAllPoweredJoints);
         }
         catch (Exception e)
         {
@@ -123,7 +130,8 @@ public class UrdfPostProcessor : EditorWindow
     // Core pipeline. Everything is collapsed into a single Undo group so one Ctrl+Z restores
     // the freshly imported robot.
     public static void PostProcess(GameObject root, float scaleFactor, bool replaceColliders, string wheelNameSubstring,
-        bool keepUrdfInertials = false, bool massFromGeometry = true, float defaultDensity = RobotPartClassifier.DefaultDensity)
+        bool keepUrdfInertials = false, bool massFromGeometry = true, float defaultDensity = RobotPartClassifier.DefaultDensity,
+        bool mechanizeAllPoweredJoints = false)
     {
         if (root == null) throw new ArgumentNullException(nameof(root));
         UrdfLink[] links = root.GetComponentsInChildren<UrdfLink>(true);
@@ -410,6 +418,17 @@ public class UrdfPostProcessor : EditorWindow
             ArticulationBody body = joint.GetComponent<ArticulationBody>();
             if (body == null || wheels.Contains(body)) continue;
 
+            // Rigid-by-default: a powered joint only stays live if its NAME reads as a mechanism
+            // (arm, intake, cylinder…) or the caller opts into trusting the whole URDF. Everything
+            // else is welded solid so unscrewed/floating CAD parts don't droop or fly off under
+            // gravity — the user turns the real movers on afterward with Add or Fix Mechanism Joint.
+            bool namedMechanism = RobotPartClassifier.TryClassifyMechanism(joint.name, out _);
+            if (!mechanizeAllPoweredJoints && !namedMechanism)
+            {
+                WeldFixed(body, useUndo: true);
+                continue;
+            }
+
             // Wire from the ArticulationBody's joint type (revolute/continuous -> motor, prismatic
             // -> pneumatic) via the shared helper the joint tool also uses.
             RobotMechanisms.Mechanism mechanism =
@@ -469,6 +488,18 @@ public class UrdfPostProcessor : EditorWindow
             case ArticulationJointType.PrismaticJoint: return MechKind.Pneumatic;
             default: return MechKind.None;
         }
+    }
+
+    // Welds a link solid at its current rest pose — the rigid-by-default fate of every powered
+    // joint that isn't a named mechanism. The scale-bake pass already re-derived correct anchors and
+    // FixedJoint locks all six DOF, so only the joint type changes; the weld freezes the present
+    // relative pose (no simulation has run yet at edit time, so that pose is the CAD rest pose).
+    public static void WeldFixed(ArticulationBody body, bool useUndo)
+    {
+        if (body == null) return;
+        if (useUndo) Undo.RecordObject(body, UndoName);
+        body.jointType = ArticulationJointType.FixedJoint;
+        EditorUtility.SetDirty(body);
     }
 
     // Adds and bakes the actuator for one mechanism joint and returns its registry record (id +

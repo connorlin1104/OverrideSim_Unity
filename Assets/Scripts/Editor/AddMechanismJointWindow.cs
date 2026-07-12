@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -28,13 +29,18 @@ public class AddMechanismJointWindow : EditorWindow
     private enum AxisPreset { X, Y, Z, Custom, Auto }
 
     [SerializeField] private GameObject childLink;
-    [SerializeField] private AddMechanismJoint.JointType jointType = AddMechanismJoint.JointType.Revolute;
-    [SerializeField] private AxisPreset axisPreset = AxisPreset.Y;
+    // Default to a free-spinning axle: the common "make this roller/shaft turn" case, and the one
+    // that used to sweep like a lever and jam when it defaulted to a limited Revolute.
+    [SerializeField] private AddMechanismJoint.JointType jointType = AddMechanismJoint.JointType.Continuous;
+    [SerializeField] private AxisPreset axisPreset = AxisPreset.Auto;
     [SerializeField] private Vector3 customAxis = Vector3.up;
     [SerializeField] private Vector3 anchor = Vector3.zero;
     [SerializeField] private float lowerLimit = -90f;
     [SerializeField] private float upperLimit = 90f;
     [SerializeField] private bool autoAssignButton = true;
+    [SerializeField] private List<GameObject> alsoMove = new List<GameObject>();
+    [SerializeField] private bool reverseDirection;
+    [SerializeField] private bool pneumaticToggle;
 
     [MenuItem("Tools/RoboSim/Robot/Advanced/Add or Fix Mechanism Joint", false, 4)]
     private static void ShowWindow()
@@ -117,6 +123,33 @@ public class AddMechanismJointWindow : EditorWindow
         }
 
         if (jointType != AddMechanismJoint.JointType.Fixed)
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField(new GUIContent("Parts That Move Together",
+                "Extra parts to fold into this ONE moving link so the whole axle co-rotates (sprockets, " +
+                "rollers, the shaft). Leave the MOTOR out — anything not listed stays welded to the chassis " +
+                "and stays still. Only plain, un-rigged parts can be added."), EditorStyles.miniBoldLabel);
+            for (int i = 0; i < alsoMove.Count; i++)
+            {
+                EditorGUILayout.BeginHorizontal();
+                alsoMove[i] = (GameObject)EditorGUILayout.ObjectField(alsoMove[i], typeof(GameObject), true);
+                if (GUILayout.Button("X", GUILayout.Width(24))) { alsoMove.RemoveAt(i); i--; }
+                EditorGUILayout.EndHorizontal();
+            }
+            if (GUILayout.Button("Add Part", GUILayout.Width(100))) alsoMove.Add(null);
+
+            if (jointType == AddMechanismJoint.JointType.Revolute)
+                pneumaticToggle = EditorGUILayout.Toggle(new GUIContent("Piston Toggle",
+                    "Drive this hinge like a binary pneumatic: each button press snaps it between the Lower " +
+                    "and Upper limit, instead of a hold-to-run motor. Use for a piston-driven pivot/flipper."),
+                    pneumaticToggle);
+
+            reverseDirection = EditorGUILayout.Toggle(new GUIContent("Reverse Direction",
+                "Flip the drive sense if the mechanism runs backward for 'forward' input (motor) or starts " +
+                "at the wrong end (piston)."), reverseDirection);
+        }
+
+        if (jointType != AddMechanismJoint.JointType.Fixed)
             autoAssignButton = EditorGUILayout.Toggle(new GUIContent("Auto-Assign Button",
                 "After applying, map this mechanism to the next free controller button (motor = " +
                 "forward/reverse pair, pneumatic = toggle) so it's drivable without opening Configure Controller."),
@@ -176,17 +209,27 @@ public class AddMechanismJointWindow : EditorWindow
             Undo.IncrementCurrentGroup();
             Undo.SetCurrentGroupName(Title);
             int group = Undo.GetCurrentGroup();
-            AddMechanismJoint.Apply(childLink, jointType, axis, effectiveAnchor, lowerLimit, upperLimit, useUndo: true);
+
+            bool asToggle = jointType == AddMechanismJoint.JointType.Revolute && pneumaticToggle;
+            var options = new AddMechanismJoint.Options
+            {
+                alsoMove = alsoMove.Count > 0 ? alsoMove.ToArray() : null,
+                reverseDirection = reverseDirection,
+                actuation = asToggle ? AddMechanismJoint.Actuation.Toggle : AddMechanismJoint.Actuation.Auto,
+            };
+            AddMechanismJoint.Apply(childLink, jointType, axis, effectiveAnchor, lowerLimit, upperLimit, options, useUndo: true);
 
             // Map it to a free button so it's drivable immediately (skipped for Fixed, which removed
-            // the mechanism). Non-fatal: a full button map just means the user maps it by hand later.
+            // the mechanism). A piston-toggle hinge maps like a pneumatic (one toggle button), so pass
+            // Prismatic for the button style. Non-fatal: a full map just means the user maps it later.
             string buttonNote = "";
             if (autoAssignButton && jointType != AddMechanismJoint.JointType.Fixed)
             {
                 RobotMechanisms reg = childLink.GetComponentInParent<RobotMechanisms>();
+                AddMechanismJoint.JointType buttonType = asToggle ? AddMechanismJoint.JointType.Prismatic : jointType;
                 if (reg != null)
                     buttonNote = "\nButton: " + MechanismAutoDetect.AssignButtons(
-                        reg.robotId, UrdfPostProcessor.Slugify(childLink.name), jointType);
+                        reg.robotId, UrdfPostProcessor.Slugify(childLink.name), buttonType);
             }
             Undo.CollapseUndoOperations(group);
 
@@ -209,6 +252,21 @@ public static class AddMechanismJoint
 {
     public enum JointType { Revolute, Continuous, Prismatic, Fixed }
 
+    // How a mechanism is actuated from its button(s), independent of the joint's DOF type. Auto
+    // classifies by joint type (revolute/continuous -> hold-to-run motor, prismatic -> pneumatic
+    // toggle); Toggle forces a binary snap between the limits (a piston-driven pivot/flipper);
+    // HoldToRun forces a velocity motor.
+    public enum Actuation { Auto, HoldToRun, Toggle }
+
+    // Optional authoring extras for Apply. All default to "single picked part, forward direction,
+    // auto actuation", so the legacy 7-arg overload keeps working unchanged.
+    public struct Options
+    {
+        public GameObject[] alsoMove;   // plain parts to fold into the one driven link
+        public bool reverseDirection;   // flip motor sense / swap pneumatic endpoints
+        public Actuation actuation;
+    }
+
     private const float WorldScaleFactor = 10f;  // this project's world: 1 scaled unit = 0.1 m
     private const float DefaultLinkMass = 1f;     // fallback mass for a split link with no closed mesh
     private const float MinSplitMass = 1e-3f;     // below this the geometry mass is treated as absent
@@ -220,6 +278,13 @@ public static class AddMechanismJoint
     // geometry-derived mass). Throws on any precondition failure. useUndo=false for batch/headless callers.
     public static void Apply(GameObject link, JointType type, Vector3 axis, Vector3 anchor,
         float lowerLimit, float upperLimit, bool useUndo)
+        => Apply(link, type, axis, anchor, lowerLimit, upperLimit, default, useUndo);
+
+    // Full overload: adds part-grouping (the driven link co-rotates a whole axle while the unlisted
+    // motor housing stays welded), a reverse-direction flip, and an actuation override (drive a
+    // revolute as a pneumatic toggle — a piston-driven pivot). See Options.
+    public static void Apply(GameObject link, JointType type, Vector3 axis, Vector3 anchor,
+        float lowerLimit, float upperLimit, Options options, bool useUndo)
     {
         if (link == null) throw new ArgumentNullException(nameof(link));
 
@@ -229,6 +294,11 @@ public static class AddMechanismJoint
                 $"'{link.name}' is not under a set-up robot (no RobotMechanisms). Run " +
                 "Set Up Imported Robot first.");
         GameObject root = registry.gameObject;
+
+        // Fold any "parts that move together" into this link BEFORE it gets a body, so the driven
+        // link is the whole axle (its mass covers them) while the unlisted motor housing stays welded
+        // to the chassis. Only meaningful for a moving joint.
+        bool mergedExtras = type != JointType.Fixed && MergeIntoLink(link, options.alsoMove, useUndo);
 
         // A URDF link already carries an ArticulationBody; a plain FBX part does not. When it
         // doesn't, split a new moving link off its rigid parent: adding the body moves this part's
@@ -262,6 +332,13 @@ public static class AddMechanismJoint
             // The split-off geometry must keep the robot's tag so the match loaders still see it.
             if (useUndo) Undo.RecordObject(link, "Add or Fix Mechanism Joint");
             link.tag = root.tag;
+        }
+        else if (mergedExtras)
+        {
+            // Extra geometry just joined an existing link — refresh its mass distribution.
+            if (useUndo) Undo.RecordObject(body, "Add or Fix Mechanism Joint");
+            body.ResetCenterOfMass();
+            body.ResetInertiaTensor();
         }
 
         // Drivetrain wheels belong to the joysticks via RobotMotorController, not the buttons.
@@ -333,8 +410,9 @@ public static class AddMechanismJoint
         }
         else
         {
-            UrdfPostProcessor.MechKind kind = UrdfPostProcessor.ClassifyMechanism(body);
+            UrdfPostProcessor.MechKind kind = ResolveKind(body, options.actuation);
             RobotMechanisms.Mechanism mech = UrdfPostProcessor.WireMechanism(body, link, kind, useUndo);
+            ApplyDirection(mech, body, options.reverseDirection, useUndo);
             UrdfPostProcessor.RegisterMechanism(registry, mech, useUndo);
         }
         UrdfPostProcessor.RefreshCatalogMechanisms(registry.robotId, root.name, registry);
@@ -357,5 +435,65 @@ public static class AddMechanismJoint
             if (ancestor != null) return ancestor;
         }
         return null;
+    }
+
+    // Reparents each extra part under the driven link so the whole axle co-rotates as one body.
+    // Only plain (un-rigged) parts can join — a part that's already its own link can't be absorbed.
+    // Reparenting keeps world position, so the geometry doesn't jump. Returns true if anything moved.
+    private static bool MergeIntoLink(GameObject link, GameObject[] alsoMove, bool useUndo)
+    {
+        if (alsoMove == null) return false;
+        bool any = false;
+        foreach (GameObject part in alsoMove)
+        {
+            if (part == null || part == link) continue;
+            if (part.GetComponent<ArticulationBody>() != null)
+                throw new InvalidOperationException(
+                    $"'{part.name}' is already its own moving link, so it can't be merged into " +
+                    $"'{link.name}'. Add only plain, un-rigged parts to a driven link.");
+            if (part.transform.IsChildOf(link.transform)) continue; // already part of the link
+            if (link.transform.IsChildOf(part.transform))
+                throw new InvalidOperationException(
+                    $"'{part.name}' is above the driven link '{link.name}' in the hierarchy. Pick the " +
+                    "axle/output as the moving link, then add the parts attached to it — not the reverse.");
+            if (useUndo) Undo.SetTransformParent(part.transform, link.transform, "Add or Fix Mechanism Joint");
+            else part.transform.SetParent(link.transform, worldPositionStays: true);
+            any = true;
+        }
+        return any;
+    }
+
+    // The actuator kind for a driven joint: Toggle drives it as a binary pneumatic (snap between the
+    // limits — a piston-driven pivot), HoldToRun as a velocity motor, Auto by the joint's DOF type.
+    private static UrdfPostProcessor.MechKind ResolveKind(ArticulationBody body, Actuation actuation)
+    {
+        switch (actuation)
+        {
+            case Actuation.Toggle:    return UrdfPostProcessor.MechKind.Pneumatic;
+            case Actuation.HoldToRun: return UrdfPostProcessor.MechKind.Motor;
+            default:                  return UrdfPostProcessor.ClassifyMechanism(body);
+        }
+    }
+
+    // Applies the reverse-direction flip to the freshly-wired actuator: motors invert their input
+    // sense; pistons swap their two endpoints (and re-seat the rest target) so they start at the
+    // other end.
+    private static void ApplyDirection(RobotMechanisms.Mechanism mech, ArticulationBody body, bool reverse, bool useUndo)
+    {
+        if (mech == null) return;
+        if (mech.motor != null)
+        {
+            if (useUndo) Undo.RecordObject(mech.motor, "Add or Fix Mechanism Joint");
+            mech.motor.invert = reverse;
+        }
+        else if (mech.pneumatic != null && reverse)
+        {
+            PneumaticActuator p = mech.pneumatic;
+            if (useUndo) Undo.RecordObject(p, "Add or Fix Mechanism Joint");
+            (p.retractedTarget, p.extendedTarget) = (p.extendedTarget, p.retractedTarget);
+            ArticulationDrive d = body.xDrive;
+            d.target = p.startExtended ? p.extendedTarget : p.retractedTarget;
+            body.xDrive = d;
+        }
     }
 }
