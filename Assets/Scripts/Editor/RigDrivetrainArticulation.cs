@@ -36,6 +36,12 @@ public class RigDrivetrainArticulation
     private const float WheelStallTorque = 700f; // matches RobotMotorController.wheelStallTorque
     private const float WheelDriveDamping = 1000f;
     private const float WheelMaxJointVelocity = 44f; // rad/s — 360 RPM (37.7 rad/s) plus headroom
+    // Drivetrain-loss knobs baked into the wheel links (a real dt is never frictionless). These
+    // match RobotMotorController.wheelRollingResistance / wheelSpinDamping, which re-applies them
+    // to every wheel at play — that's the runtime authority; these keep edit-mode simulation
+    // (PhysicsSmokeTest) and freshly-rigged serialized values consistent with it.
+    private const float WheelRollingResistance = 0.3f; // Coulomb axle friction (coast-to-stop feel)
+    private const float WheelSpinDamping = 0.5f;        // velocity-proportional spin loss (bleeds top speed)
     private const float AxleAngleToleranceDeg = 10f;
 
     [MenuItem("Tools/RoboSim/Robot/Advanced/Rig Motors and Wheel Joints", false, 2)]
@@ -237,8 +243,8 @@ public class RigDrivetrainArticulation
             ab.anchorPosition = Vector3.zero;
             ab.anchorRotation = Quaternion.identity;
             ab.mass = WheelMass;
-            ab.jointFriction = 0.05f;
-            ab.angularDamping = 0.05f;
+            ab.jointFriction = WheelRollingResistance;
+            ab.angularDamping = WheelSpinDamping;
             ab.maxJointVelocity = WheelMaxJointVelocity;
             ab.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
 

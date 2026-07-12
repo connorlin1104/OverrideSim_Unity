@@ -44,6 +44,10 @@ public class PhysicsSmokeTest
     private const float MinWheelSpinRad = Mathf.PI / 2f; // 90° — jointPosition reads in RADIANS
     private const float MinTurnYawDeg = 15f;
 
+    // A root-chassis collider with less than this much clearance above the drive wheels' lowest
+    // point is treated as "holding the wheels off the ground" (units; ~5 mm at the 10x world scale).
+    private const float GroundClearanceTolerance = 0.05f;
+
     [MenuItem("Tools/RoboSim/Robot/Validate Robot Physics", false, 2)]
     private static void ValidateMenu()
     {
@@ -147,6 +151,13 @@ public class PhysicsSmokeTest
 
         Debug.Log($"PhysicsSmokeTest PASS settle: vertical {vertical:F3}, horizontal {horizontal:F3} after {StepsPerPhase} steps.");
         LogSupportDiagnostics(root);
+
+        // Warn as soon as we settle if something is holding the drive wheels off the ground — this
+        // is the usual cause of the drive test failing later, and it's far clearer to name the part
+        // here than to leave the driver staring at the raw collider list above.
+        string belowWheels = DescribeBelowWheelParts(root);
+        if (belowWheels != null)
+            Debug.LogWarning("PhysicsSmokeTest ground clearance: " + belowWheels);
     }
 
     // What is the robot actually standing on? Logs each wheel sphere's lowest point and the
@@ -177,6 +188,58 @@ public class PhysicsSmokeTest
         Debug.Log("PhysicsSmokeTest wheels: " + string.Join("; ", wheelBottoms));
         Debug.Log($"PhysicsSmokeTest lowest wheel point {lowestWheelY:F3}; lowest chassis colliders: " +
                   string.Join("; ", chassis.GetRange(0, Mathf.Min(5, chassis.Count)).ConvertAll(t => t.desc)));
+    }
+
+    // A root-chassis collider sitting at or below the drive wheels' lowest point: something that
+    // holds the drive wheels off the ground so they only spin in place.
+    private struct BelowWheelPart
+    {
+        public string desc;  // "parentName/colliderName"
+        public float below;  // how far below the lowest wheel point, in units (>= ~0)
+    }
+
+    // Root-chassis colliders whose bottom is within GroundClearanceTolerance of (or below) the
+    // lowest drive-wheel point, worst (lowest) first. Non-drive parts — odometry/tracking wheels,
+    // intakes, low brackets — get box/hull colliders on the ROOT body (only the drive wheels become
+    // sphere links), so if one pokes below the wheels it unloads them. Returns empty when the wheels
+    // are clear or there are no drive wheels. lowestWheelY is output for callers that want to log it.
+    private static List<BelowWheelPart> FindPartsBelowWheels(ArticulationBody root, out float lowestWheelY)
+    {
+        lowestWheelY = float.PositiveInfinity;
+        foreach (ArticulationBody ab in root.GetComponentsInChildren<ArticulationBody>())
+        {
+            if (ab.isRoot || ab.jointType != ArticulationJointType.RevoluteJoint) continue;
+            foreach (Collider c in ab.GetComponentsInChildren<Collider>())
+                lowestWheelY = Mathf.Min(lowestWheelY, c.bounds.min.y);
+        }
+
+        var below = new List<BelowWheelPart>();
+        if (float.IsInfinity(lowestWheelY)) return below; // no drive-wheel links to compare against
+
+        foreach (Collider c in root.GetComponentsInChildren<Collider>())
+        {
+            ArticulationBody owner = c.GetComponentInParent<ArticulationBody>();
+            if (owner == null || !owner.isRoot) continue; // only colliders on the chassis (root) body
+            float bottom = c.bounds.min.y;
+            if (bottom <= lowestWheelY + GroundClearanceTolerance)
+                below.Add(new BelowWheelPart { desc = $"{c.transform.parent?.name}/{c.name}", below = lowestWheelY - bottom });
+        }
+        below.Sort((a, b) => b.below.CompareTo(a.below)); // worst (lowest) first
+        return below;
+    }
+
+    // One-line, human-readable explanation of what's holding the drive wheels up, or null when the
+    // wheels are clear. Used both as a settle-phase warning and appended to the drive-test failure.
+    private static string DescribeBelowWheelParts(ArticulationBody root)
+    {
+        List<BelowWheelPart> below = FindPartsBelowWheels(root, out _);
+        if (below.Count == 0) return null;
+        List<string> worst = below.GetRange(0, Mathf.Min(3, below.Count))
+                                  .ConvertAll(p => $"'{p.desc}' ({p.below:F2} below)");
+        return $"{below.Count} chassis part(s) sit at or below the drive wheels and hold them off the " +
+               $"ground — worst: {string.Join(", ", worst)}. These are non-drive parts (likely an " +
+               "odometry/tracking wheel, an intake, or a low bracket) that got box/hull colliders on the " +
+               "chassis. Raise them, or exclude them from colliders, so only the drive wheels touch the ground.";
     }
 
     private static void RunDriveTest(ArticulationBody root, ArticulationBody[] wheels)
@@ -227,7 +290,15 @@ public class PhysicsSmokeTest
             Debug.Log("PhysicsSmokeTest drive diagnostics: " + string.Join("; ", spins));
             Debug.Log($"PhysicsSmokeTest drive diagnostics: root delta {delta.ToString("F4")}, " +
                       $"root linVel {root.linearVelocity.ToString("F3")}, root angVel {root.angularVelocity.ToString("F3")}");
-            Fail($"drive: planar displacement {planar:F2} units (need > {MinDrivePlanar}) — wheels are not propelling the robot.");
+
+            // If the wheels spun but the robot didn't move, the usual cause is that something below
+            // the drive wheels is holding them off the ground. Name it in the failure so the driver
+            // doesn't have to reverse-engineer it from the collider dump above.
+            string belowWheels = DescribeBelowWheelParts(root);
+            string cause = maxSpinRad > MinWheelSpinRad && belowWheels != null
+                ? " The wheels spun but the robot didn't move: " + belowWheels
+                : "";
+            Fail($"drive: planar displacement {planar:F2} units (need > {MinDrivePlanar}) — wheels are not propelling the robot.{cause}");
         }
         if (maxSpinRad <= MinWheelSpinRad)
             Fail($"drive: max wheel spin {maxSpinRad * Mathf.Rad2Deg:F1}° (need > 90°) — joints are not rotating.");

@@ -96,6 +96,7 @@ public static class BuildDriveControls
             rect.pivot = new Vector2(1f, 1f);
             rect.anchoredPosition = new Vector2(-12f, -24f);
             rect.sizeDelta = new Vector2(160f, 64f);
+            EnsurePressFeedback(home.gameObject);
         }
         else
         {
@@ -211,6 +212,7 @@ public static class BuildDriveControls
         }
 
         EnsureOnScreenButton(go, controlPath);
+        EnsurePressFeedback(go);
         return go;
     }
 
@@ -270,6 +272,16 @@ public static class BuildDriveControls
         return component != null ? component : go.AddComponent<T>();
     }
 
+    // Adds obvious press feedback (sink-in indent + shrink + brighten) to a control button and
+    // turns OFF the Button's own ColorTint transition so it doesn't fight the color the feedback
+    // writes. Idempotent — find-or-add, safe on re-runs.
+    private static void EnsurePressFeedback(GameObject go)
+    {
+        Button button = go.GetComponent<Button>();
+        if (button != null) button.transition = Selectable.Transition.None;
+        EnsureComponent<PressFeedback>(go);
+    }
+
     // Find-or-create a labelled Button under parent (Image + Button + "Label" TMP child), reusing
     // and re-theming an existing one rather than duplicating components.
     private static Button EnsureButton(Transform parent, string name, string label, float fontSize, Color color)
@@ -282,6 +294,7 @@ public static class BuildDriveControls
         Button button = EnsureComponent<Button>(go);
         button.targetGraphic = image;
         EnsureLabel(go.transform, label, fontSize);
+        EnsurePressFeedback(go);
         return button;
     }
 

@@ -203,6 +203,75 @@ public static class RobotPartClassifier
         return false;
     }
 
+    // --- Mechanism auto-classification (FBX carries no joints; guess the type from the name) ---
+    // An FBX bakes only geometry, so the Auto-Detect Mechanisms tool infers what moves from the
+    // part/group name. VEX robots keep meaningful names on standard/authored groups even when the
+    // custom-cut leaves are generic "BodyN" — e.g. "50mm Cylinder", "Intake", "claw mech". Matched
+    // against NormalizeForTokens (lower-cased, separator-normalized, space-padded), same as the
+    // density lookup. Best-guess heuristics the user verifies — extend the tables as new bots appear.
+
+    // Names that read like a mechanism but never move on their own: support structure, mounts, and
+    // the passive (undriven) half of a roller pair. Checked BEFORE the type tokens, so
+    // "supportStructureForIntake" / "passive roller" / "intakeSpacers" / "metal frame" are skipped.
+    public static readonly string[] MechanismExcludeTokens =
+    {
+        "passive", "support", "structure", "mount", "bracket", "standoff", "spacer",
+        "frame", "guard", "guide", "static", "fixed",
+    };
+
+    // token -> joint type. Pneumatic cylinders slide (prismatic); intakes/flywheels/rollers spin
+    // freely (continuous); arms/lifts/claws swing under power with limits (revolute). First match
+    // wins, so list more specific tokens before generic ones ("mech" is last — it's the catch-all
+    // for names like "claw mech").
+    public static readonly (string token, AddMechanismJoint.JointType type)[] MechanismTypeByToken =
+    {
+        ("pneumatic", AddMechanismJoint.JointType.Prismatic),
+        ("cylinder",  AddMechanismJoint.JointType.Prismatic),
+        ("piston",    AddMechanismJoint.JointType.Prismatic),
+        ("solenoid",  AddMechanismJoint.JointType.Prismatic),
+
+        ("flywheel",  AddMechanismJoint.JointType.Continuous),
+        ("intake",    AddMechanismJoint.JointType.Continuous),
+        ("roller",    AddMechanismJoint.JointType.Continuous),
+        ("conveyor",  AddMechanismJoint.JointType.Continuous),
+        ("shooter",   AddMechanismJoint.JointType.Continuous),
+        ("spinner",   AddMechanismJoint.JointType.Continuous),
+
+        ("arm",       AddMechanismJoint.JointType.Revolute),
+        ("lift",      AddMechanismJoint.JointType.Revolute),
+        ("claw",      AddMechanismJoint.JointType.Revolute),
+        ("clamp",     AddMechanismJoint.JointType.Revolute),
+        ("wing",      AddMechanismJoint.JointType.Revolute),
+        ("tilt",      AddMechanismJoint.JointType.Revolute),
+        ("lever",     AddMechanismJoint.JointType.Revolute),
+        ("hook",      AddMechanismJoint.JointType.Revolute),
+        ("elevator",  AddMechanismJoint.JointType.Revolute),
+        ("catapult",  AddMechanismJoint.JointType.Revolute),
+        ("flipper",   AddMechanismJoint.JointType.Revolute),
+        ("mech",      AddMechanismJoint.JointType.Revolute),
+    };
+
+    // Best-guess joint type for a part/group name, or false when the name matches no mechanism
+    // token (or matches an exclude token). Uses the same padded-token matching as TryGetDensity so
+    // short tokens ("arm", "mech") only hit on word boundaries.
+    public static bool TryClassifyMechanism(string rawName, out AddMechanismJoint.JointType type)
+    {
+        type = AddMechanismJoint.JointType.Fixed;
+        string name = NormalizeForTokens(rawName);
+
+        foreach (string ex in MechanismExcludeTokens)
+        {
+            string needle = ex.Length <= 3 ? " " + ex + " " : ex;
+            if (name.IndexOf(needle, System.StringComparison.Ordinal) >= 0) return false;
+        }
+        foreach ((string token, AddMechanismJoint.JointType t) in MechanismTypeByToken)
+        {
+            string needle = token.Length <= 3 ? " " + token + " " : token;
+            if (name.IndexOf(needle, System.StringComparison.Ordinal) >= 0) { type = t; return true; }
+        }
+        return false;
+    }
+
     // Finds every wheel-named node under root and greedily merges the ones whose subtree renderer
     // bounds centers coincide (the FBX models each omni wheel as two stacked halves). Greedy
     // clustering is enough here: pair members are essentially concentric while distinct wheels are

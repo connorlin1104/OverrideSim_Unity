@@ -163,7 +163,8 @@ public class BuildHomeScene
         }
         if (controller == null) return false;
         SerializedObject so = new SerializedObject(controller);
-        return IsRefSet(so, "catalog") && IsRefSet(so, "controllerConfig") && IsRefSet(so, "controlsLayout");
+        return IsRefSet(so, "catalog") && IsRefSet(so, "controllerConfig") &&
+               IsRefSet(so, "controlsLayout") && IsRefSet(so, "loadingOverlay");
     }
 
     private static bool IsRefSet(SerializedObject so, string propertyName)
@@ -388,6 +389,10 @@ public class BuildHomeScene
         // Control layout panel (inactive; opened from Settings > Edit Control Layout).
         ControlsLayoutParts layoutParts = BuildControlsLayoutPanel(canvasGo.transform);
 
+        // Loading overlay: built LAST so it's the top-most canvas child, covering everything while
+        // the field scene loads. Inactive until Drive is pressed.
+        GameObject loadingOverlay = BuildLoadingOverlay(canvasGo.transform);
+
         // Controller root: wire the private serialized refs (same SerializedObject pattern
         // as the Fix Robot Drive Collider tool) and persistent onClicks so everything
         // serializes into the scene.
@@ -401,6 +406,7 @@ public class BuildHomeScene
         so.FindProperty("catalog").objectReferenceValue = freshCatalog != null ? freshCatalog : catalog;
         so.FindProperty("mainPanel").objectReferenceValue = mainPanel;
         so.FindProperty("settingsPanel").objectReferenceValue = settingsPanel;
+        so.FindProperty("loadingOverlay").objectReferenceValue = loadingOverlay;
         so.FindProperty("modelListParent").objectReferenceValue = modelList.transform;
         so.FindProperty("modelButtonTemplate").objectReferenceValue = template;
         so.FindProperty("joystickSizeSlider").objectReferenceValue = joystickSlider;
@@ -782,6 +788,54 @@ public class BuildHomeScene
         proxy.dragArea = previewRect;
         proxy.basePosition = info.previewCenter;
         return proxy;
+    }
+
+    // --- Loading overlay ---
+
+    // Full-screen overlay shown while the field scene loads: a dim, click-blocking backdrop with a
+    // spinning arc and a "Loading…" label. The backdrop's raycastTarget swallows taps so Drive
+    // can't be spammed. Starts inactive; HomeScreenController activates it on Drive.
+    private static GameObject BuildLoadingOverlay(Transform canvas)
+    {
+        GameObject overlay = CreateUIObject("LoadingOverlay", canvas);
+        RectTransform rect = (RectTransform)overlay.transform;
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        // Near-opaque dim backdrop; raycastTarget stays true so it blocks input to everything below.
+        Image scrim = overlay.AddComponent<Image>();
+        scrim.color = new Color(BackgroundColor.r, BackgroundColor.g, BackgroundColor.b, 0.92f);
+
+        // Spinner: a filled radial arc (a quarter of the Knob circle) rotated by LoadingSpinner.
+        GameObject spinner = CreateUIObject("Spinner", overlay.transform);
+        RectTransform spinnerRect = (RectTransform)spinner.transform;
+        spinnerRect.anchorMin = spinnerRect.anchorMax = new Vector2(0.5f, 0.5f);
+        spinnerRect.pivot = new Vector2(0.5f, 0.5f);
+        spinnerRect.anchoredPosition = new Vector2(0f, 50f);
+        spinnerRect.sizeDelta = new Vector2(120f, 120f);
+        Image spinnerImage = spinner.AddComponent<Image>();
+        spinnerImage.sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Knob.psd");
+        spinnerImage.color = AccentColor;
+        spinnerImage.type = Image.Type.Filled;
+        spinnerImage.fillMethod = Image.FillMethod.Radial360;
+        spinnerImage.fillAmount = 0.25f; // a spinning quarter-arc reads as "busy"
+        spinnerImage.raycastTarget = false;
+        spinner.AddComponent<LoadingSpinner>();
+
+        TextMeshProUGUI label = CreateText("LoadingLabel", overlay.transform, "Loading…", 44f);
+        label.fontStyle = FontStyles.Bold;
+        label.raycastTarget = false;
+        RectTransform labelRect = label.rectTransform;
+        labelRect.anchorMin = labelRect.anchorMax = new Vector2(0.5f, 0.5f);
+        labelRect.pivot = new Vector2(0.5f, 0.5f);
+        labelRect.anchoredPosition = new Vector2(0f, -70f);
+        labelRect.sizeDelta = new Vector2(600f, 80f);
+
+        overlay.SetActive(false); // HomeScreenController shows it on Drive
+        return overlay;
     }
 
     // Point the UI module at the package's DefaultInputActions asset (what the field scene's

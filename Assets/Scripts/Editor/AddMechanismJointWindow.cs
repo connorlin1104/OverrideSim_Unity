@@ -23,7 +23,9 @@ public class AddMechanismJointWindow : EditorWindow
     private const string Title = "Add or Fix Mechanism Joint";
     private const float MetersPerUnit = 0.1f; // this project's world: 1 scaled unit = 0.1 m
 
-    private enum AxisPreset { X, Y, Z, Custom }
+    // Auto is last so this enum's stored integer values stay stable for X/Y/Z/Custom across the
+    // upgrade (an open window's serialized selection would otherwise shift by one).
+    private enum AxisPreset { X, Y, Z, Custom, Auto }
 
     [SerializeField] private GameObject childLink;
     [SerializeField] private AddMechanismJoint.JointType jointType = AddMechanismJoint.JointType.Revolute;
@@ -32,6 +34,7 @@ public class AddMechanismJointWindow : EditorWindow
     [SerializeField] private Vector3 anchor = Vector3.zero;
     [SerializeField] private float lowerLimit = -90f;
     [SerializeField] private float upperLimit = 90f;
+    [SerializeField] private bool autoAssignButton = true;
 
     [MenuItem("Tools/RoboSim/Robot/Advanced/Add or Fix Mechanism Joint", false, 4)]
     private static void ShowWindow()
@@ -93,13 +96,31 @@ public class AddMechanismJointWindow : EditorWindow
 
         if (showAxis)
         {
-            axisPreset = (AxisPreset)EditorGUILayout.EnumPopup("Axis (link-local)", axisPreset);
-            if (axisPreset == AxisPreset.Custom)
-                customAxis = EditorGUILayout.Vector3Field("Custom Axis", customAxis);
-            anchor = EditorGUILayout.Vector3Field(new GUIContent("Anchor (link-local)",
-                "Pivot/slide origin in the link's local space. 0 = the link origin (the usual case)."),
-                anchor);
+            axisPreset = (AxisPreset)EditorGUILayout.EnumPopup(new GUIContent("Axis (link-local)",
+                "Auto guesses the hinge/slide axis and anchor from the part's geometry — good for a " +
+                "mesh/FBX part. X/Y/Z/Custom set it by hand (use these to fix a URDF link's axis)."),
+                axisPreset);
+            if (axisPreset == AxisPreset.Auto)
+            {
+                EditorGUILayout.HelpBox("Axis + anchor will be inferred from the part's geometry. " +
+                    "It's a best guess — check the result and switch to X/Y/Z/Custom if it's off.",
+                    MessageType.None);
+            }
+            else
+            {
+                if (axisPreset == AxisPreset.Custom)
+                    customAxis = EditorGUILayout.Vector3Field("Custom Axis", customAxis);
+                anchor = EditorGUILayout.Vector3Field(new GUIContent("Anchor (link-local)",
+                    "Pivot/slide origin in the link's local space. 0 = the link origin (the usual case)."),
+                    anchor);
+            }
         }
+
+        if (jointType != AddMechanismJoint.JointType.Fixed)
+            autoAssignButton = EditorGUILayout.Toggle(new GUIContent("Auto-Assign Button",
+                "After applying, map this mechanism to the next free controller button (motor = " +
+                "forward/reverse pair, pneumatic = toggle) so it's drivable without opening Configure Controller."),
+                autoAssignButton);
 
         if (showLimits)
         {
@@ -134,23 +155,45 @@ public class AddMechanismJointWindow : EditorWindow
 
         try
         {
-            Vector3 axis = axisPreset switch
+            Vector3 axis;
+            Vector3 effectiveAnchor = anchor;
+            if (axisPreset == AxisPreset.Auto && jointType != AddMechanismJoint.JointType.Fixed)
             {
-                AxisPreset.X => Vector3.right,
-                AxisPreset.Y => Vector3.up,
-                AxisPreset.Z => Vector3.forward,
-                _ => customAxis,
-            };
+                MechanismAutoDetect.TryInferAxisAnchor(childLink, jointType, out axis, out effectiveAnchor);
+            }
+            else
+            {
+                axis = axisPreset switch
+                {
+                    AxisPreset.X => Vector3.right,
+                    AxisPreset.Y => Vector3.up,
+                    AxisPreset.Z => Vector3.forward,
+                    AxisPreset.Custom => customAxis,
+                    _ => Vector3.up, // Auto + Fixed: axis unused
+                };
+            }
 
             Undo.IncrementCurrentGroup();
             Undo.SetCurrentGroupName(Title);
             int group = Undo.GetCurrentGroup();
-            AddMechanismJoint.Apply(childLink, jointType, axis, anchor, lowerLimit, upperLimit, useUndo: true);
+            AddMechanismJoint.Apply(childLink, jointType, axis, effectiveAnchor, lowerLimit, upperLimit, useUndo: true);
+
+            // Map it to a free button so it's drivable immediately (skipped for Fixed, which removed
+            // the mechanism). Non-fatal: a full button map just means the user maps it by hand later.
+            string buttonNote = "";
+            if (autoAssignButton && jointType != AddMechanismJoint.JointType.Fixed)
+            {
+                RobotMechanisms reg = childLink.GetComponentInParent<RobotMechanisms>();
+                if (reg != null)
+                    buttonNote = "\nButton: " + MechanismAutoDetect.AssignButtons(
+                        reg.robotId, UrdfPostProcessor.Slugify(childLink.name), jointType);
+            }
             Undo.CollapseUndoOperations(group);
 
             EditorUtility.DisplayDialog(Title,
                 $"'{childLink.name}' is now a {jointType} joint" +
                 (jointType == AddMechanismJoint.JointType.Fixed ? " (mechanism removed)." : " and is wired as a mechanism.") +
+                buttonNote +
                 "\n\nSave the scene, then Robot > Validate Robot Physics to test it.", "OK");
         }
         catch (Exception e)

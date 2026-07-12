@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
@@ -22,6 +23,8 @@ public class HomeScreenController : MonoBehaviour
     [Header("Panels")]
     [SerializeField] private GameObject mainPanel;
     [SerializeField] private GameObject settingsPanel;
+    [Tooltip("Full-screen loading overlay shown when Drive is pressed. Its click-blocking backdrop stops spam-taps while the field scene loads.")]
+    [SerializeField] private GameObject loadingOverlay;
 
     [Header("Model List")]
     [Tooltip("Parent the model buttons are cloned under (has the VerticalLayoutGroup).")]
@@ -56,10 +59,14 @@ public class HomeScreenController : MonoBehaviour
     // Clones built from the template, paired with the catalog id each one selects.
     private readonly List<KeyValuePair<Button, string>> modelButtons = new List<KeyValuePair<Button, string>>();
 
+    // Guards against the field scene being loaded twice from repeated Drive taps.
+    private bool isLoading;
+
     void Start()
     {
         if (mainPanel != null) mainPanel.SetActive(true);
         if (settingsPanel != null) settingsPanel.SetActive(false);
+        if (loadingOverlay != null) loadingOverlay.SetActive(false);
         BuildModelList();
         InitJoystickSizeControl();
         InitControlsOpacityControl();
@@ -69,7 +76,21 @@ public class HomeScreenController : MonoBehaviour
 
     public void OnDrivePressed()
     {
-        SceneManager.LoadScene("SampleScene");
+        // Ignore repeat taps: loading SampleScene is a visible hitch, and without feedback players
+        // spam Drive. Show the overlay (its backdrop also swallows further taps), then load async so
+        // the overlay actually renders before the hitch instead of the frame freezing on a blocking
+        // LoadScene.
+        if (isLoading) return;
+        isLoading = true;
+        if (loadingOverlay != null) loadingOverlay.SetActive(true);
+        StartCoroutine(LoadFieldScene());
+    }
+
+    private IEnumerator LoadFieldScene()
+    {
+        yield return null; // let the overlay paint one frame first
+        AsyncOperation op = SceneManager.LoadSceneAsync("SampleScene");
+        while (op != null && !op.isDone) yield return null;
     }
 
     public void OnSettingsPressed()

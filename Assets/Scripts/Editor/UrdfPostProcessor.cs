@@ -37,6 +37,10 @@ public class UrdfPostProcessor : EditorWindow
     // time, so edit-mode simulation (batch validation) behaves like play mode.
     private const float WheelDriveForceLimit = 700f;
     private const float WheelDriveDamping = 1000f;
+    // Drivetrain-loss knobs — same values RobotMotorController re-applies to every wheel at play
+    // (a real dt is never frictionless). Baked here so URDF wheels match in edit-mode simulation.
+    private const float WheelRollingResistance = 0.3f;
+    private const float WheelSpinDamping = 0.5f;
 
     [SerializeField] private GameObject targetRoot;
     [SerializeField] private float scaleFactor = 10f;
@@ -317,6 +321,8 @@ public class UrdfPostProcessor : EditorWindow
             drive.damping = WheelDriveDamping;
             drive.stiffness = 0f; // pure velocity control — no position spring
             wheel.xDrive = drive;
+            wheel.jointFriction = WheelRollingResistance; // drivetrain loss (see RobotMotorController)
+            wheel.angularDamping = WheelSpinDamping;
             wheels.Add(wheel);
         }
 

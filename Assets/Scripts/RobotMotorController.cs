@@ -33,6 +33,10 @@ public class RobotMotorController : MonoBehaviour
     public float wheelStallTorque = 700f;
     [Tooltip("Velocity drives use damping as the velocity-tracking gain. MUST be > 0 or the drive produces no torque at all (stiffness stays 0 for pure velocity control).")]
     public float velocityDriveDamping = 1000f;
+    [Tooltip("Rolling resistance on each wheel's spin axis (Coulomb joint friction). A real drivetrain is never frictionless — this makes the robot coast to a stop instead of gliding forever. Applied to every wheel at Awake, so it affects all robots (this is the durable knob: the rig tool bakes a value but Awake here is authoritative). 0 = frictionless.")]
+    public float wheelRollingResistance = 0.3f;
+    [Tooltip("Velocity-proportional spin loss on each wheel — bleeds a little top speed so a 360 RPM drivetrain doesn't feel unrealistically quick, without changing the arcade feel. Higher = slower / heavier. Dial this with wheelRollingResistance to taste.")]
+    public float wheelSpinDamping = 0.5f;
     [Tooltip("How much of full wheel speed the turn stick commands. At 1 a full turn spins the wheels as fast as full throttle does, which pivots the robot faster than a driver can catch. Lower = calmer turning; straight-line speed is unaffected.")]
     [Range(0.1f, 1f)]
     public float turnRate = 0.5f;
@@ -80,6 +84,15 @@ public class RobotMotorController : MonoBehaviour
             // maxJointVelocity is in rad/s (drives speak degrees, joint limits speak radians).
             // Cap slightly above the free-spin target so the drive can actually reach it.
             wheel.maxJointVelocity = maxWheelRpm * Mathf.PI * 2f / 60f * 1.1f;
+
+            // Drivetrain "imperfection": a real dt has losses, so a wheel neither hits its full
+            // commanded speed nor coasts forever. jointFriction is Coulomb drag on the axle (the
+            // coast-to-a-stop feel); angularDamping bleeds a little top speed proportional to spin.
+            // Set here (not just in the rig tool) so it applies uniformly to every robot at play,
+            // including ones rigged before these knobs existed. Set both to 0 for the old
+            // frictionless behavior.
+            wheel.jointFriction = wheelRollingResistance;
+            wheel.angularDamping = wheelSpinDamping;
         }
     }
 
