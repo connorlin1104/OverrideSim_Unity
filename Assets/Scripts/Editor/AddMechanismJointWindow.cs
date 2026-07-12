@@ -443,24 +443,32 @@ public static class AddMechanismJoint
     private static bool MergeIntoLink(GameObject link, GameObject[] alsoMove, bool useUndo)
     {
         if (alsoMove == null) return false;
-        bool any = false;
+
+        // Validate EVERY entry before moving anything, so a bad one can't leave the hierarchy
+        // half-reparented. Skip entries already inside the link (idempotent re-apply) before the
+        // rigged-link check, or a nested link already part of this driven subtree would false-trip it.
+        var toMove = new List<Transform>();
         foreach (GameObject part in alsoMove)
         {
             if (part == null || part == link) continue;
-            if (part.GetComponent<ArticulationBody>() != null)
-                throw new InvalidOperationException(
-                    $"'{part.name}' is already its own moving link, so it can't be merged into " +
-                    $"'{link.name}'. Add only plain, un-rigged parts to a driven link.");
             if (part.transform.IsChildOf(link.transform)) continue; // already part of the link
+            if (part.GetComponentInChildren<ArticulationBody>(true) != null)
+                throw new InvalidOperationException(
+                    $"'{part.name}' already contains a rigged link, so it can't be merged into " +
+                    $"'{link.name}'. Add only plain, un-rigged parts to a driven link.");
             if (link.transform.IsChildOf(part.transform))
                 throw new InvalidOperationException(
                     $"'{part.name}' is above the driven link '{link.name}' in the hierarchy. Pick the " +
                     "axle/output as the moving link, then add the parts attached to it — not the reverse.");
-            if (useUndo) Undo.SetTransformParent(part.transform, link.transform, "Add or Fix Mechanism Joint");
-            else part.transform.SetParent(link.transform, worldPositionStays: true);
-            any = true;
+            toMove.Add(part.transform);
         }
-        return any;
+
+        foreach (Transform t in toMove)
+        {
+            if (useUndo) Undo.SetTransformParent(t, link.transform, "Add or Fix Mechanism Joint");
+            else t.SetParent(link.transform, worldPositionStays: true);
+        }
+        return toMove.Count > 0;
     }
 
     // The actuator kind for a driven joint: Toggle drives it as a binary pneumatic (snap between the

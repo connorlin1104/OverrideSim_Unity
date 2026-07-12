@@ -62,6 +62,9 @@ public class RobotSpawner : MonoBehaviour
     // freshly-instantiated articulation.
     private void RecenterFootprint(GameObject robot)
     {
+        // Instantiate set the transform, but PhysX hasn't adopted it yet (Physics.autoSyncTransforms
+        // is off by default), so Collider.bounds would read a stale pre-spawn pose — sync first.
+        Physics.SyncTransforms();
         if (!TryGetWorldFootprint(robot, out Bounds bounds)) return;
 
         // 1) Center the footprint on the spawn point (X/Z only; keep the spawn Y as the drop height).
@@ -95,7 +98,7 @@ public class RobotSpawner : MonoBehaviour
             else bounds.Encapsulate(col.bounds);
         }
         if (has) return true;
-        foreach (Renderer r in robot.GetComponentsInChildren<Renderer>())
+        foreach (Renderer r in robot.GetComponentsInChildren<Renderer>(true))
         {
             if (!has) { bounds = r.bounds; has = true; }
             else bounds.Encapsulate(r.bounds);
