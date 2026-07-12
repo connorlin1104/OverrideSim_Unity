@@ -83,51 +83,9 @@ public class FixCups : EditorWindow
 
             int sides = 6; 
 
-            // 1. GENERATE CUP TOP 
-            for (int i = 0; i < sides; i++) 
-            { 
-                bool isWing = (i % 2 == 0); 
-                string sideType = isWing ? "Outer" : "Inner"; 
-                
-                GameObject colHolder = new GameObject($"CupWall_Top_{sideType}_{i}"); 
-                Undo.RegisterCreatedObjectUndo(colHolder, "Create Cup Top Wall"); 
-                
-                colHolder.transform.SetParent(child); 
-                colHolder.transform.position = worldTopCenter; 
-                colHolder.transform.rotation = correctedOrientation * Quaternion.Euler(0f, 0f, i * (360f / sides)); 
+            GenerateCupWalls(child, "Top", worldTopCenter, correctedOrientation, sides, outerRadius, innerRadius, -taperAngle, wallThickness, cupHeight);
 
-                float currentRadius = isWing ? outerRadius : innerRadius; 
-                float currentWidth = isWing ? 0.38f : 0.30f; 
-
-                colHolder.transform.Translate(0f, currentRadius, 0f, Space.Self); 
-                colHolder.transform.Rotate(-taperAngle, 0f, 180f, Space.Self); 
-
-                BoxCollider box = colHolder.AddComponent<BoxCollider>(); 
-                box.size = new Vector3(currentWidth, wallThickness, cupHeight); 
-            } 
-
-            // 2. GENERATE CUP BOTTOM 
-            for (int i = 0; i < sides; i++) 
-            { 
-                bool isWing = (i % 2 == 0); 
-                string sideType = isWing ? "Outer" : "Inner"; 
-                
-                GameObject colHolder = new GameObject($"CupWall_Bottom_{sideType}_{i}"); 
-                Undo.RegisterCreatedObjectUndo(colHolder, "Create Cup Bottom Wall"); 
-                
-                colHolder.transform.SetParent(child); 
-                colHolder.transform.position = worldBottomCenter; 
-                colHolder.transform.rotation = correctedOrientation * Quaternion.Euler(0f, 0f, i * (360f / sides)); 
-
-                float currentRadius = isWing ? outerRadius : innerRadius; 
-                float currentWidth = isWing ? 0.38f : 0.30f; 
-
-                colHolder.transform.Translate(0f, currentRadius, 0f, Space.Self); 
-                colHolder.transform.Rotate(taperAngle, 0f, 180f, Space.Self); 
-
-                BoxCollider box = colHolder.AddComponent<BoxCollider>(); 
-                box.size = new Vector3(currentWidth, wallThickness, cupHeight); 
-            } 
+            GenerateCupWalls(child, "Bottom", worldBottomCenter, correctedOrientation, sides, outerRadius, innerRadius, taperAngle, wallThickness, cupHeight);
 
             fixedCount++; 
         } 
@@ -135,4 +93,31 @@ public class FixCups : EditorWindow
         EditorUtility.SetDirty(selectedParent); 
         EditorUtility.DisplayDialog("Success!", $"Successfully processed {fixedCount} cups!", "Awesome"); 
     } 
+
+    // Builds one taper-oriented ring of BoxCollider walls around a cup. The Top and Bottom passes
+    // are identical apart from the section name, world center, and taper sign, so both call this.
+    private static void GenerateCupWalls(Transform child, string section, Vector3 worldCenter, Quaternion correctedOrientation, int sides, float outerRadius, float innerRadius, float taperAngle, float wallThickness, float cupHeight)
+    {
+        for (int i = 0; i < sides; i++)
+        {
+            bool isWing = (i % 2 == 0);
+            string sideType = isWing ? "Outer" : "Inner";
+
+            GameObject colHolder = new GameObject($"CupWall_{section}_{sideType}_{i}");
+            Undo.RegisterCreatedObjectUndo(colHolder, $"Create Cup {section} Wall");
+
+            colHolder.transform.SetParent(child);
+            colHolder.transform.position = worldCenter;
+            colHolder.transform.rotation = correctedOrientation * Quaternion.Euler(0f, 0f, i * (360f / sides));
+
+            float currentRadius = isWing ? outerRadius : innerRadius;
+            float currentWidth = isWing ? 0.38f : 0.30f;
+
+            colHolder.transform.Translate(0f, currentRadius, 0f, Space.Self);
+            colHolder.transform.Rotate(taperAngle, 0f, 180f, Space.Self);
+
+            BoxCollider box = colHolder.AddComponent<BoxCollider>();
+            box.size = new Vector3(currentWidth, wallThickness, cupHeight);
+        }
+    }
 }

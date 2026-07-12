@@ -56,15 +56,7 @@ public class ControlsAppearance : MonoBehaviour
     public void Apply()
     {
         float scale = JoystickSettings.Scale;
-        if (joysticks != null)
-        {
-            foreach (RectTransform joystick in joysticks)
-            {
-                if (joystick == null) continue;
-                joystick.localScale = new Vector3(scale, scale, 1f);
-                ApplyPosition(joystick);
-            }
-        }
+        ScaleAndPosition(joysticks, scale);
 
         // The sticks' inner edge sits ScreenHalfWidth - StickEdgeOffset - StickSize*scale from
         // screen center; the pads' outer edge at cluster scale c is PadCenterOffset +
@@ -72,15 +64,7 @@ public class ControlsAppearance : MonoBehaviour
         float bandCap = (ScreenHalfWidth - StickEdgeOffset - StickSize * scale - PadStickGap - PadCenterOffset)
                         / PadHalfWidth;
         float buttonScale = Mathf.Clamp(Mathf.Min(scale, bandCap), ButtonMinScale, ButtonMaxScale);
-        if (buttonClusters != null)
-        {
-            foreach (RectTransform cluster in buttonClusters)
-            {
-                if (cluster == null) continue;
-                cluster.localScale = new Vector3(buttonScale, buttonScale, 1f);
-                ApplyPosition(cluster);
-            }
-        }
+        ScaleAndPosition(buttonClusters, buttonScale);
 
         float opacity = ControlsOpacitySettings.Opacity;
         if (opacityGroups != null)
@@ -89,6 +73,19 @@ public class ControlsAppearance : MonoBehaviour
             {
                 if (group != null) group.alpha = opacity;
             }
+        }
+    }
+
+    // Scale each control uniformly and re-apply its saved layout offset. Null array or null
+    // elements are skipped, so a partially-wired list is safe.
+    private void ScaleAndPosition(RectTransform[] controls, float scale)
+    {
+        if (controls == null) return;
+        foreach (RectTransform control in controls)
+        {
+            if (control == null) continue;
+            control.localScale = new Vector3(scale, scale, 1f);
+            ApplyPosition(control);
         }
     }
 

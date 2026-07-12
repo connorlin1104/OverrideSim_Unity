@@ -169,9 +169,6 @@ public class FixRollers : EditorWindow
 
             HingeJoint hinge = faceTarget.gameObject.AddComponent<HingeJoint>();
             
-            // CRITICAL FIX: Turn off auto-configuration so Unity doesn't corrupt our numbers!
-            // hinge.autoConfigureConnected = false; 
-            
             // Lock anchor precisely down the local middle center line of the mesh
             hinge.anchor = targetPivotLocalPos;
             

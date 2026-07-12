@@ -170,6 +170,14 @@ public static class RobotPartClassifier
         return sb.ToString();
     }
 
+    // Padded-token match against a NormalizeForTokens-normalized name: tokens <= 3 chars match only
+    // on word boundaries (padded spaces), longer tokens match as substrings.
+    private static bool ContainsToken(string name, string token)
+    {
+        string needle = token.Length <= 3 ? " " + token + " " : token;
+        return name.IndexOf(needle, System.StringComparison.Ordinal) >= 0;
+    }
+
     // Density for a single name. Tokens <= 3 chars match only on word boundaries (padded spaces),
     // longer tokens match as substrings. False when nothing matches.
     public static bool TryGetDensity(string rawName, out float density)
@@ -177,8 +185,7 @@ public static class RobotPartClassifier
         string name = NormalizeForTokens(rawName);
         foreach ((string token, float d) in DensityByToken)
         {
-            string needle = token.Length <= 3 ? " " + token + " " : token;
-            if (name.IndexOf(needle, System.StringComparison.Ordinal) >= 0) { density = d; return true; }
+            if (ContainsToken(name, token)) { density = d; return true; }
         }
         density = 0f;
         return false;
@@ -261,13 +268,11 @@ public static class RobotPartClassifier
 
         foreach (string ex in MechanismExcludeTokens)
         {
-            string needle = ex.Length <= 3 ? " " + ex + " " : ex;
-            if (name.IndexOf(needle, System.StringComparison.Ordinal) >= 0) return false;
+            if (ContainsToken(name, ex)) return false;
         }
         foreach ((string token, AddMechanismJoint.JointType t) in MechanismTypeByToken)
         {
-            string needle = token.Length <= 3 ? " " + token + " " : token;
-            if (name.IndexOf(needle, System.StringComparison.Ordinal) >= 0) { type = t; return true; }
+            if (ContainsToken(name, token)) { type = t; return true; }
         }
         return false;
     }

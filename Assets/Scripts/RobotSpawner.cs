@@ -38,8 +38,7 @@ public class RobotSpawner : MonoBehaviour
         // hasn't been built yet still puts *a* robot on the field instead of an empty scene.
         if (entry == null || entry.prefab == null)
         {
-            RobotModelCatalog.Entry fallback = FirstEntryWithPrefab();
-            if (entry == null || entry.prefab == null) entry = fallback;
+            entry = FirstEntryWithPrefab();
         }
 
         if (entry == null || entry.prefab == null)
