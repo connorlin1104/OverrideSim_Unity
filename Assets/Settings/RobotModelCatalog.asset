@@ -17,3 +17,7 @@ MonoBehaviour:
     displayName: 360 RPM Drivetrain
     prefab: {fileID: 5735647931427841497, guid: 23d9f44831aff4b718f19fc9e660cc74, type: 3}
     mechanisms: []
+  - id: 654v-v1
+    displayName: 654V v1
+    prefab: {fileID: 0}
+    mechanisms: []

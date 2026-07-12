@@ -11,9 +11,11 @@ using UnityEngine;
 // mappable to a button. Re-applying to the same link replaces its mechanism, so it doubles as the
 // "fix the wrong joint" path.
 //
-// Scope: links that ALREADY exist as ArticulationBodies (every URDF link is one, including parts
-// that imported as fixed). Splitting a brand-new moving body out of an existing rigid link (mesh
-// reparenting) is out of scope — remodel it in Fusion and re-import, or rig it like the drivetrain.
+// Scope: both robot kinds. A URDF link already IS an ArticulationBody (including parts that
+// imported as fixed) — this retypes it. A mesh/FBX part has no body yet — this SPLITS a new moving
+// link off the chassis: it adds the body, so the part's colliders/meshes leave the chassis body and
+// become their own link, then joints it. Either way the result is wired identically. It can't build
+// a moving body with no geometry — model the part in CAD first.
 //
 // Usage: Tools > RoboSim > Robot > Advanced > Add or Fix Mechanism Joint.
 public class AddMechanismJointWindow : EditorWindow
@@ -54,24 +56,33 @@ public class AddMechanismJointWindow : EditorWindow
         childLink = (GameObject)EditorGUILayout.ObjectField("Child Link", childLink, typeof(GameObject), true);
         if (childLink == null)
         {
-            EditorGUILayout.HelpBox("Select the link GameObject that should move.", MessageType.Warning);
-            return;
-        }
-        if (childLink.GetComponent<ArticulationBody>() == null)
-        {
-            EditorGUILayout.HelpBox(
-                $"'{childLink.name}' has no ArticulationBody. Pick a URDF link (every imported link " +
-                "has one). Creating a brand-new moving body from scratch is not supported here.",
-                MessageType.Error);
+            EditorGUILayout.HelpBox("Select the link (URDF) or part (mesh/FBX) that should move.", MessageType.Warning);
             return;
         }
         RobotMechanisms registry = childLink.GetComponentInParent<RobotMechanisms>();
         if (registry == null)
         {
             EditorGUILayout.HelpBox(
-                "This link is not under a set-up robot (no RobotMechanisms on the root). Run " +
+                "This is not under a set-up robot (no RobotMechanisms on the root). Run " +
                 "Tools > RoboSim > Robot > Set Up Imported Robot first.", MessageType.Error);
             return;
+        }
+        // A mesh/FBX part has no ArticulationBody yet — Apply splits it off the chassis into a new
+        // moving link. That needs a rigged chassis (ArticulationBody) above it.
+        bool willSplitNewLink = childLink.GetComponent<ArticulationBody>() == null;
+        if (willSplitNewLink)
+        {
+            if (childLink.GetComponentInParent<ArticulationBody>() == null)
+            {
+                EditorGUILayout.HelpBox(
+                    $"'{childLink.name}' has no ArticulationBody and no rigged chassis above it. Run " +
+                    "Set Up Imported Robot first, then pick the part that should move.", MessageType.Error);
+                return;
+            }
+            EditorGUILayout.HelpBox(
+                $"'{childLink.name}' isn't a moving link yet — Apply will split it off the chassis as a new " +
+                "mechanism (its meshes and colliders leave the chassis body). Pick the node that moves as a " +
+                "unit, and set the Anchor to the hinge/slide axis location.", MessageType.Info);
         }
 
         jointType = (AddMechanismJoint.JointType)EditorGUILayout.EnumPopup("Joint Type", jointType);
@@ -155,17 +166,19 @@ public static class AddMechanismJoint
 {
     public enum JointType { Revolute, Continuous, Prismatic, Fixed }
 
+    private const float WorldScaleFactor = 10f;  // this project's world: 1 scaled unit = 0.1 m
+    private const float DefaultLinkMass = 1f;     // fallback mass for a split link with no closed mesh
+    private const float MinSplitMass = 1e-3f;     // below this the geometry mass is treated as absent
+
     // Configures the link's ArticulationBody as the requested joint (type -> DOF locks -> anchors
     // -> limits, matching the URDF importer's AdjustMovement and the post-processor's anchor
-    // re-derivation), then wires (or removes) the mechanism and refreshes the catalog. Throws on
-    // any precondition failure. useUndo=false for batch/headless callers.
+    // re-derivation), then wires (or removes) the mechanism and refreshes the catalog. When the link
+    // is a plain mesh part with no body, first splits a new link off the chassis (adds the body + a
+    // geometry-derived mass). Throws on any precondition failure. useUndo=false for batch/headless callers.
     public static void Apply(GameObject link, JointType type, Vector3 axis, Vector3 anchor,
         float lowerLimit, float upperLimit, bool useUndo)
     {
         if (link == null) throw new ArgumentNullException(nameof(link));
-        ArticulationBody body = link.GetComponent<ArticulationBody>();
-        if (body == null)
-            throw new InvalidOperationException($"'{link.name}' has no ArticulationBody — pick a URDF link.");
 
         RobotMechanisms registry = link.GetComponentInParent<RobotMechanisms>();
         if (registry == null)
@@ -173,6 +186,40 @@ public static class AddMechanismJoint
                 $"'{link.name}' is not under a set-up robot (no RobotMechanisms). Run " +
                 "Set Up Imported Robot first.");
         GameObject root = registry.gameObject;
+
+        // A URDF link already carries an ArticulationBody; a plain FBX part does not. When it
+        // doesn't, split a new moving link off its rigid parent: adding the body moves this part's
+        // colliders/meshes out of the chassis body into their own link, jointed to the nearest
+        // ancestor body below. Needs a rigged chassis above it, and there's no mechanism to remove
+        // yet, so Fixed is meaningless here.
+        ArticulationBody body = link.GetComponent<ArticulationBody>();
+        if (body == null)
+        {
+            if (FindParentBodyOf(link.transform) == null)
+                throw new InvalidOperationException(
+                    $"'{link.name}' has no ArticulationBody and no rigged chassis above it. Run Set Up " +
+                    "Imported Robot first, then pick the part that should move.");
+            if (type == JointType.Fixed)
+                throw new InvalidOperationException(
+                    $"'{link.name}' isn't a moving link yet, so there's nothing to make Fixed. Pick " +
+                    "Revolute, Continuous, or Prismatic to split it off as a mechanism.");
+
+            // Size the new link's mass from its geometry (part name -> density) before it gets a body.
+            float density = RobotPartClassifier.TryGetDensity(link.name, out float d)
+                ? d : RobotPartClassifier.DefaultDensity;
+            float massKg = RobotMassFromGeometry.MassForLinkNode(link, root.transform, WorldScaleFactor, density);
+
+            body = useUndo ? Undo.AddComponent<ArticulationBody>(link) : link.AddComponent<ArticulationBody>();
+            body.mass = massKg > MinSplitMass ? massKg : DefaultLinkMass;
+            body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
+            body.angularDamping = 0.05f;
+            body.ResetCenterOfMass();
+            body.ResetInertiaTensor(); // from the colliders that just became this link's
+
+            // The split-off geometry must keep the robot's tag so the match loaders still see it.
+            if (useUndo) Undo.RecordObject(link, "Add or Fix Mechanism Joint");
+            link.tag = root.tag;
+        }
 
         // Drivetrain wheels belong to the joysticks via RobotMotorController, not the buttons.
         RobotMotorController motor = root.GetComponent<RobotMotorController>();
@@ -255,11 +302,15 @@ public static class AddMechanismJoint
     }
 
     // Nearest ancestor ArticulationBody — the parent link this joint connects to.
-    private static ArticulationBody FindParentBody(ArticulationBody body)
+    private static ArticulationBody FindParentBody(ArticulationBody body) => FindParentBodyOf(body.transform);
+
+    // Nearest ArticulationBody strictly above a transform. Used before the split link has its own
+    // body, to confirm there's a rigged chassis to joint it to.
+    private static ArticulationBody FindParentBodyOf(Transform t)
     {
-        for (Transform t = body.transform.parent; t != null; t = t.parent)
+        for (Transform p = t.parent; p != null; p = p.parent)
         {
-            ArticulationBody ancestor = t.GetComponent<ArticulationBody>();
+            ArticulationBody ancestor = p.GetComponent<ArticulationBody>();
             if (ancestor != null) return ancestor;
         }
         return null;

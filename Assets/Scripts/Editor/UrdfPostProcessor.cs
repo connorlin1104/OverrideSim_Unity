@@ -397,11 +397,7 @@ public class UrdfPostProcessor : EditorWindow
         //         the catalog entry so the home screen can offer them without loading the scene.
         string robotId = Slugify(root.name);
         var mechanismInfos = new List<RobotModelCatalog.MechanismInfo>();
-        RobotMechanisms registry = root.GetComponent<RobotMechanisms>();
-        if (registry == null) registry = Undo.AddComponent<RobotMechanisms>(root);
-        Undo.RecordObject(registry, UndoName);
-        registry.robotId = robotId;
-        registry.mechanisms.Clear();
+        RobotMechanisms registry = EnsureRegistry(root, useUndo: true);
 
         foreach (UrdfJoint joint in root.GetComponentsInChildren<UrdfJoint>(true))
         {
@@ -424,15 +420,7 @@ public class UrdfPostProcessor : EditorWindow
         }
         EditorUtility.SetDirty(registry);
 
-        ButtonRouter router = root.GetComponent<ButtonRouter>();
-        if (router == null) router = Undo.AddComponent<ButtonRouter>(root);
-        Undo.RecordObject(router, UndoName);
-        router.mechanisms = registry;
-        string[] buttonNames = Enum.GetNames(typeof(ControllerButton));
-        router.buttonActions = new InputActionReference[buttonNames.Length];
-        for (int i = 0; i < buttonNames.Length; i++)
-            router.buttonActions[i] = LoadActionReference(buttonNames[i]);
-        EditorUtility.SetDirty(router);
+        EnsureButtonRouter(root, registry, useUndo: true);
 
         // -- 7) Register the robot in the home-screen catalog (if the catalog asset exists).
         bool catalogAdded = UpsertCatalogEntry(robotId, root.name, mechanismInfos);
@@ -593,6 +581,36 @@ public class UrdfPostProcessor : EditorWindow
     public static bool RefreshCatalogMechanisms(string robotId, string displayName, RobotMechanisms registry)
     {
         return UpsertCatalogEntry(robotId, displayName, BuildMechanismInfos(registry));
+    }
+
+    // Ensures the robot root carries a RobotMechanisms registry with a stable id, cleared and ready
+    // to be repopulated. Shared by this post-processor and the mesh-robot setup so both produce a
+    // first-class set-up robot — the Add/Fix Mechanism Joint tool and the home-screen picker both
+    // key on this component being present.
+    public static RobotMechanisms EnsureRegistry(GameObject root, bool useUndo)
+    {
+        RobotMechanisms registry = root.GetComponent<RobotMechanisms>();
+        if (registry == null) registry = AddComponent<RobotMechanisms>(root, useUndo);
+        if (useUndo) Undo.RecordObject(registry, UndoName);
+        registry.robotId = Slugify(root.name);
+        registry.mechanisms.Clear();
+        return registry;
+    }
+
+    // Ensures the robot root carries a ButtonRouter wired to every controller button action, so the
+    // player's saved per-robot button map can reach the mechanisms. Idempotent — re-wires in place.
+    public static ButtonRouter EnsureButtonRouter(GameObject root, RobotMechanisms registry, bool useUndo)
+    {
+        ButtonRouter router = root.GetComponent<ButtonRouter>();
+        if (router == null) router = AddComponent<ButtonRouter>(root, useUndo);
+        if (useUndo) Undo.RecordObject(router, UndoName);
+        router.mechanisms = registry;
+        string[] buttonNames = Enum.GetNames(typeof(ControllerButton));
+        router.buttonActions = new InputActionReference[buttonNames.Length];
+        for (int i = 0; i < buttonNames.Length; i++)
+            router.buttonActions[i] = LoadActionReference(buttonNames[i]);
+        EditorUtility.SetDirty(router);
+        return router;
     }
 
     private static T AddComponent<T>(GameObject go, bool useUndo) where T : Component

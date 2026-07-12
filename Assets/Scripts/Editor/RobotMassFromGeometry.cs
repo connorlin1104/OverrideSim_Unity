@@ -127,4 +127,43 @@ public static class RobotMassFromGeometry
 
         return report;
     }
+
+    // Real-world mass (kg) for one mesh subtree, using the same volume->density math as Apply but
+    // for a plain FBX part (no UrdfLink/UrdfVisuals). Sums every MeshFilter under linkNode that
+    // isn't owned by a deeper ArticulationBody (a child link's geometry). density is kg/m^3
+    // (RobotPartClassifier density lookup); scaleFactor = 10 (1 unit = 0.1 m). Returns 0 when no
+    // closed mesh is found, so the caller can fall back to a default mass. Used when the Add/Fix
+    // Mechanism Joint tool splits a moving link off a mesh robot's chassis.
+    public static float MassForLinkNode(GameObject linkNode, Transform robotRoot, float scaleFactor, float density)
+    {
+        if (linkNode == null || robotRoot == null) return 0f;
+        float metersPerUnit = 1f / Mathf.Max(scaleFactor, 1e-6f);
+        float m3PerUnit3 = metersPerUnit * metersPerUnit * metersPerUnit;
+        Matrix4x4 worldToRoot = robotRoot.worldToLocalMatrix;
+
+        float volM3 = 0f;
+        foreach (MeshFilter mf in linkNode.GetComponentsInChildren<MeshFilter>(true))
+        {
+            if (IsUnderNestedBody(mf.transform, linkNode.transform)) continue;
+            Mesh mesh = mf.sharedMesh;
+            if (mesh == null) continue;
+            float vRaw = GeneratePartColliders.ComputeMeshVolume(mesh);
+            if (vRaw <= 0f || float.IsNaN(vRaw)) continue; // open/degenerate mesh — skip
+            float meshLocalToRoot = Mathf.Abs((worldToRoot * mf.transform.localToWorldMatrix).determinant);
+            volM3 += vRaw * meshLocalToRoot * m3PerUnit3;
+        }
+        return volM3 * density;
+    }
+
+    // True when t is owned by an ArticulationBody strictly below linkRoot (a nested child link), so
+    // its mesh shouldn't count toward linkRoot's mass. Reaching linkRoot first means t is linkRoot's.
+    private static bool IsUnderNestedBody(Transform t, Transform linkRoot)
+    {
+        for (Transform p = t; p != null; p = p.parent)
+        {
+            if (p == linkRoot) return false;
+            if (p.GetComponent<ArticulationBody>() != null) return true;
+        }
+        return false;
+    }
 }

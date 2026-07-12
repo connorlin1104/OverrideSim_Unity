@@ -1,11 +1,66 @@
-# Setting Up a New Robot (Fusion 360 → URDF → RoboSim)
+# Setting Up a New Robot (Fusion 360 → RoboSim)
 
-How to get a VEX robot out of Fusion 360 and driving in RoboSim. The pipeline is:
-**Fusion 360 → ACDC4Robot add-in → URDF folder → Unity URDF importer → Set Up Imported Robot**.
-Most of the old busywork (a physical material on every part, a perfect joint on every axle) is now
-optional — you can fix mass and joints on the Unity side. Follow it top to bottom the first time.
+Two ways to get a VEX robot out of Fusion 360 and driving in RoboSim:
 
-## Quickstart
+- **FBX (recommended — no CAD restructuring).** Export the robot as a mesh and author the moving
+  joints in Unity. Your Fusion hierarchy, components, and joints are irrelevant; nothing upstream has
+  to change. Best when people built their robot however they liked. See **§A**.
+- **URDF (precise — optional).** Export via the ACDC4Robot add-in. It carries exact joint axes,
+  limits, and (optionally) CAD masses — but URDF *is* a strict links-and-joints tree, so it forces
+  the design into that shape (one component per moving part, joints on components only, flat
+  hierarchy). Worth it only when a team already authored clean Fusion joints and wants CAD-accurate
+  motion. See **§1** onward.
+
+Both paths end the same way: **Set Up Imported Robot** rigs it, **Add or Fix Mechanism Joint** marks
+any moving parts, **Save As Robot Prefab** puts it in the picker.
+
+---
+
+## A. FBX path (no CAD restructuring)
+
+Nothing in Fusion needs reorganizing — FBX just bakes whatever geometry exists, so component nesting,
+joints-on-bodies, and half-built assemblies all import fine.
+
+### A.1 Export from Fusion
+1. Keep the design in its **native units** (VEX parts are inches — do **not** switch to meters; that
+   is a URDF-only step and would mis-scale the mesh).
+2. Optionally hide or delete parts you don't want — or leave them and skip them in Unity.
+3. **File ▸ Export ▸ FBX.** No joints, no flattening, no grounding, no add-in.
+
+### A.2 Import into Unity
+1. Drop the `.fbx` into `Assets/Models/`.
+2. Select it → the **Model** tab, and match the existing `360 RPM Drivetrain.fbx` settings. The ones
+   that matter: **Scale Factor = 1**, **Use File Scale = on**, **Convert Units = on**, **Bake Axis
+   Conversion = off**. Apply.
+3. Drag it into the scene and **compare its size to the 360 RPM Drivetrain**. The FBX carries the
+   world scale from your CAD units, so a robot modeled in the same units as the other bots lands at
+   the right size. If it is ~10× off, that's a units mismatch — fix it with **Scale Factor** or
+   re-export in matching units.
+4. If it comes in lying on its back, that's Fusion Z-up vs Unity Y-up — rotate the root −90° about X
+   (or turn **Bake Axis Conversion** on and reimport).
+
+### A.3 Set it up
+1. Select the root → **Tools ▸ RoboSim ▸ Robot ▸ Set Up Imported Robot** → **Set Up Robot**.
+   - **Wheel Name Contains** — comma-separated tokens matched anywhere in your wheel node names
+     (e.g. `Omni`, or `3.25 AS Omni, Traction` for a mixed drivetrain). Those nodes become the
+     motor-driven wheels; everything else becomes the rigid chassis. If it reports no wheels, set
+     this to a word from your wheel parts and run again.
+   - It builds colliders, rigs the wheels to the joysticks, sizes masses, and registers the robot
+     (mechanisms registry + button router + home-screen catalog entry). The drivetrain drives
+     immediately.
+2. **Mark each moving part** (arm, intake, flywheel, piston) with **Advanced ▸ Add or Fix Mechanism
+   Joint** (see §5.1). On a mesh robot this **splits the part off the chassis** into a new moving
+   link: pick the part's group node, choose Revolute / Continuous / Prismatic, set the axis and the
+   **Anchor** at the hinge/slide line, then **Apply**. It's wired to a controller button
+   automatically — no axle needs to exist in the CAD, the joint replaces it.
+3. **Save As Robot Prefab** (§6) to put it in the home-screen picker.
+
+That's the whole no-restructuring flow: drop the FBX, set it up, mark the DOFs, save. The rest of
+this doc (§1 onward) is the optional URDF path.
+
+---
+
+## Quickstart (URDF path)
 
 1. In Fusion: **units = meters**, one component per moving part, add the joints you can
    (Revolute on axles named with `wheel`, Slider on pistons), ground the chassis, history off.
@@ -111,9 +166,11 @@ finish jointing it in Fusion — fix it in Unity, no re-export needed:
 
 It configures the joint and wires the actuator + button mapping exactly like an imported joint, so
 the mechanism shows up in the controller-config screen immediately. Re-applying to the same link
-replaces its mechanism, and **Fixed** removes it. Works on links that already exist in the imported
-robot (including parts that imported as fixed); creating a brand-new moving body from scratch means
-re-modelling it in Fusion.
+replaces its mechanism, and **Fixed** removes it. On a **URDF** robot it retypes an existing link
+(including one that imported as fixed). On a **mesh/FBX** robot the part has no joint yet, so it
+**splits a new moving link off the chassis** — the part's meshes and colliders leave the chassis
+body and become their own link, jointed where you set the anchor. Either way you never leave Unity;
+the only thing it can't do is invent geometry that isn't there (model the part in CAD first).
 
 ## 6. Make it selectable in the home-screen picker
 

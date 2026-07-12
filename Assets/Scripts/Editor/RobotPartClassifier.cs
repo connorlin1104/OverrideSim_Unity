@@ -212,12 +212,15 @@ public static class RobotPartClassifier
     public static List<WheelCluster> FindWheelClusters(GameObject root, string wheelNamePrefix = null)
     {
         if (string.IsNullOrEmpty(wheelNamePrefix)) wheelNamePrefix = WheelNamePrefix;
+        // Accept a comma-separated list of name tokens matched anywhere in the node name, so one
+        // field catches a mixed drivetrain ("Omni, Traction") or any team's wheel naming — not just
+        // this project's single "3.25 AS Omni" prefix. The default token still matches its nodes.
+        string[] wheelTokens = wheelNamePrefix.Split(',');
         var clusters = new List<WheelCluster>();
 
         foreach (Transform node in root.GetComponentsInChildren<Transform>(true))
         {
-            if (!NormalizeName(node.name).StartsWith(wheelNamePrefix, System.StringComparison.OrdinalIgnoreCase))
-                continue;
+            if (!MatchesAnyToken(NormalizeName(node.name), wheelTokens)) continue;
 
             // Combined world bounds of the wheel subtree's renderers.
             Renderer[] renderers = node.GetComponentsInChildren<Renderer>(true);
@@ -306,6 +309,19 @@ public static class RobotPartClassifier
         Vector3 local = t.InverseTransformVector(world.size);
         size = new Vector3(Mathf.Abs(local.x), Mathf.Abs(local.y), Mathf.Abs(local.z));
         return true;
+    }
+
+    // True when the (already-normalized) name contains ANY of the comma-split tokens, case-
+    // insensitively. Blank tokens are ignored so "Omni," or trailing commas don't match everything.
+    private static bool MatchesAnyToken(string normalizedName, string[] tokens)
+    {
+        foreach (string token in tokens)
+        {
+            string t = token.Trim();
+            if (t.Length > 0 && normalizedName.IndexOf(t, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+        }
+        return false;
     }
 
     private static bool IsAllDigits(string s, int start, int end)

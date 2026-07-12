@@ -83,9 +83,14 @@ public class SetUpImportedRobot : EditorWindow
                 break;
 
             case RobotKind.Mesh:
-                EditorGUILayout.HelpBox("Detected: mesh/FBX robot. Will build part colliders, then rig motors.",
+                EditorGUILayout.HelpBox("Detected: mesh/FBX robot. Will build part colliders, rig the drive " +
+                    "wheels, and register it as a robot. Add arms/pistons afterward with " +
+                    "Advanced ▸ Add or Fix Mechanism Joint.",
                     MessageType.None);
-                meshWheelNamePrefix = EditorGUILayout.TextField("Wheel Nodes Start With", meshWheelNamePrefix);
+                meshWheelNamePrefix = EditorGUILayout.TextField(new GUIContent("Wheel Name Contains",
+                    "Comma-separated name tokens that identify the drive wheels (matched anywhere in the " +
+                    "node name), e.g. \"3.25 AS Omni\" or \"Omni, Traction\". These nodes get rolling sphere " +
+                    "colliders and become motor-driven wheel links."), meshWheelNamePrefix);
                 break;
 
             case RobotKind.AlreadySetUp:
@@ -200,17 +205,26 @@ public class SetUpImportedRobot : EditorWindow
                 GeneratePartColliders.Report report = GeneratePartColliders.Generate(root, meshWheelPrefix);
                 if (report.sphereCount == 0)
                     throw new InvalidOperationException(
-                        $"No wheel nodes under '{root.name}' start with '{meshWheelPrefix}', so there is " +
-                        "nothing to turn into motors. Set 'Wheel Nodes Start With' to match this robot's " +
-                        "wheel objects in the Hierarchy, then run again.");
+                        $"No wheel nodes under '{root.name}' matched '{meshWheelPrefix}', so there is " +
+                        "nothing to turn into motors. Set 'Wheel Name Contains' to a token in this robot's " +
+                        "wheel node names (comma-separate several), then run again.");
 
                 RigDrivetrainArticulation.Rig(root, meshWheelPrefix);
+
+                // Register it as a first-class set-up robot: a mechanisms registry + button router
+                // (so Add/Fix Mechanism Joint can split arms/pistons off afterward) and a home-screen
+                // catalog entry. It starts with no button mechanisms — the drivetrain is on the sticks.
+                RobotMechanisms registry = UrdfPostProcessor.EnsureRegistry(root, useUndo: true);
+                UrdfPostProcessor.EnsureButtonRouter(root, registry, useUndo: true);
+                UrdfPostProcessor.RefreshCatalogMechanisms(registry.robotId, root.name, registry);
+
                 MarkDirty(root);
                 return $"'{root.name}' (mesh) is set up:\n" +
                        $"  - {report.boxCount + report.obbChildCount} part box colliders " +
                        $"({report.skippedFasteners} fasteners skipped)\n" +
                        $"  - {report.sphereCount} wheel spheres, now {report.sphereCount} motor-driven wheel links\n" +
-                       "  - motors wired to the joysticks";
+                       "  - motors wired to the joysticks\n" +
+                       "  - registered as a robot (add arms/pistons with Advanced ▸ Add or Fix Mechanism Joint)";
 
             default:
                 throw new InvalidOperationException(
