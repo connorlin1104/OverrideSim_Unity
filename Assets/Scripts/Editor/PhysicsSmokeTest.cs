@@ -23,12 +23,10 @@ using UnityEngine.SceneManagement;
 // The simulation mutates the open scene; it is ALWAYS reloaded from disk afterwards so the
 // simulated poses are never saved.
 //
-// Usage: Tools > RoboSim > Robot > Validate Robot Physics (validates the robot in the active scene).
-// Batch: -executeMethod PhysicsSmokeTest.RunBatchValidate (opens SampleScene; throws on FAIL,
-// which exits the editor nonzero).
+// Usage: Tools > RoboSim > Robot > Validate Robot Physics (validates the robot in the active scene),
+// or PhysicsSmokeTest.ValidateRobot(root) right after rigging one (Set Up Imported Robot does this).
 public class PhysicsSmokeTest
 {
-    private const string ScenePath = "Assets/Scenes/SampleScene.unity";
     private const string MenuTitle = "Validate Rigged Robot";
 
     private const float StepSeconds = 0.01f;   // matches the project's fixed timestep
@@ -65,14 +63,6 @@ public class PhysicsSmokeTest
         {
             EditorUtility.DisplayDialog(MenuTitle, "Validation failed:\n\n" + e.Message, "OK");
         }
-    }
-
-    // Batch entry for -executeMethod: opens the main scene and validates. Throws on any FAIL.
-    public static void RunBatchValidate()
-    {
-        EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
-        ValidateActiveScene();
-        Debug.Log("PhysicsSmokeTest: ALL PASS (settle, turn, drive).");
     }
 
     // Runs all three phases against the rigged robot in the active scene. Throws on FAIL.
