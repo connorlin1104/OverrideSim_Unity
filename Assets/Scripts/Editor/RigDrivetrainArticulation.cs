@@ -22,13 +22,14 @@ using UnityEngine.SceneManagement;
 // anchorRotation gymnastics are needed.
 //
 // Usage: select the Robot object in the Hierarchy, then
-// Tools > RoboSim > Robot > Advanced > Rig Motors and Wheel Joints.
+// Tools > RoboSim > Robot > Mechanisms > Rig Drivetrain.
 // Batch: -executeMethod RigDrivetrainArticulation.RunBatchOnRobot
 // (opens SampleScene, rigs the Robot, saves).
 public class RigDrivetrainArticulation
 {
     private const string ScenePath = "Assets/Scenes/SampleScene.unity";
     private const string UndoName = "Rig Drivetrain Articulation";
+    private const string AddWheelsUndo = "Add Wheels to Drivetrain";
 
     private const int ExpectedWheelClusters = 6;
     private const float RootMass = 24f;          // chassis; each of the 6 wheel links adds 1 => ~30 total, matching the old rig
@@ -44,24 +45,112 @@ public class RigDrivetrainArticulation
     private const float WheelSpinDamping = 0.5f;        // velocity-proportional spin loss (bleeds top speed)
     private const float AxleAngleToleranceDeg = 10f;
 
-    [MenuItem("Tools/RoboSim/Robot/Advanced/Rig Motors and Wheel Joints", false, 2)]
-    private static void RigSelected()
+    // Rig (or re-rig) the drivetrain. The selection decides how the wheels are found:
+    //   • Select the ROBOT root  → wheels are auto-detected by name (RobotPartClassifier).
+    //   • Select the DRIVE WHEELS (2+ parts) → each selected part becomes one wheel — the escape
+    //     hatch for when auto-detect grabs the wrong parts (e.g. colliderless cosmetic wheels).
+    // Clean Robot Rig (Reset) first if the robot is already rigged.
+    [MenuItem("Tools/RoboSim/Robot/Mechanisms/Rig Drivetrain", false, 4)]
+    private static void RigDrivetrainMenu()
     {
-        GameObject robot = Selection.activeGameObject;
-        if (robot == null)
+        GameObject[] selection = Selection.gameObjects;
+        if (selection == null || selection.Length == 0)
         {
             EditorUtility.DisplayDialog(UndoName,
-                "Select your Robot GameObject in the Hierarchy first.", "OK");
+                "Select the Robot root to auto-detect its wheels, or select the drive wheel parts " +
+                "(2 or more) to rig from exactly those.", "OK");
             return;
         }
 
         try
         {
-            Rig(robot);
+            if (selection.Length == 1)
+            {
+                // One object selected = the robot root; auto-detect the wheels by name.
+                Rig(selection[0]);
+            }
+            else
+            {
+                // Several objects selected = the drive wheels; rig from exactly those.
+                GameObject robot = ResolveRobotRootFromSelection(selection);
+                if (robot == null)
+                {
+                    EditorUtility.DisplayDialog(UndoName,
+                        "Couldn't find the robot root from the selection. Select wheels under a set-up " +
+                        "robot (one with RobotMechanisms), or select the robot's top object to auto-detect.", "OK");
+                    return;
+                }
+                int n = RigFromWheelParts(robot, selection);
+                RobotMotorController motor = robot.GetComponent<RobotMotorController>();
+                EditorUtility.DisplayDialog(UndoName,
+                    $"Rigged the drivetrain from {n} selected wheel(s): {motor.leftWheels.Length} left / " +
+                    $"{motor.rightWheels.Length} right.\n\nSave, then Validate Robot Physics.", "OK");
+            }
         }
         catch (System.InvalidOperationException e)
         {
             EditorUtility.DisplayDialog(UndoName, e.Message, "OK");
+        }
+    }
+
+    // Robot root = the ancestor carrying RobotMechanisms (kept even after Clean Robot Rig), else the
+    // topmost transform of the first selected object.
+    private static GameObject ResolveRobotRootFromSelection(GameObject[] selection)
+    {
+        foreach (GameObject go in selection)
+        {
+            if (go == null) continue;
+            RobotMechanisms reg = go.GetComponentInParent<RobotMechanisms>();
+            if (reg != null) return reg.gameObject;
+        }
+        foreach (GameObject go in selection)
+            if (go != null) return go.transform.root.gameObject;
+        return null;
+    }
+
+    // Adds the selected wheel part(s) to an already-rigged drivetrain, for when auto-detect missed
+    // some (only 2 wheels spin per side). Each selected part becomes a revolute wheel link on the
+    // near side and is appended to the RobotMotorController arrays, so it spins with the rest.
+    [MenuItem("Tools/RoboSim/Robot/Mechanisms/Add Selected Wheels to Drivetrain", false, 5)]
+    private static void AddSelectedWheels()
+    {
+        GameObject[] selection = Selection.gameObjects;
+        if (selection == null || selection.Length == 0)
+        {
+            EditorUtility.DisplayDialog(AddWheelsUndo,
+                "Select the wheel part(s) to add in the Hierarchy first.", "OK");
+            return;
+        }
+
+        // The rigged robot is the RobotMotorController root above any selected wheel part.
+        GameObject robot = null;
+        foreach (GameObject go in selection)
+        {
+            RobotMotorController m = go != null ? go.GetComponentInParent<RobotMotorController>() : null;
+            if (m != null) { robot = m.gameObject; break; }
+        }
+        if (robot == null)
+        {
+            EditorUtility.DisplayDialog(AddWheelsUndo,
+                "None of the selected objects are under a rigged robot (no RobotMotorController on the " +
+                "root). Run Rig Drivetrain first.", "OK");
+            return;
+        }
+
+        try
+        {
+            int added = AddWheelsToDrivetrain(robot, selection);
+            RobotMotorController motor = robot.GetComponent<RobotMotorController>();
+            EditorUtility.DisplayDialog(AddWheelsUndo,
+                added == 0
+                    ? "No new wheels added (already wired, or the selection had no renderers)."
+                    : $"Added {added} wheel(s). Drivetrain now has {motor.leftWheels.Length} left / " +
+                      $"{motor.rightWheels.Length} right. Save the scene, then Validate Robot Physics.",
+                "OK");
+        }
+        catch (System.InvalidOperationException e)
+        {
+            EditorUtility.DisplayDialog(AddWheelsUndo, e.Message, "OK");
         }
     }
 
@@ -98,7 +187,6 @@ public class RigDrivetrainArticulation
     public static void Rig(GameObject robot, string wheelNamePrefix = null)
     {
         if (robot == null) throw new System.ArgumentNullException(nameof(robot));
-        Transform wrapper = robot.transform;
 
         // --- Preconditions (validate everything before touching the scene) ---------------
 
@@ -114,11 +202,6 @@ public class RigDrivetrainArticulation
             throw new System.InvalidOperationException(
                 $"'{robot.name}' already contains an ArticulationBody — it appears to be rigged already.");
 
-        // A RobotDriveController is only present on the ORIGINAL velocity-driven robot; we lift
-        // its joystick action references before deleting it. A freshly imported robot has none,
-        // which is fine — the actions are then loaded straight from the input asset.
-        RobotDriveController drive = robot.GetComponent<RobotDriveController>();
-
         List<RobotPartClassifier.WheelCluster> clusters = RobotPartClassifier.FindWheelClusters(robot, wheelNamePrefix);
         if (clusters == null || clusters.Count == 0)
             throw new System.InvalidOperationException(
@@ -126,6 +209,75 @@ public class RigDrivetrainArticulation
         if (clusters.Count != ExpectedWheelClusters)
             Debug.LogWarning($"{UndoName}: expected {ExpectedWheelClusters} wheel clusters, found {clusters.Count}. " +
                              "Rigging anyway — check the drivetrain naming/geometry.", robot);
+
+        RigWithClusters(robot, clusters);
+    }
+
+    // Rigs a drivetrain from an explicit list of wheel parts (each part = one wheel) instead of
+    // name-based auto-detection — use it when the wheels are named unpredictably or auto-detect grabs
+    // the wrong parts (e.g. it drove wheels with no ground colliders). Flow: Clean Robot Rig (Reset),
+    // select the actual drive wheels (the ones that touch the ground / carry the sphere colliders),
+    // then run this. Throws if the robot is already rigged (Clean first) or nothing selectable was
+    // found. Returns the number of wheels rigged.
+    public static int RigFromWheelParts(GameObject robot, IList<GameObject> wheelParts)
+    {
+        if (robot == null) throw new System.ArgumentNullException(nameof(robot));
+        if (wheelParts == null || wheelParts.Count == 0)
+            throw new System.InvalidOperationException("No wheel parts selected.");
+        if (robot.GetComponentInChildren<ArticulationBody>(true) != null)
+            throw new System.InvalidOperationException(
+                $"'{robot.name}' is already rigged (has an ArticulationBody). Run Clean Robot Rig (Reset) " +
+                "first, then rig from the selected wheels.");
+
+        List<RobotPartClassifier.WheelCluster> clusters = new List<RobotPartClassifier.WheelCluster>();
+        int skippedNoCollider = 0;
+        foreach (GameObject part in wheelParts)
+        {
+            if (part == null || part.transform == robot.transform) continue;
+            if (!part.transform.IsChildOf(robot.transform)) continue;
+            Renderer[] renderers = part.GetComponentsInChildren<Renderer>(true);
+            if (renderers.Length == 0) continue;
+            // A drive wheel needs a ground-contact collider. Skipping parts without one keeps the tool
+            // from re-driving colliderless cosmetic wheels (the exact bug that broke the last rig).
+            if (part.GetComponentInChildren<Collider>(true) == null)
+            {
+                skippedNoCollider++;
+                Debug.LogWarning($"{UndoName}: skipped '{part.name}' — it has no collider, so it can't be a " +
+                                 "ground-contact drive wheel. (If it should be, run Rebuild Part Colliders first.)", part);
+                continue;
+            }
+            Bounds bounds = renderers[0].bounds;
+            for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
+            clusters.Add(new RobotPartClassifier.WheelCluster
+            {
+                topmost = part.transform,
+                nodes = new List<Transform> { part.transform },
+                worldBounds = bounds,
+            });
+        }
+        if (clusters.Count == 0)
+            throw new System.InvalidOperationException(
+                skippedNoCollider > 0
+                    ? "None of the selected parts have a collider, so none can be a ground-contact wheel. " +
+                      "Run Rebuild Part Colliders first, then select the wheels and try again."
+                    : "None of the selected parts have renderers to rig as wheels — select the wheel meshes.");
+
+        RigWithClusters(robot, clusters);
+        return clusters.Count;
+    }
+
+    // The shared rigging core: builds the root ArticulationBody + one revolute wheel link per cluster
+    // (split into sides by the clusters' mean X), wires the RobotMotorController, and switches to TGS.
+    // Shared by Rig (name-detected clusters) and RigFromWheelParts (hand-picked wheels) so both use
+    // identical, validated logic.
+    private static void RigWithClusters(GameObject robot, List<RobotPartClassifier.WheelCluster> clusters)
+    {
+        Transform wrapper = robot.transform;
+
+        // A RobotDriveController is only present on the ORIGINAL velocity-driven robot; we lift its
+        // joystick action references before deleting it. A freshly imported/cleaned robot has none,
+        // which is fine — the actions are then loaded straight from the input asset.
+        RobotDriveController drive = robot.GetComponent<RobotDriveController>();
 
         // --- Mutations (one collapsed undo group) -----------------------------------------
 
@@ -299,6 +451,134 @@ public class RigDrivetrainArticulation
                   $"{leftLinks.Count} left / {rightLinks.Count} right wheel links, tagged Player, " +
                   $"motor controller wired ({(leftActionRef != null && rightActionRef != null ? "actions restored" : "ACTIONS MISSING")}), " +
                   $"solver: {tgsState}.\n{linkSummary}", robot);
+    }
+
+    // Wires already-present wheel parts into an ALREADY-rigged drivetrain: each part becomes a
+    // revolute wheel link (same torque-limited motor model as Rig) assigned to the near rail, then
+    // appended to the RobotMotorController arrays so it spins with the rest. This is the reliable
+    // escape hatch when auto-detect missed wheels. Throws if the robot isn't rigged yet. Skips parts
+    // already wired or with no renderers. Returns the number of wheels added.
+    public static int AddWheelsToDrivetrain(GameObject robot, IEnumerable<GameObject> wheelParts)
+    {
+        if (robot == null) throw new System.ArgumentNullException(nameof(robot));
+        RobotMotorController motor = robot.GetComponent<RobotMotorController>();
+        ArticulationBody rootAb = robot.GetComponent<ArticulationBody>();
+        if (motor == null || rootAb == null)
+            throw new System.InvalidOperationException(
+                $"'{robot.name}' isn't rigged yet (no RobotMotorController / root ArticulationBody). Run " +
+                "Rig Drivetrain first, then add extra wheels.");
+
+        Transform wrapper = robot.transform;
+        List<ArticulationBody> left = new List<ArticulationBody>(motor.leftWheels ?? System.Array.Empty<ArticulationBody>());
+        List<ArticulationBody> right = new List<ArticulationBody>(motor.rightWheels ?? System.Array.Empty<ArticulationBody>());
+        HashSet<ArticulationBody> alreadyWired = new HashSet<ArticulationBody>(left);
+        alreadyWired.UnionWith(right);
+
+        // Existing wheels define the two rails; a new wheel joins whichever rail's mean X it's nearer.
+        float leftMeanX = MeanWrapperLocalX(left, wrapper);
+        float rightMeanX = MeanWrapperLocalX(right, wrapper);
+
+        Undo.IncrementCurrentGroup();
+        Undo.SetCurrentGroupName(AddWheelsUndo);
+        int undoGroup = Undo.GetCurrentGroup();
+
+        int added = 0;
+        foreach (GameObject part in wheelParts)
+        {
+            if (part == null || part.transform == wrapper) continue;
+            // Must be under this robot, and not already a wired wheel link.
+            if (part.GetComponentInParent<RobotMotorController>() != motor) continue;
+            ArticulationBody existing = part.GetComponent<ArticulationBody>();
+            if (existing != null && alreadyWired.Contains(existing)) continue;
+
+            // World bounds of the part's meshes -> link placement + side.
+            Renderer[] renderers = part.GetComponentsInChildren<Renderer>(true);
+            if (renderers.Length == 0) continue;
+            Bounds bounds = renderers[0].bounds;
+            for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
+
+            float localX = wrapper.InverseTransformPoint(bounds.center).x;
+            bool isLeft = DecideSide(localX, leftMeanX, rightMeanX);
+            int sideIndex = isLeft ? left.Count : right.Count;
+            string linkName = $"WheelLink_{(isLeft ? "LS" : "RS")}{sideIndex}_added";
+
+            // Direct child of the wrapper, world rotation == wrapper rotation, anchor forced to
+            // identity so the revolute twist axis is the link's +X (the axle) — the same setup Rig
+            // uses (see the axis note in this file's header).
+            GameObject link = new GameObject(linkName);
+            Undo.RegisterCreatedObjectUndo(link, AddWheelsUndo);
+            link.transform.SetParent(wrapper, false);
+            link.transform.SetPositionAndRotation(bounds.center, wrapper.rotation);
+            link.transform.localScale = Vector3.one;
+            Undo.SetTransformParent(part.transform, link.transform, AddWheelsUndo); // keeps world placement
+
+            ArticulationBody ab = Undo.AddComponent<ArticulationBody>(link);
+            ab.jointType = ArticulationJointType.RevoluteJoint; // BEFORE drive config (type change resets drives)
+            ab.matchAnchors = true;
+            ab.anchorPosition = Vector3.zero;
+            ab.anchorRotation = Quaternion.identity;
+            ab.mass = WheelMass;
+            ab.jointFriction = WheelRollingResistance;
+            ab.angularDamping = WheelSpinDamping;
+            ab.maxJointVelocity = WheelMaxJointVelocity;
+            ab.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
+            ab.ResetCenterOfMass();
+            ab.ResetInertiaTensor();
+
+            ArticulationDrive d = ab.xDrive;
+            d.driveType = ArticulationDriveType.Velocity;
+            d.forceLimit = WheelStallTorque;
+            d.damping = WheelDriveDamping;
+            d.stiffness = 0f;
+            ab.xDrive = d;
+
+            link.tag = "Player"; // match loaders identify the robot by the tag on a collider's body
+
+            (isLeft ? left : right).Add(ab);
+            // Fold the new wheel into the running mean so several adds distribute across sides sanely.
+            if (isLeft) leftMeanX = float.IsNaN(leftMeanX) ? localX : (leftMeanX + localX) * 0.5f;
+            else rightMeanX = float.IsNaN(rightMeanX) ? localX : (rightMeanX + localX) * 0.5f;
+            added++;
+        }
+
+        if (added > 0)
+        {
+            Undo.RecordObject(motor, AddWheelsUndo);
+            motor.leftWheels = left.ToArray();
+            motor.rightWheels = right.ToArray();
+            EditorUtility.SetDirty(motor);
+            EditorSceneManager.MarkSceneDirty(robot.scene);
+        }
+        Undo.CollapseUndoOperations(undoGroup);
+        return added;
+    }
+
+    // Mean wrapper-local X of a wheel rail, or NaN when the rail is empty.
+    private static float MeanWrapperLocalX(List<ArticulationBody> wheels, Transform wrapper)
+    {
+        if (wheels == null || wheels.Count == 0) return float.NaN;
+        float sum = 0f;
+        int n = 0;
+        foreach (ArticulationBody w in wheels)
+        {
+            if (w == null) continue;
+            sum += wrapper.InverseTransformPoint(w.transform.position).x;
+            n++;
+        }
+        return n == 0 ? float.NaN : sum / n;
+    }
+
+    // Assigns a wheel to the nearer rail. The left rail sits at the smaller X (see Rig's mean-X
+    // split); when a rail is still empty, decide by the other rail, or by sign as a last resort.
+    private static bool DecideSide(float localX, float leftMeanX, float rightMeanX)
+    {
+        bool haveLeft = !float.IsNaN(leftMeanX);
+        bool haveRight = !float.IsNaN(rightMeanX);
+        if (haveLeft && haveRight)
+            return Mathf.Abs(localX - leftMeanX) <= Mathf.Abs(localX - rightMeanX);
+        if (haveLeft) return localX <= leftMeanX;   // larger X than the left rail => right
+        if (haveRight) return localX < rightMeanX;   // smaller X than the right rail => left
+        return localX < 0f;                          // bare drivetrain fallback
     }
 
     // Flips ProjectSettings/DynamicsManager.asset m_SolverType to 1 (TGS). Idempotent.

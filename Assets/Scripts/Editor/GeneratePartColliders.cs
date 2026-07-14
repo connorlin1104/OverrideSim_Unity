@@ -26,7 +26,7 @@ public static class GeneratePartColliders
     private const string UndoName = "Generate Part Colliders";
     private const string ScenePath = "Assets/Scenes/SampleScene.unity";
 
-    // Major sub-assemblies used for the RobotDriveController turn pivots (see FixRobotCollider).
+    // Major sub-assemblies used for the RobotDriveController turn pivots.
     private const string LeftGroup = "Drivetrain LS";
     private const string RightGroup = "Drivetrain RS";
 
@@ -286,7 +286,7 @@ public static class GeneratePartColliders
         RobotDriveController drive = root.GetComponent<RobotDriveController>();
         if (drive != null)
         {
-            // Same semantics as FixRobotCollider: drivetrain rail centers are the turn pivots,
+            // Legacy RobotDriveController path: drivetrain rail centers are the turn pivots,
             // whole-robot center is the straight-drive pivot; missing groups fall back to it.
             Vector3 overallCenter = Vector3.zero;
             if (RobotPartClassifier.TryGetGroupLocalBounds(root, null, out Vector3 allCenter, out _))

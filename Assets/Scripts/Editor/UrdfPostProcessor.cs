@@ -51,7 +51,7 @@ public class UrdfPostProcessor : EditorWindow
     [SerializeField] private float defaultDensity = RobotPartClassifier.DefaultDensity;
     [SerializeField] private bool mechanizeAllPoweredJoints;
 
-    [MenuItem("Tools/RoboSim/Robot/Advanced/Post-Process Imported URDF Robot", false, 3)]
+    [MenuItem("Tools/RoboSim/Robot/Advanced/Post-Process Imported URDF Robot", false, 2)]
     private static void ShowWindow()
     {
         UrdfPostProcessor window = GetWindow<UrdfPostProcessor>("URDF Post-Process");

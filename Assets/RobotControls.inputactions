@@ -401,7 +401,7 @@
                 {
                     "name": "",
                     "id": "e5555555-0000-4000-8000-000000000001",
-                    "path": "<Keyboard>/q",
+                    "path": "<Keyboard>/1",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
@@ -412,7 +412,7 @@
                 {
                     "name": "",
                     "id": "e5555555-0000-4000-8000-000000000002",
-                    "path": "<Keyboard>/z",
+                    "path": "<Keyboard>/2",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
@@ -423,7 +423,7 @@
                 {
                     "name": "",
                     "id": "e5555555-0000-4000-8000-000000000003",
-                    "path": "<Keyboard>/e",
+                    "path": "<Keyboard>/3",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
@@ -434,7 +434,7 @@
                 {
                     "name": "",
                     "id": "e5555555-0000-4000-8000-000000000004",
-                    "path": "<Keyboard>/c",
+                    "path": "<Keyboard>/4",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
@@ -489,7 +489,7 @@
                 {
                     "name": "",
                     "id": "e5555555-0000-4000-8000-000000000009",
-                    "path": "<Keyboard>/i",
+                    "path": "<Keyboard>/q",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
@@ -500,7 +500,7 @@
                 {
                     "name": "",
                     "id": "e5555555-0000-4000-8000-000000000010",
-                    "path": "<Keyboard>/l",
+                    "path": "<Keyboard>/c",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
@@ -511,7 +511,7 @@
                 {
                     "name": "",
                     "id": "e5555555-0000-4000-8000-000000000011",
-                    "path": "<Keyboard>/k",
+                    "path": "<Keyboard>/z",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
@@ -522,7 +522,7 @@
                 {
                     "name": "",
                     "id": "e5555555-0000-4000-8000-000000000012",
-                    "path": "<Keyboard>/j",
+                    "path": "<Keyboard>/e",
                     "interactions": "",
                     "processors": "",
                     "groups": "",

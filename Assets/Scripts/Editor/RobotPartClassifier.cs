@@ -11,7 +11,7 @@ using Unity.Robotics.UrdfImporter;
 //   - which parts are fasteners (spacers/screws/nuts/... — physically irrelevant, skip colliders),
 //   - which nodes are wheels and how the coincident omni-wheel halves group into wheel clusters,
 //   - how to measure a named sub-group's bounds in the robot root's local space
-//     (same semantics as FixRobotCollider, shared here for reuse).
+//     (used for drivetrain turn-pivot centers and group collider bounds).
 //
 // Editor-only (lives in Editor/); used by Tools > RoboSim > Robot > Advanced > Rebuild Part Colliders and rigging tools.
 public static class RobotPartClassifier
@@ -347,7 +347,7 @@ public static class RobotPartClassifier
 
     // Combined renderer bounds of a named sub-group (or the whole robot when groupName is null),
     // expressed in the root's local space as a BoxCollider-style center + size.
-    // Same semantics as FixRobotCollider.TryGetGroupLocalBounds, shared here for reuse.
+    // Shared here so every collider/rigging tool measures group bounds identically.
     public static bool TryGetGroupLocalBounds(GameObject root, string groupName, out Vector3 center, out Vector3 size)
     {
         center = Vector3.zero;

@@ -21,21 +21,6 @@ MonoBehaviour:
     displayName: 654V v1
     prefab: {fileID: 8896121903650456618, guid: 256eab26b288b43f2b83f934f7a84512, type: 3}
     mechanisms:
-    - id: 50mm-cylinder-v1-2
-      displayName: 50mm Cylinder V1:2
-      type: pneumatic
-    - id: intake-1
-      displayName: Intake:1
-      type: motor
-    - id: claw-mech-mirror-1
-      displayName: Claw Mech(Mirror):1
-      type: motor
-    - id: claw-mech-1
-      displayName: Claw Mech:1
-      type: motor
-    - id: rollers-mirror-1
-      displayName: Rollers(Mirror):1
-      type: motor
-    - id: rollers-1
-      displayName: Rollers:1
+    - id: spinningpart
+      displayName: SpinningPart
       type: motor

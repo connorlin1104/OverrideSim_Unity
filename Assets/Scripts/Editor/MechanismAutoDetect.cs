@@ -19,7 +19,7 @@ using UnityEngine;
 // idempotent — a part that already became a mechanism (has an ArticulationBody) is left alone, so
 // re-running only picks up newly-named parts.
 //
-// Usage: select the set-up robot root, then Tools > RoboSim > Robot > Advanced > Auto-Detect Mechanisms.
+// Usage: select the set-up robot root, then Tools > RoboSim > Robot > Mechanisms > Auto-Detect Mechanisms.
 public class AutoDetectMechanismsWindow : EditorWindow
 {
     private const string Title = "Auto-Detect Mechanisms";
@@ -32,7 +32,7 @@ public class AutoDetectMechanismsWindow : EditorWindow
     private GameObject previewedRoot;
     private List<MechanismAutoDetect.Candidate> preview;
 
-    [MenuItem("Tools/RoboSim/Robot/Advanced/Auto-Detect Mechanisms", false, 5)]
+    [MenuItem("Tools/RoboSim/Robot/Mechanisms/Auto-Detect Mechanisms", false, 2)]
     private static void ShowWindow()
     {
         AutoDetectMechanismsWindow window = GetWindow<AutoDetectMechanismsWindow>(Title);

@@ -56,9 +56,13 @@ public class RobotSpawner : MonoBehaviour
     // as-is, an off-pivot bot lands offset from the spawn point and can drop onto a wall (the 654V
     // did). Two steps fix that: shift the root so the robot's collision footprint CENTER sits on the
     // spawn point, then pull the footprint fully inside the field walls so a wide bot near the wall
-    // can't overlap it and get ejected on top. Y is left alone so the drop height is unchanged. Done
-    // before the first physics step, so setting the root transform is the correct way to place the
-    // freshly-instantiated articulation.
+    // can't overlap it and get ejected on top. Y is left alone so the drop height is unchanged.
+    //
+    // The correction is applied via ArticulationBody.TeleportRoot: for an articulation ROOT, writing
+    // transform.position is silently ignored (the physics engine owns the root pose), so the old
+    // transform-only reposition was a no-op — a bot whose pivot sat on its footprint (the 360rpm dt)
+    // needed no correction and looked fine, while the off-pivot 654V never moved and hung on the wall.
+    // TeleportRoot is the supported move and rigidly carries every child link with it.
     private void RecenterFootprint(GameObject robot)
     {
         // Instantiate set the transform, but PhysX hasn't adopted it yet (Physics.autoSyncTransforms
@@ -67,20 +71,33 @@ public class RobotSpawner : MonoBehaviour
         if (!TryGetWorldFootprint(robot, out Bounds bounds)) return;
 
         // 1) Center the footprint on the spawn point (X/Z only; keep the spawn Y as the drop height).
+        //    Move the footprint in-code — the colliders aren't re-read before the single apply below,
+        //    so a pure translation keeps bounds.center/extents correct without another SyncTransforms.
         Vector3 delta = spawnPosition - bounds.center;
         delta.y = 0f;
-        robot.transform.position += delta;
         bounds.center += delta;
 
-        // 2) Clamp the footprint inside the field walls. Uses the actual wall colliders, so it tracks
-        //    the field if it moves, and does nothing if the walls aren't found (falls back to (1)).
+        // 2) Clamp the centered footprint inside the field walls. Uses the actual wall colliders, so
+        //    it tracks the field if it moves, and does nothing if the walls aren't found.
+        Vector3 push = Vector3.zero;
         if (TryGetFieldInterior(out float minX, out float maxX, out float minZ, out float maxZ))
         {
-            Vector3 push = Vector3.zero;
             push.x = ClampAxis(bounds.center.x, bounds.extents.x, minX, maxX, wallClearance);
             push.z = ClampAxis(bounds.center.z, bounds.extents.z, minZ, maxZ, wallClearance);
-            robot.transform.position += push;
         }
+
+        // 3) Apply both corrections exactly once, moving the articulation root (not just the
+        //    transform). `robot` is the instantiated prefab root and carries the root body, so its
+        //    ArticulationBody IS the articulation root — we don't gate on isRoot, which reflects
+        //    native state that may not be ready this early after Instantiate (and would silently drop
+        //    us back to the transform write that PhysX ignores). Fall back to the transform only when
+        //    there's no body at all (a hypothetical non-articulated robot).
+        Vector3 newPos = robot.transform.position + delta + push;
+        ArticulationBody rootBody = robot.GetComponent<ArticulationBody>();
+        if (rootBody != null)
+            rootBody.TeleportRoot(newPos, robot.transform.rotation);
+        else
+            robot.transform.position = newPos;
     }
 
     // Combined WORLD-space collision footprint. Colliders (not renderers) are what actually contact

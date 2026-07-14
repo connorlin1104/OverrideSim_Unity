@@ -15,7 +15,7 @@ using UnityEngine.InputSystem;
 // exist because an empirically flipped wheel mesh/axle can still reverse a side in practice.
 //
 // Usage: added and fully wired (wheel arrays + input actions) by
-// Tools > RoboSim > Robot > Advanced > Rig Motors and Wheel Joints. Nothing to set up by hand.
+// Tools > RoboSim > Robot > Mechanisms > Rig Drivetrain. Nothing to set up by hand.
 public class RobotMotorController : MonoBehaviour
 {
     [Header("Wheel Links (set by the Rig Drivetrain Articulation tool)")]

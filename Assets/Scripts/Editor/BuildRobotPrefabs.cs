@@ -28,7 +28,7 @@ public static class BuildRobotPrefabs
     // an inline robot to read it from nor an existing spawner to keep.
     private static readonly Vector3 DefaultSpawnPosition = new Vector3(15.99f, 0.974f, 7.91f);
 
-    [MenuItem("Tools/RoboSim/Robot/Build Robot Prefabs & Spawner", false, 4)]
+    [MenuItem("Tools/RoboSim/Robot/Advanced/Build Robot Prefabs & Spawner", false, 4)]
     private static void BuildInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())

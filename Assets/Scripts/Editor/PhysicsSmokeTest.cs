@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 
@@ -45,6 +46,15 @@ public class PhysicsSmokeTest
     // point is treated as "holding the wheels off the ground" (units; ~5 mm at the 10x world scale).
     private const float GroundClearanceTolerance = 0.05f;
 
+    // The field scene the robot actually runs in. Validation spawns the robot here when the editor
+    // scene has none — the field scene holds no robot in edit mode (RobotSpawner instantiates one at
+    // runtime), which is why validating it used to (misleadingly) report the drivetrain as unrigged.
+    private const string FieldScenePath = "Assets/Scenes/SampleScene.unity";
+
+    // Field interior point (above the floor, clear of the walls) used as the validation spawn, so the
+    // robot settles/drives/turns on open floor regardless of its game spawn point or off-center pivot.
+    private static readonly Vector3 ValidationSpawnPoint = new Vector3(0f, 0.974f, 6f);
+
     [MenuItem("Tools/RoboSim/Robot/Validate Robot Physics", false, 2)]
     private static void ValidateMenu()
     {
@@ -54,7 +64,7 @@ public class PhysicsSmokeTest
 
         try
         {
-            ValidateActiveScene();
+            ValidateFromMenu();
             EditorUtility.DisplayDialog(MenuTitle,
                 "All physics smoke tests PASSED (settle, turn, drive).\nSee the Console for details.", "OK");
         }
@@ -64,10 +74,105 @@ public class PhysicsSmokeTest
         }
     }
 
-    // Runs all three phases against the rigged robot in the active scene. Throws on FAIL.
-    private static void ValidateActiveScene()
+    // Batch entry (-executeMethod PhysicsSmokeTest.RunBatchValidate): spawns the catalog's robot into
+    // the field and validates it. Throws (nonzero editor exit) on failure.
+    public static void RunBatchValidate()
     {
-        ValidateBody(FindRiggedRobotRoot());
+        GameObject prefab = ResolveRobotPrefab()
+            ?? throw new System.InvalidOperationException("RunBatchValidate: no robot prefab to validate.");
+        ValidateSpawnedPrefab(prefab);
+        Debug.Log($"PhysicsSmokeTest: batch validation PASSED for '{prefab.name}'.");
+    }
+
+    // Validates the robot the user most likely means. The field scene spawns its robot at RUNTIME, so
+    // in the editor there is usually nothing to test — in that case we spawn the robot prefab into the
+    // field, test it, and discard it. Order: an open Prefab Mode robot, else a robot already in the
+    // scene (e.g. right after Set Up Imported Robot), else the Project selection / catalog model.
+    private static void ValidateFromMenu()
+    {
+        PrefabStage stage = PrefabStageUtility.GetCurrentPrefabStage();
+        if (stage != null)
+        {
+            GameObject staged = AssetDatabase.LoadAssetAtPath<GameObject>(stage.assetPath);
+            if (staged == null)
+                throw new System.InvalidOperationException(
+                    "Save the prefab first — its asset couldn't be loaded to spawn into the field for testing.");
+            ValidateSpawnedPrefab(staged);
+            return;
+        }
+
+        ArticulationBody sceneRobot = FindRobotRootInActiveScene();
+        if (sceneRobot != null) { ValidateBody(sceneRobot); return; }
+
+        GameObject prefab = ResolveRobotPrefab();
+        if (prefab == null)
+            throw new System.InvalidOperationException(
+                "No robot to validate. The field scene spawns its robot at runtime, so there is none in the " +
+                "editor to test. Select the robot prefab (e.g. Assets/Robots/654V_v1.prefab) in the Project " +
+                "window — or pick the robot on the home screen — then run this again. It spawns the robot into " +
+                "the field and tests it.");
+        ValidateSpawnedPrefab(prefab);
+    }
+
+    // Spawns a robot prefab into the field scene, validates it, and lets ValidateBody's scene-reload
+    // discard the temporary instance — mirroring how the robot reaches the field at runtime.
+    private static void ValidateSpawnedPrefab(GameObject prefab)
+    {
+        if (prefab == null) throw new System.ArgumentNullException(nameof(prefab));
+        if (prefab.GetComponentInChildren<ArticulationBody>(true) == null)
+            throw new System.InvalidOperationException(
+                $"'{prefab.name}' has no ArticulationBody — it isn't a set-up robot. Run Set Up Imported Robot first.");
+
+        // The tests need the field's floor + walls, so validate in the field scene; open it if the
+        // active scene isn't it (the menu already offered to save the current scene).
+        Scene field = SceneManager.GetActiveScene();
+        if (field.path != FieldScenePath)
+            field = EditorSceneManager.OpenScene(FieldScenePath, OpenSceneMode.Single);
+
+        GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, field);
+        if (instance == null)
+            throw new System.InvalidOperationException($"Could not instantiate '{prefab.name}' into the field scene.");
+
+        ArticulationBody root = PlaceForValidation(instance);
+        if (root == null)
+            throw new System.InvalidOperationException($"Spawned '{prefab.name}' has no ArticulationBody to validate.");
+        ValidateBody(root); // reloads FieldScenePath from disk in its finally -> discards `instance`
+    }
+
+    // Places a freshly-instantiated robot over the middle of the field, clear of the walls, and lets
+    // it fall and come to rest so validation runs on a settled robot regardless of its game spawn
+    // point or CAD pivot. Edit-mode transform writes stick because no Physics.Simulate has built the
+    // articulation yet; a physics-based pre-settle then drops it onto the floor without needing to
+    // know the floor height (edit-mode raycasts before the first Simulate are unreliable).
+    private static ArticulationBody PlaceForValidation(GameObject instance)
+    {
+        instance.transform.SetPositionAndRotation(ValidationSpawnPoint, Quaternion.identity);
+        Physics.SyncTransforms();
+
+        if (TryGetFootprint(instance, out Bounds b))
+        {
+            // Center the footprint on the interior point (X/Z), clear of the walls.
+            Vector3 shift = ValidationSpawnPoint - b.center;
+            shift.y = 0f;
+            instance.transform.position += shift;
+            Physics.SyncTransforms();
+        }
+
+        ArticulationBody root = RootBodyOf(instance);
+        float yBefore = root != null ? root.transform.position.y : 0f;
+
+        // Pre-settle: let it fall and rest BEFORE the settle phase measures stability, so that phase
+        // sees an already-settled robot (small delta) instead of the initial drop onto the floor,
+        // which would trip its "fell through / exploded" guard.
+        SimulationMode prev = Physics.simulationMode;
+        Physics.simulationMode = SimulationMode.Script;
+        try { for (int i = 0; i < StepsPerPhase; i++) Physics.Simulate(StepSeconds); }
+        finally { Physics.simulationMode = prev; }
+
+        if (root != null)
+            Debug.Log($"PhysicsSmokeTest pre-settle: root Y {yBefore:F3} -> {root.transform.position.y:F3} " +
+                      $"(dropped {yBefore - root.transform.position.y:F3}).");
+        return root;
     }
 
     // Validates one specific robot, for callers that just built it (Set Up Imported Robot) and
@@ -321,29 +426,100 @@ public class PhysicsSmokeTest
         for (int i = 0; i < steps; i++) Physics.Simulate(StepSeconds);
     }
 
-    private static ArticulationBody FindRiggedRobotRoot()
+    // The robot root already present in the active scene, found via RobotMotorController (the reliable
+    // set-up marker) rather than ArticulationBody.isRoot, which is unreliable before the articulation
+    // is built. Null when the scene has no robot (the usual field-scene case — it spawns at runtime).
+    private static ArticulationBody FindRobotRootInActiveScene()
     {
-        // Unity 6000.5 deprecated the FindObjectsSortMode overload; FindObjectsInactive.Exclude
-        // matches the old SortMode.None behavior (active objects only).
-        foreach (ArticulationBody ab in Object.FindObjectsByType<ArticulationBody>(FindObjectsInactive.Exclude))
+        foreach (RobotMotorController c in Object.FindObjectsByType<RobotMotorController>(FindObjectsInactive.Exclude))
         {
-            if (ab.isRoot && ab.CompareTag("Player")) return ab;
+            ArticulationBody body = c.GetComponent<ArticulationBody>();
+            if (body != null) return body;
         }
-        throw new System.InvalidOperationException(
-            "PhysicsSmokeTest: no root ArticulationBody tagged 'Player' in the scene — run Tools > RoboSim > Robot > Advanced > Rig Motors and Wheel Joints first.");
+        return null;
+    }
+
+    // The robot's root ArticulationBody (RobotMotorController's body, else the topmost body).
+    private static ArticulationBody RootBodyOf(GameObject robot)
+    {
+        RobotMotorController controller = robot.GetComponentInChildren<RobotMotorController>(true);
+        ArticulationBody body = controller != null ? controller.GetComponent<ArticulationBody>() : null;
+        return body != null ? body : robot.GetComponentInChildren<ArticulationBody>(true);
+    }
+
+    // The robot prefab to spawn for validation: the Project selection if it's a set-up robot prefab,
+    // else the catalog's selected model, else the first catalog entry with a prefab.
+    private static GameObject ResolveRobotPrefab()
+    {
+        GameObject selected = Selection.activeObject as GameObject;
+        if (selected != null && PrefabUtility.IsPartOfPrefabAsset(selected) &&
+            selected.GetComponentInChildren<ArticulationBody>(true) != null)
+            return selected;
+
+        RobotModelCatalog catalog = LoadCatalog();
+        if (catalog == null) return null;
+        if (catalog.SelectedModel != null && catalog.SelectedModel.prefab != null)
+            return catalog.SelectedModel.prefab;
+        if (catalog.models != null)
+            foreach (RobotModelCatalog.Entry entry in catalog.models)
+                if (entry != null && entry.prefab != null) return entry.prefab;
+        return null;
+    }
+
+    private static RobotModelCatalog LoadCatalog()
+    {
+        foreach (string guid in AssetDatabase.FindAssets("t:RobotModelCatalog"))
+            return AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(AssetDatabase.GUIDToAssetPath(guid));
+        return null;
+    }
+
+    // Combined world-space collision footprint (non-trigger colliders), for centering the robot in
+    // the field before validation. Mirrors RobotSpawner.TryGetWorldFootprint.
+    private static bool TryGetFootprint(GameObject robot, out Bounds bounds)
+    {
+        bounds = new Bounds();
+        bool has = false;
+        foreach (Collider c in robot.GetComponentsInChildren<Collider>())
+        {
+            if (c.isTrigger) continue;
+            if (!has) { bounds = c.bounds; has = true; }
+            else bounds.Encapsulate(c.bounds);
+        }
+        return has;
     }
 
     // All revolute links under the root, split by side (link names carry LS/RS; fall back to
     // the sign of their root-local X, where +X is robot right).
     private static ArticulationBody[] FindWheels(ArticulationBody root, out ArticulationBody[] left, out ArticulationBody[] right)
     {
+        // Prefer the DRIVE wheels the rig recorded on RobotMotorController. Driving only these keeps
+        // the robot's other revolute joints (rollers, arms, coupled followers) out of the drive/turn
+        // tests — otherwise every revolute reads as a wheel and the mechanisms get flailed, which
+        // muddies the result for a robot that has any mechanism (like the 654V).
+        RobotMotorController controller = root.GetComponentInChildren<RobotMotorController>(true);
+        if (controller != null)
+        {
+            List<ArticulationBody> l = NonNull(controller.leftWheels);
+            List<ArticulationBody> r = NonNull(controller.rightWheels);
+            if (l.Count + r.Count > 0)
+            {
+                left = l.ToArray();
+                right = r.ToArray();
+                var driveWheels = new List<ArticulationBody>(l);
+                driveWheels.AddRange(r);
+                return driveWheels.ToArray();
+            }
+        }
+
+        // Fallback for a hand-rigged robot with no controller wheel lists: every non-root revolute is
+        // a wheel, split by side from the LS/RS name token or the sign of its root-local X. (root skip
+        // is by identity — isRoot is unreliable before the articulation builds.)
         List<ArticulationBody> all = new List<ArticulationBody>();
         List<ArticulationBody> leftList = new List<ArticulationBody>();
         List<ArticulationBody> rightList = new List<ArticulationBody>();
-
         foreach (ArticulationBody ab in root.GetComponentsInChildren<ArticulationBody>())
         {
-            if (ab.isRoot || ab.jointType != ArticulationJointType.RevoluteJoint) continue;
+            if (ab == root || ab.jointType != ArticulationJointType.RevoluteJoint) continue;
             all.Add(ab);
 
             bool isLeft = ab.name.Contains("LS") ||
@@ -358,6 +534,15 @@ public class PhysicsSmokeTest
         left = leftList.ToArray();
         right = rightList.ToArray();
         return all.ToArray();
+    }
+
+    private static List<ArticulationBody> NonNull(ArticulationBody[] arr)
+    {
+        var list = new List<ArticulationBody>();
+        if (arr != null)
+            foreach (ArticulationBody a in arr)
+                if (a != null) list.Add(a);
+        return list;
     }
 
     // jointPosition is in reduced coordinates: RADIANS for revolute joints (drives use degrees).

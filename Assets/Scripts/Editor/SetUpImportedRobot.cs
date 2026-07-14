@@ -15,11 +15,10 @@ using Unity.Robotics.UrdfImporter;
 //
 //   Mesh robot (a plain FBX drag-and-drop, like the 360 RPM Drivetrain)
 //     -> Rebuild Part Colliders: tight box per structural part, sphere per wheel cluster.
-//     -> Rig Motors and Wheel Joints: ArticulationBody root + one revolute wheel link per
+//     -> Rig Drivetrain: ArticulationBody root + one revolute wheel link per
 //        wheel, driven by RobotMotorController.
 //
-// Both paths end with the robot drivable by the on-screen joysticks. Nothing here touches the
-// old velocity-drive tools under Legacy/.
+// Both paths end with the robot drivable by the on-screen joysticks.
 //
 // Usage: drop the robot in the scene, select its root, then
 // Tools > RoboSim > Robot > Set Up Imported Robot.

@@ -4,9 +4,12 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // The home screen's "Configure Controller" sub-screen: a tappable controller diagram where the
-// player assigns each button to one of the selected robot's mechanisms — motor forward, motor
-// reverse, or pneumatic toggle. Assignments persist per robot via ControllerMapSettings
-// (PlayerPrefs JSON keyed by the catalog id); ButtonRouter reads the same map in the field scene.
+// player assigns each button to one or more of the selected robot's mechanism functions — motor
+// forward, motor reverse, or pneumatic toggle. The assignment popup is a multi-toggle: tapping a
+// function adds/removes it (a ✓ marks the ones on this button) and stays open, so one button can
+// drive several mechanisms — e.g. a mirrored DR4B's two sides, one reversed. Assignments persist
+// per robot via ControllerMapSettings (PlayerPrefs JSON keyed by the catalog id); ButtonRouter
+// reads the same map in the field scene and sums every assignment per motor.
 //
 // The mechanism list comes from the catalog entry's metadata (written by the URDF
 // post-processor), so no field-scene loading is needed here. Robots without mechanisms — like
@@ -58,7 +61,14 @@ public class ControllerConfigScreen : MonoBehaviour
             if (buttons[i] != null) buttons[i].onClick.AddListener(() => OnDiagramButtonPressed(index));
         }
         if (clearButton != null) clearButton.onClick.AddListener(OnClearPressed);
-        if (cancelButton != null) cancelButton.onClick.AddListener(CloseAssignmentPopup);
+        if (cancelButton != null)
+        {
+            cancelButton.onClick.AddListener(CloseAssignmentPopup);
+            // Every toggle saves immediately now, so this button just closes the popup — relabel
+            // it "Done" (the built prefab says "Cancel", which reads as "discard my changes").
+            TMP_Text cancelText = cancelButton.GetComponentInChildren<TMP_Text>(true);
+            if (cancelText != null) cancelText.text = "Done";
+        }
     }
 
     // Called by HomeScreenController when the player opens the config screen. Reads the
@@ -103,58 +113,69 @@ public class ControllerConfigScreen : MonoBehaviour
         if (assignmentPanel == null || assignmentRowTemplate == null || assignmentListParent == null) return;
         pendingButtonIndex = index;
         if (assignmentHeader != null) assignmentHeader.text = $"Assign {(ControllerButton)index}";
+        PopulateAssignmentRows();
+        assignmentPanel.SetActive(true);
+    }
 
+    // Rebuilds one toggle row per mechanism function for the pending button. Called on open and
+    // after every toggle/clear so the ✓ marks stay in sync; the popup stays open across taps.
+    private void PopulateAssignmentRows()
+    {
         foreach (GameObject row in spawnedRows) Destroy(row);
         spawnedRows.Clear();
+        if (pendingButtonIndex < 0) return;
+        ControllerButton button = (ControllerButton)pendingButtonIndex;
 
         foreach (RobotModelCatalog.MechanismInfo mechanism in mechanisms)
         {
             if (mechanism == null || string.IsNullOrEmpty(mechanism.id)) continue;
             if (mechanism.type == RobotMechanisms.TypePneumatic)
             {
-                AddAssignmentRow($"{mechanism.displayName} — Toggle", mechanism.id, ControllerMapSettings.ModeToggle);
+                AddAssignmentRow(button, $"{mechanism.displayName} — Toggle", mechanism.id, ControllerMapSettings.ModeToggle);
             }
             else
             {
-                AddAssignmentRow($"{mechanism.displayName} — Forward", mechanism.id, ControllerMapSettings.ModeForward);
-                AddAssignmentRow($"{mechanism.displayName} — Reverse", mechanism.id, ControllerMapSettings.ModeReverse);
+                AddAssignmentRow(button, $"{mechanism.displayName} — Forward", mechanism.id, ControllerMapSettings.ModeForward);
+                AddAssignmentRow(button, $"{mechanism.displayName} — Reverse", mechanism.id, ControllerMapSettings.ModeReverse);
             }
         }
-
-        assignmentPanel.SetActive(true);
     }
 
-    private void AddAssignmentRow(string label, string mechanismId, string mode)
+    private void AddAssignmentRow(ControllerButton button, string label, string mechanismId, string mode)
     {
+        bool assigned = ControllerMapSettings.HasAssignment(map, button, mechanismId, mode);
         Button row = Instantiate(assignmentRowTemplate, assignmentListParent);
         row.name = "Row_" + mechanismId + "_" + mode;
         row.gameObject.SetActive(true); // template itself stays inactive
         TMP_Text text = row.GetComponentInChildren<TMP_Text>(true);
-        if (text != null) text.text = label;
-        row.onClick.AddListener(() => OnAssignmentRowPressed(mechanismId, mode));
+        // Fixed-width prefix so checked/unchecked rows stay left-aligned.
+        if (text != null) text.text = (assigned ? "✓ " : "    ") + label;
+        row.onClick.AddListener(() => OnAssignmentRowToggled(mechanismId, mode));
         spawnedRows.Add(row.gameObject);
     }
 
-    private void OnAssignmentRowPressed(string mechanismId, string mode)
+    // Adds the function if the button doesn't have it, removes it if it does — so several
+    // functions can be stacked on one button. Saves and re-renders in place (popup stays open).
+    private void OnAssignmentRowToggled(string mechanismId, string mode)
     {
-        if (pendingButtonIndex >= 0)
-        {
-            ControllerMapSettings.SetAssignment(map, (ControllerButton)pendingButtonIndex, mechanismId, mode);
-            ControllerMapSettings.Save(robotId, map);
-            RefreshButton(pendingButtonIndex);
-        }
-        CloseAssignmentPopup();
+        if (pendingButtonIndex < 0) return;
+        ControllerButton button = (ControllerButton)pendingButtonIndex;
+        if (ControllerMapSettings.HasAssignment(map, button, mechanismId, mode))
+            ControllerMapSettings.RemoveAssignment(map, button, mechanismId, mode);
+        else
+            ControllerMapSettings.AddAssignment(map, button, mechanismId, mode);
+        ControllerMapSettings.Save(robotId, map);
+        RefreshButton(pendingButtonIndex);
+        PopulateAssignmentRows();
     }
 
     private void OnClearPressed()
     {
-        if (pendingButtonIndex >= 0)
-        {
-            ControllerMapSettings.ClearAssignment(map, (ControllerButton)pendingButtonIndex);
-            ControllerMapSettings.Save(robotId, map);
-            RefreshButton(pendingButtonIndex);
-        }
-        CloseAssignmentPopup();
+        if (pendingButtonIndex < 0) return;
+        ControllerMapSettings.ClearAssignment(map, (ControllerButton)pendingButtonIndex);
+        ControllerMapSettings.Save(robotId, map);
+        RefreshButton(pendingButtonIndex);
+        PopulateAssignmentRows(); // reflect the cleared state; keep the popup open
     }
 
     private void CloseAssignmentPopup()
@@ -170,25 +191,36 @@ public class ControllerConfigScreen : MonoBehaviour
         for (int i = 0; i < ControllerMapSettings.ButtonCount; i++) RefreshButton(i);
     }
 
-    // Assigned buttons show "<Mechanism> FWD/REV/TOG" under the button and tint accent.
+    // Assigned buttons show "<Mechanism> FWD/REV/TOG" under the button and tint accent. When a
+    // button drives several mechanisms it shows the first plus a "+N" count (e.g. "DR4B REV +1").
     private void RefreshButton(int index)
     {
-        ButtonAssignment assignment = ControllerMapSettings.Find(map, (ControllerButton)index);
-        RobotModelCatalog.MechanismInfo mechanism =
-            assignment != null ? FindMechanism(assignment.mechanismId) : null;
+        List<ButtonAssignment> assignments = ControllerMapSettings.FindAll(map, (ControllerButton)index);
+
+        ButtonAssignment first = null;
+        RobotModelCatalog.MechanismInfo firstMechanism = null;
+        int shown = 0;
+        foreach (ButtonAssignment assignment in assignments)
+        {
+            RobotModelCatalog.MechanismInfo mechanism = FindMechanism(assignment.mechanismId);
+            if (mechanism == null) continue; // stale (mechanism gone); PruneStaleAssignments clears it
+            if (first == null) { first = assignment; firstMechanism = mechanism; }
+            shown++;
+        }
 
         string caption = string.Empty;
-        if (mechanism != null)
+        if (firstMechanism != null)
         {
-            string suffix = assignment.mode == ControllerMapSettings.ModeReverse ? "REV"
-                : assignment.mode == ControllerMapSettings.ModeToggle ? "TOG" : "FWD";
-            caption = $"{mechanism.displayName} {suffix}";
+            string suffix = first.mode == ControllerMapSettings.ModeReverse ? "REV"
+                : first.mode == ControllerMapSettings.ModeToggle ? "TOG" : "FWD";
+            caption = $"{firstMechanism.displayName} {suffix}";
+            if (shown > 1) caption += $" +{shown - 1}";
         }
 
         if (index < assignmentLabels.Length && assignmentLabels[index] != null)
             assignmentLabels[index].text = caption;
         if (index < buttons.Length && buttons[index] != null && buttons[index].image != null)
-            buttons[index].image.color = mechanism != null ? assignedTint : unassignedTint;
+            buttons[index].image.color = firstMechanism != null ? assignedTint : unassignedTint;
     }
 
     private RobotModelCatalog.MechanismInfo FindMechanism(string id)
