@@ -21,6 +21,7 @@ public static class AddIntakeTool
     private const string UndoName = "Add Pull-Force Intake";
     private const string MouthName = "IntakeMouth";
     private const string HoldName = "IntakeHoldPoint";
+    private const string SlotPrefix = "IntakeSlot";
 
     [MenuItem("Tools/RoboSim/Robot/Mechanisms/Add Intake (Pull-Force)", false, 20)]
     private static void AddIntake()
@@ -115,24 +116,64 @@ public static class AddIntakeTool
         pull.intakeMotor = motor;
         pull.holdPoint = holdGo.transform;
 
+        // --- Stack slot anchors (draggable per-slot positions/orientations) -----------------------
+        // Slot 0 IS the hold point; slots 1..n-1 are child-of-chassis points seeded along the stack axis
+        // that you can drag or rotate to author an angled/flat stack for this model. Re-runnable: existing
+        // IntakeSlot points are kept where you left them (only reparented to the chassis if they'd spin).
+        int slots = Mathf.Max(1, pull.maxHeld);
+        Vector3 dir = pull.stackAxis.sqrMagnitude > 1e-6f ? pull.stackAxis.normalized : Vector3.up;
+        Transform[] anchors = new Transform[slots];
+        anchors[0] = holdGo.transform;
+        for (int i = 1; i < slots; i++)
+        {
+            string slotName = SlotPrefix + i;
+            Transform st = FindDescendant(chassis, slotName);
+            GameObject sgo;
+            if (st == null)
+            {
+                sgo = new GameObject(slotName);
+                Undo.RegisterCreatedObjectUndo(sgo, UndoName);
+                sgo.transform.SetParent(chassis, true);
+                sgo.transform.SetPositionAndRotation(
+                    holdGo.transform.position + holdGo.transform.rotation * (dir * (i * pull.slotSpacing)),
+                    holdGo.transform.rotation);
+            }
+            else
+            {
+                sgo = st.gameObject;
+                Undo.RegisterFullObjectHierarchyUndo(sgo, UndoName);
+                if (sgo.transform.parent != chassis) Undo.SetTransformParent(sgo.transform, chassis, UndoName);
+            }
+            anchors[i] = sgo.transform;
+        }
+        pull.slotAnchors = anchors;
+
         Undo.CollapseUndoOperations(group);
         EditorUtility.SetDirty(mouth);
         EditorSceneManager.MarkSceneDirty(link.scene);
         Selection.activeGameObject = mouth;
 
+        string slotBlurb = slots > 1
+            ? $"• IntakeSlot1…{slots - 1} — the rest of the stack. Drag AND rotate each to lay out this " +
+              "model's stack (flat, angled, offset) — a piece takes on its slot's angle.\n"
+            : "";
+
         EditorUtility.DisplayDialog(UndoName,
             $"Added a pull-force intake, anchored to the chassis '{chassis.name}' so it no longer spins " +
-            "with the roller. Two objects (both on the chassis now):\n\n" +
+            "with the roller. Objects (all on the chassis now):\n\n" +
             "• IntakeMouth — the grab zone. Shrink it onto the intake opening.\n" +
-            "• IntakeHoldPoint — where pieces end up. Drag it up inside the bot.\n\n" +
+            "• IntakeHoldPoint — the first stack slot. Drag it inside the bot.\n" +
+            slotBlurb + "\n" +
             "IMPORTANT: the field scene spawns the robot PREFAB at Play, not this scene object. After you " +
-            "position the mouth and hold point, APPLY THE CHANGES TO THE PREFAB (Overrides > Apply All, or " +
-            "edit in Prefab Mode) — otherwise the hold point you dragged won't be the one that spawns.\n\n" +
-            "Play, drive into a cup/pin, HOLD intake: a bright marker shows the hold point (and stack " +
-            "slots), the piece is grabbed, glides through the frame to the hold point, and stays there " +
-            "(momentary — frees on release). Reverse spits it out.\n\n" +
-            "Wrong button grabs → Reverse Direction. Stay held while driving → Keep Held When Idle. " +
-            "Comes in too fast → lower Glide Speed. Hide the markers → Show Runtime Markers off.",
+            "position the mouth, hold point, and slots, APPLY THE CHANGES TO THE PREFAB (Overrides > Apply " +
+            "All, or edit in Prefab Mode) — otherwise what you dragged won't be what spawns.\n\n" +
+            "Play, drive into a cup/pin, HOLD intake: bright markers show the slots, the piece is grabbed, " +
+            "glides through the frame to its slot, and stays there (momentary — frees on release). Reverse " +
+            "plays it back out the mouth.\n\n" +
+            "Wrong button grabs → Reverse Direction. Stay held while driving → Keep Held When Idle. Comes " +
+            "in too fast → lower Glide Speed. Sticks in the rollers on eject → raise Eject Clearance. One " +
+            "piece type comes in lying flat → give that type a rotation in Piece Orientations (Cup/Pin rows). " +
+            "Hide the markers → Show Runtime Markers off.",
             "OK");
     }
 
