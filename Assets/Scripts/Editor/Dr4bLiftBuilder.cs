@@ -386,11 +386,17 @@ public static class Dr4bLiftSetup
             group = Undo.GetCurrentGroup();
         }
 
-        // Clean any previous lift so re-runs don't stack.
-        UrdfPostProcessor.RemoveMechanism(registry, "lift", useUndo);
-        MechanismBuildUtil.ClearMechanismBindings(registry.robotId, "lift");
-        UrdfPostProcessor.RemoveMechanism(registry, "liftmotor", useUndo);
-        MechanismBuildUtil.ClearMechanismBindings(registry.robotId, "liftmotor");
+        // FULL clean first — not just the lift mechanism ids. Re-running with a CHANGED role
+        // assignment used to orphan parts: anything removed from a slot between runs kept its
+        // follower and stayed neutralized (colliders off, body gone) until a manual Clean. Clean
+        // restores every previously-wired part to a plain mesh; the wiring below then rebuilds
+        // exactly what's in the slots now, so Build is safely re-runnable on its own.
+        // Clean also wipes the lift's button bindings — when auto-assign is OFF ("kept" behavior),
+        // snapshot them and put them back.
+        List<ButtonAssignment> keptBindings = o.autoAssignButtons
+            ? null : SnapshotBindings(registry.robotId, UrdfPostProcessor.Slugify(HubName));
+        Clean(registry, useUndo, refreshCatalog: false);
+        if (keptBindings != null) RestoreBindings(registry.robotId, keptBindings);
 
         // 1) Hidden drive hub = the ONE real revolute motor. Hold-to-run to the joint limit (= full lift),
         //    at a speed set by the raise time (sweep degrees / (6 * seconds) = RPM).
@@ -477,7 +483,8 @@ public static class Dr4bLiftSetup
     // (old + current), the hidden motor + carriage, the controller, and the lift mechanisms/bindings.
     // On each lift part it re-enables colliders and removes the lift ArticulationBody/MotorActuator so
     // the part is a plain mesh again. Wheels, the intake, other mechanisms, and the chassis root are kept.
-    public static string Clean(RobotMechanisms registry, bool useUndo)
+    // refreshCatalog=false is for the Build-internal call, which refreshes + saves at the end anyway.
+    public static string Clean(RobotMechanisms registry, bool useUndo, bool refreshCatalog = true)
     {
         if (registry == null) throw new InvalidOperationException("No robot (RobotMechanisms) found from the selection.");
         GameObject robot = registry.gameObject;
@@ -533,8 +540,11 @@ public static class Dr4bLiftSetup
         helpers += DestroyNamedChild(chassis, HubName, useUndo);
         helpers += DestroyNamedChild(chassis, "Dr4bCarriage", useUndo);
 
-        UrdfPostProcessor.RefreshCatalogMechanisms(registry.robotId, robot.name, registry);
-        AssetDatabase.SaveAssets();   // flush the catalog so the removed lift disappears from Configure Controller
+        if (refreshCatalog)
+        {
+            UrdfPostProcessor.RefreshCatalogMechanisms(registry.robotId, robot.name, registry);
+            AssetDatabase.SaveAssets();   // flush the catalog so the removed lift disappears from Configure Controller
+        }
         if (useUndo) Undo.CollapseUndoOperations(group);
         EditorUtility.SetDirty(registry);
         if (robot.scene.IsValid()) EditorSceneManager.MarkSceneDirty(robot.scene);
@@ -725,6 +735,25 @@ public static class Dr4bLiftSetup
             foreach (Transform a in pull.slotAnchors)
                 if (a != null && a != pull.holdPoint) MechanismBuildUtil.EnsureChildOf(a, carriage.transform, useUndo);
         return "hold point + slots ride the Dr4bCarriage";
+    }
+
+    // The hub's button bindings, so a Build with auto-assign OFF can carry them across the
+    // internal Clean (which wipes every lift binding). PlayerPrefs-backed, so order vs. the
+    // scene edits doesn't matter.
+    private static List<ButtonAssignment> SnapshotBindings(string robotId, string mechanismId)
+    {
+        ButtonMap map = ControllerMapSettings.Load(robotId);
+        return map.assignments.FindAll(a => a != null && a.mechanismId == mechanismId);
+    }
+
+    private static void RestoreBindings(string robotId, List<ButtonAssignment> kept)
+    {
+        if (kept == null || kept.Count == 0) return;
+        ButtonMap map = ControllerMapSettings.Load(robotId);
+        foreach (ButtonAssignment a in kept)
+            if (Enum.TryParse(a.button, out ControllerButton button))
+                ControllerMapSettings.AddAssignment(map, button, a.mechanismId, a.mode);
+        ControllerMapSettings.Save(robotId, map);
     }
 
     private static RobotMechanisms ResolveRegistry(Options o)
