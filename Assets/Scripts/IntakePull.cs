@@ -448,6 +448,10 @@ public class IntakePull : MonoBehaviour
         if (slot < 0) return;
         inMouth.Remove(rb);
 
+        // Descoring: a piece seated on a goal by GoalStackMagnet must leave the goal's stack the
+        // moment the intake takes it, or the magnet would keep counting (and re-slotting) it.
+        GoalStackMagnet.ReleaseIfSeated(rb);
+
         // Read the center of mass BEFORE ghosting — disabling colliders makes PhysX recompute the COM to
         // the pivot, which for these off-pivot field pieces would throw the offset away.
         Vector3 localCom = rb.centerOfMass;
@@ -587,13 +591,7 @@ public class IntakePull : MonoBehaviour
             c.enabled = enabled;
     }
 
-    // Project convention for identifying pieces (cups/pins). A dedicated GamePiece marker/layer is the
-    // clean upgrade (claws/scoring will want one); this one method is the swap point.
-    private static bool IsPiece(GameObject go)
-    {
-        string n = go.name;
-        return n.StartsWith("Cup") || n.StartsWith("Pin");
-    }
+    private static bool IsPiece(GameObject go) => GamePiece.IsPiece(go);
 
     // ---------------------------------------------------------------------------------------------
     // Stability: keep the hold point (and mouth) off any spinning/moving link.
