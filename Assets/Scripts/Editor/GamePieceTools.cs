@@ -369,8 +369,7 @@ public static class TunePiecePhysics
         return true;
     }
 
-    // Cup bodies are named "Cup*", pin bodies "Pin*". Robot/rollers don't match, so they're skipped.
-    private static bool IsPiece(string n) => n.StartsWith("Cup") || n.StartsWith("Pin");
+    private static bool IsPiece(string n) => GamePiece.IsPiece(n);
 
     private static void ApplyToBody(Rigidbody body, PhysicsMaterial mat, bool recordUndo)
     {

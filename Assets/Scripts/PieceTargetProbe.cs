@@ -131,12 +131,7 @@ public class PieceTargetProbe : MonoBehaviour
         return best;
     }
 
-    // Same convention as IntakePull.IsPiece (there is no GamePiece tag/layer yet).
-    private static bool IsPiece(GameObject go)
-    {
-        string n = go.name;
-        return n.StartsWith("Cup") || n.StartsWith("Pin");
-    }
+    private static bool IsPiece(GameObject go) => GamePiece.IsPiece(go);
 
     private static void SetColliders(Rigidbody rb, bool enabled)
     {
