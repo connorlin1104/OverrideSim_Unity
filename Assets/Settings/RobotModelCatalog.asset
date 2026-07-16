@@ -24,3 +24,6 @@ MonoBehaviour:
     - id: spinningpart
       displayName: SpinningPart
       type: motor
+    - id: liftmotor
+      displayName: Lift
+      type: motor

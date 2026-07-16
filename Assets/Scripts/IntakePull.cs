@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.Rendering;
 
 // Kinematic-glide intake with a capacity cap and lock-to-bot storage.
@@ -62,6 +63,14 @@ public class IntakePull : MonoBehaviour
 
     [Tooltip("The intake's motor. Its CurrentInput drives the intake: forward = grab/pull in, reverse = eject. Auto-found on this object's parents if empty.")]
     public MotorActuator intakeMotor;
+
+    [Header("Lift interlock & scoring")]
+    [Tooltip("The DR4B lift (optional). While it's RAISED, intaking is disabled (a grabbed piece would just float up); the Score button only drops while it's raised. Wired by Build DR4B Lift.")]
+    public Dr4bLift lift;
+    [Tooltip("Lift progress (0..1) above which the lift counts as 'raised' for the interlock.")]
+    [Range(0f, 1f)] public float liftRaisedThreshold = 0.15f;
+    [Tooltip("Button that DROPS the held stack to SCORE (only while the lift is raised). Set by Build DR4B Lift.")]
+    public InputActionReference scoreAction;
 
     [Tooltip("Where captured pieces glide to and stack. The Add Intake tool creates an IntakeHoldPoint you can drag; if empty it falls back to this object's position.")]
     public Transform holdPoint;
@@ -253,8 +262,20 @@ public class IntakePull : MonoBehaviour
         if (showRuntimeMarkers) BuildMarkers();
     }
 
+    void OnEnable()
+    {
+        if (scoreAction != null && scoreAction.action != null)
+        {
+            scoreAction.action.performed += OnScorePerformed;
+            scoreAction.action.Enable();
+        }
+    }
+
     void OnDisable()
     {
+        if (scoreAction != null && scoreAction.action != null)
+            scoreAction.action.performed -= OnScorePerformed;
+
         // Never leave a piece kinematic/ghosted if this component switches off or unloads — solidify held
         // pieces and un-ghost any still-flying ejected ones.
         heldScratch.Clear();
@@ -295,6 +316,9 @@ public class IntakePull : MonoBehaviour
         if (reverseDirection) input = -input;
         bool intaking = input > inputThreshold;
         bool ejecting = input < -inputThreshold;
+
+        // Lift interlock: no sucking while the DR4B is raised (a grabbed piece would just float up to it).
+        if (lift != null && lift.Progress > liftRaisedThreshold) intaking = false;
 
         if (ejecting)
         {
@@ -466,6 +490,19 @@ public class IntakePull : MonoBehaviour
         foreach (Held h in heldScratch) Release(h);
     }
 
+    // SCORE: drop the held stack straight down (release to gravity) so it falls onto the goal from up top.
+    // Unlike eject, there's no outward launch back at the mouth. Only works while the lift is RAISED — with
+    // the lift down there's nothing to score onto (and it would just dump at the intake). Bound to the score button.
+    public void ScoreDrop()
+    {
+        if (lift != null && lift.Progress <= liftRaisedThreshold) return;
+        if (held.Count == 0) return;
+        ReleaseAll();
+        if (logEvents) Debug.Log("IntakePull: scored — dropped the held stack.", this);
+    }
+
+    private void OnScorePerformed(InputAction.CallbackContext ctx) => ScoreDrop();
+
     // Reverse-eject, one physics step: carry every committed-leaving piece OUT through the mouth (staggered
     // by slot so they don't pile), staying ghosted so they pass through the rollers; once a piece is clear
     // (ejectClearance past the mouth) it turns solid and gets shoved out. Called every FixedUpdate, so an
@@ -606,6 +643,15 @@ public class IntakePull : MonoBehaviour
     {
         reason = null;
         if (t == null || chassis == null || t == chassis) return false;
+
+        // The lift's end-effector (tray) is a moving link the anchors are DELIBERATELY parented to, so
+        // the held stack rides up as the lift raises. If ANY ancestor up to the chassis is a
+        // LiftCarriage-marked link, the anchor is meant to ride the lift subtree — never reanchor it,
+        // even across the intermediate moving links (the DR4B driver/follower bars) between the anchor
+        // and that carriage.
+        for (Transform p = t.parent; p != null && p != chassis; p = p.parent)
+            if (p.GetComponent<LiftCarriage>() != null) return false;
+
         for (Transform p = t.parent; p != null; p = p.parent)
         {
             if (p == chassis) return false;                                  // reached the rigid base cleanly
