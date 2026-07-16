@@ -66,6 +66,18 @@ public class MotorActuator : MonoBehaviour
             : maxRpm * Mathf.PI * 2f / 60f * 1.1f;
     }
 
+    // Live-set the free-spin speed (RPM, revolute) and re-apply the joint's velocity cap so a FASTER
+    // speed can actually be reached (maxJointVelocity is otherwise only baked in Awake). Safe to call at
+    // runtime — e.g. Dr4bLift's editable raise-time knob re-derives RPM from seconds and calls this so the
+    // lift speed can be tuned live without a rebuild. No-op for prismatic joints (they use maxLinearSpeed).
+    public void SetMaxRpm(float rpm)
+    {
+        maxRpm = Mathf.Max(0f, rpm);
+        if (body == null) body = GetComponent<ArticulationBody>();
+        if (body != null && !IsPrismatic)
+            body.maxJointVelocity = maxRpm * Mathf.PI * 2f / 60f * 1.1f;
+    }
+
     // input in [-1, 1]: +1 full forward, -1 full reverse, 0 brake (velocity target 0 with
     // damping > 0 actively resists motion, like a motor holding against backdrive).
     public void SetInput(float input)

@@ -65,7 +65,7 @@ public class IntakePull : MonoBehaviour
     public MotorActuator intakeMotor;
 
     [Header("Lift interlock & scoring")]
-    [Tooltip("The DR4B lift (optional). While it's RAISED, intaking is disabled (a grabbed piece would just float up); the Score button only drops while it's raised. Wired by Build DR4B Lift.")]
+    [Tooltip("The DR4B lift (optional). While it's RAISED, BOTH intake and outtake are disabled (a grabbed piece would just float up, and the stack leaves via Score, not the mouth); the Score button only drops while it's raised. Wired by Build DR4B Lift.")]
     public Dr4bLift lift;
     [Tooltip("Lift progress (0..1) above which the lift counts as 'raised' for the interlock.")]
     [Range(0f, 1f)] public float liftRaisedThreshold = 0.15f;
@@ -317,8 +317,10 @@ public class IntakePull : MonoBehaviour
         bool intaking = input > inputThreshold;
         bool ejecting = input < -inputThreshold;
 
-        // Lift interlock: no sucking while the DR4B is raised (a grabbed piece would just float up to it).
-        if (lift != null && lift.Progress > liftRaisedThreshold) intaking = false;
+        // Lift interlock: while the DR4B is RAISED, disable BOTH intake and outtake — a grabbed piece would
+        // just float up, and the stack is meant to leave via the Score button (drops it onto the goal), not
+        // get spat back out the mouth. (Score is gated the other way: it only fires while raised.)
+        if (lift != null && lift.Progress > liftRaisedThreshold) { intaking = false; ejecting = false; }
 
         if (ejecting)
         {

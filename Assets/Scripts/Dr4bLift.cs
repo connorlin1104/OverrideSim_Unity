@@ -23,6 +23,14 @@ public class Dr4bLift : MonoBehaviour
     [Tooltip("The rigid robot base the linkage is posed relative to. Auto-resolved to the topmost ArticulationBody ancestor.")]
     public Transform chassis;
 
+    [Header("Lift speed")]
+    [Tooltip("Seconds to raise the lift fully while holding the UP button. Lower = faster. EDITABLE LIVE — " +
+             "changing it here (even at Play, on this component) re-derives the hidden motor's speed and takes " +
+             "effect immediately, no rebuild. It drives the motor RPM from the sweep, so it stays right if the sweep changes.")]
+    // Default 2s = 654V's tuned raise time, so a prefab built before this field existed keeps its speed
+    // (it deserializes to this default). The builder overwrites it with the window's value on every Build.
+    public float liftRaiseSeconds = 2f;
+
     [Header("Movement (two additive stages)")]
     // Internal: the driver's travel used to normalize the 0->1 progress. Set by the builder to a fixed
     // value; the user tunes the arm angles + rise instead, so this is hidden from the Inspector.
@@ -59,11 +67,14 @@ public class Dr4bLift : MonoBehaviour
 
     private float restRad;
     private int lastFrame = -1;
+    private MotorActuator driverMotor;
+    private float lastAppliedRaiseSeconds = float.NaN;   // so the first LateUpdate always re-syncs the speed
 
     void Awake()
     {
         if (chassis == null) chassis = ResolveChassis();
         restRad = DriverRad();
+        ApplyLiftSpeed();
         if (autoLateralAxis && chassis != null)
         {
             Vector3 lat = DrivetrainLateralWorld();
@@ -80,6 +91,21 @@ public class Dr4bLift : MonoBehaviour
         if (driver == null) return 0f;
         ArticulationReducedSpace p = driver.jointPosition;
         return p.dofCount > 0 ? p[0] : 0f;   // radians
+    }
+
+    // Re-derive the hidden motor's free-spin RPM from liftRaiseSeconds + the sweep and push it onto the
+    // driver's MotorActuator (which also re-caps the joint velocity so a faster time isn't throttled).
+    // Called at startup and whenever the seconds field changes, so the raise speed is tunable live on
+    // this component — no rebuild. The driver runs at maxRpm*6 deg/s, so a full sweep takes
+    // sweepDeg/(maxRpm*6) s -> maxRpm = sweepDeg/(6*s).
+    private void ApplyLiftSpeed()
+    {
+        if (driver == null) return;
+        if (driverMotor == null) driverMotor = driver.GetComponent<MotorActuator>();
+        if (driverMotor == null) return;
+        float sec = Mathf.Max(0.05f, liftRaiseSeconds);
+        driverMotor.SetMaxRpm(Mathf.Abs(sweepDeg) / (6f * sec));
+        lastAppliedRaiseSeconds = liftRaiseSeconds;
     }
 
     private void Recompute()
@@ -101,6 +127,7 @@ public class Dr4bLift : MonoBehaviour
 
     void LateUpdate()
     {
+        if (liftRaiseSeconds != lastAppliedRaiseSeconds) ApplyLiftSpeed();   // live-tunable, no rebuild
         if (chassis == null || driver == null) return;
         Recompute();
         foreach (Dr4bMoveFollower t in translators) if (t != null) t.Apply(this);   // sprockets/channels/tray FIRST

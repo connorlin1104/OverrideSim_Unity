@@ -27,19 +27,20 @@ public class Dr4bLiftBuilderWindow : EditorWindow
     [SerializeField] private List<GameObject> firstArms = new List<GameObject>();
     [SerializeField] private List<GameObject> secondArms = new List<GameObject>();
 
-    // Tuning.
-    [SerializeField] private float stage1Rise = 12f;
-    [SerializeField] private float stage1Forward = 4f;
-    [SerializeField] private float stage2Rise = 8f;
-    [SerializeField] private float stage2Forward = 4f;
-    [SerializeField] private float firstStageAngle = -40f;
-    [SerializeField] private float secondStageAngle = 40f;
+    // Tuning. Defaults are 654V's current TUNED, working values, so a rebuild reproduces the dialed-in lift.
+    [SerializeField] private float stage1Rise = 3f;
+    [SerializeField] private float stage1Forward = -0.1f;
+    [SerializeField] private float stage2Rise = 3.3f;
+    [SerializeField] private float stage2Forward = -1.5f;
+    [SerializeField] private float firstStageAngle = -90f;
+    [SerializeField] private float secondStageAngle = 90f;
     [SerializeField] private bool reverseDriver = false;
     [SerializeField] private bool autoLateralAxis = true;
+    [SerializeField] private bool arms4Bar = true;
     [SerializeField] private float holdFriction = 8f;
-    [SerializeField] private float liftRaiseSeconds = 1.0f;
+    [SerializeField] private float liftRaiseSeconds = 2.0f;
     [SerializeField] private bool autoAssignButtons = true;
-    [SerializeField] private string liftDisplayName = "Lift";
+    [SerializeField] private string liftDisplayName = "DR4B Lift";
 
     [SerializeField] private Vector2 scroll;
 
@@ -112,8 +113,9 @@ public class Dr4bLiftBuilderWindow : EditorWindow
         stage2Forward = EditorGUILayout.FloatField(new GUIContent("  Forward", "Extra forward reach for the second stage. Signed — negative pulls it back."), stage2Forward);
         reverseDriver = EditorGUILayout.Toggle(new GUIContent("Reverse driver", "Flip if the UP button lowers the lift."), reverseDriver);
         autoLateralAxis = EditorGUILayout.Toggle(new GUIContent("Auto hinge axis (from drivetrain)", "Derive the arm hinge axis from the left/right wheels."), autoLateralAxis);
+        arms4Bar = EditorGUILayout.Toggle(new GUIContent("Arms are 4-bar (per-bar pivots)", "Each arm group is a parallelogram of parallel bars (an upper + a lower/support bar with different pins): rotate EACH bar about its own base so the support bars don't swing off their connection. Big head assemblies auto-stay rigid."), arms4Bar);
         holdFriction = EditorGUILayout.FloatField(new GUIContent("Hold friction", "Driver joint friction so the lift self-holds when released."), holdFriction);
-        liftRaiseSeconds = EditorGUILayout.FloatField(new GUIContent("Lift raise time (s)", "Seconds to raise fully while holding the UP button. Lower = faster. Hold to lift; it stops at the top."), liftRaiseSeconds);
+        liftRaiseSeconds = EditorGUILayout.FloatField(new GUIContent("Lift raise time (s)", "Seconds to raise fully while holding the UP button. Lower = faster. Hold to lift; it stops at the top. Editable live afterward on the Dr4bLift component (no rebuild)."), liftRaiseSeconds);
         autoAssignButtons = EditorGUILayout.Toggle(new GUIContent("Auto-assign buttons", "Map the lift to the next free up/down pair (intake holds R1/R2, so lift -> L1/L2). Score is on the A button."), autoAssignButtons);
         liftDisplayName = EditorGUILayout.TextField(new GUIContent("Lift name (config label)", "What the Configure Controller screen shows for this lift. Set it to anything — it's independent of the hidden motor's object name, and persists on Build."), liftDisplayName);
 
@@ -152,6 +154,7 @@ public class Dr4bLiftBuilderWindow : EditorWindow
         secondStageAngle = secondStageAngle,
         reverseDriver = reverseDriver,
         autoLateralAxis = autoLateralAxis,
+        arms4Bar = arms4Bar,
         holdFriction = holdFriction,
         liftRaiseSeconds = liftRaiseSeconds,
         autoAssignButtons = autoAssignButtons,
@@ -359,6 +362,7 @@ public static class Dr4bLiftSetup
         public float firstStageAngle, secondStageAngle;   // degrees each stage's arms rotate at full lift
         public bool reverseDriver;
         public bool autoLateralAxis;
+        public bool arms4Bar;                              // rotate each sub-bar of an arm group about its own base
         public float holdFriction;
         public float liftRaiseSeconds;
         public bool autoAssignButtons;
@@ -404,6 +408,7 @@ public static class Dr4bLiftSetup
         lift.driver = hubBody;
         lift.chassis = chassis;
         lift.sweepDeg = DriverSweepDeg;
+        lift.liftRaiseSeconds = o.liftRaiseSeconds;   // runtime source of truth; editable live on the component
         lift.stage1Rise = o.stage1Rise;
         lift.stage1Forward = o.stage1Forward;
         lift.stage2Rise = o.stage2Rise;
@@ -424,9 +429,10 @@ public static class Dr4bLiftSetup
         // First-arm pivots are FIXED (on the stationary channel) — referenced only, never wired/neutralized.
 
         // 4) Only the arms rotate. First arms pivot at their fixed stationary connection; second arms at
-        //    the (rising) second sprocket. Each arm binds to the nearest pivot (both sides handled).
-        WireRotators(o.firstArms, o.firstArmPivots, o.firstStageAngle, lift, skip, useUndo);
-        WireRotators(o.secondArms, o.secondArmPivots, o.secondStageAngle, lift, skip, useUndo);
+        //    the (rising) second sprocket. Each arm binds to the nearest pivot (both sides handled). With
+        //    arms4Bar on, a group of parallel bars rotates each bar about its own base (see PivotRotateFollower).
+        WireRotators(o.firstArms, o.firstArmPivots, o.firstStageAngle, o.arms4Bar, lift, skip, useUndo);
+        WireRotators(o.secondArms, o.secondArmPivots, o.secondStageAngle, o.arms4Bar, lift, skip, useUndo);
 
         // 5) Stack carriage rides the scoring (stage 1 + 2).
         string carriageNote = WireStackCarriage(registry, chassis, lift, useUndo);
@@ -454,10 +460,11 @@ public static class Dr4bLiftSetup
         return
             $"Built a role-based DR4B lift on '{registry.name}'.\n\n" +
             $"• Hidden motor '{HubName}' drives it; arms rotate {o.firstStageAngle} / {o.secondStageAngle} deg. Buttons: {buttonNote}.\n" +
-            $"• Translational movers: {lift.translators.Count}  Scissor arms: {lift.rotators.Count}.\n" +
+            $"• Translational movers: {lift.translators.Count}  Scissor arms: {lift.rotators.Count}" +
+            (o.arms4Bar ? " (4-bar: each parallel bar rotates about its OWN base; big head assemblies stay rigid).\n" : ".\n") +
             $"• Stack: {carriageNote}. Intake mouth stays at the base.\n" +
-            $"• Hold-to-lift, stops at top ({o.liftRaiseSeconds}s to full). Score = A button (drops the stack, only while raised).\n" +
-            $"• Intake auto-disables while the lift is raised; the intake markers/mouth overlay are hidden.\n\n" +
+            $"• Hold-to-lift, stops at top ({o.liftRaiseSeconds}s to full — editable live on the Dr4bLift component). Score = A button (drops the stack, only while raised).\n" +
+            $"• Intake AND outtake auto-disable while the lift is raised; the intake markers/mouth overlay are hidden.\n\n" +
             "IMPORTANT: the field spawns the robot PREFAB at Play, not this scene object. APPLY THESE " +
             "CHANGES TO THE PREFAB (Prefab Mode, or Overrides > Apply All) or they won't spawn.\n\n" +
             "Play, then hold the UP button (key 1). Tuning:\n" +
@@ -667,7 +674,7 @@ public static class Dr4bLiftSetup
     }
 
     private static void WireRotators(List<GameObject> arms, List<GameObject> pivots, float angleDeg,
-        Dr4bLift lift, HashSet<GameObject> skip, bool useUndo)
+        bool arms4Bar, Dr4bLift lift, HashSet<GameObject> skip, bool useUndo)
     {
         if (arms == null) return;
         foreach (GameObject go in arms)
@@ -681,6 +688,7 @@ public static class Dr4bLiftSetup
             f.pivot = pivot;
             f.armAngleDeg = angleDeg;
             f.useControllerAxis = true;
+            f.rotateBarsIndividually = arms4Bar;   // parallelogram: each bar about its own base (self-guards on big assemblies)
             if (!lift.rotators.Contains(f)) lift.rotators.Add(f);
         }
     }

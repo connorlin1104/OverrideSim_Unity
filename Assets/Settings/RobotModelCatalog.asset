@@ -25,5 +25,5 @@ MonoBehaviour:
       displayName: SpinningPart
       type: motor
     - id: liftmotor
-      displayName: Lift
+      displayName: DR4B Lift
       type: motor
