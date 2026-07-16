@@ -112,9 +112,21 @@ public static class TransparentMaterialTool
     private static Material EnsureTransparentVariant(Material src)
     {
         EnsureFolder();
+        AssetDatabase.TryGetGUIDAndLocalFileIdentifier(src, out string srcGuid, out long srcFileId);
+        string srcKey = $"{srcGuid}:{srcFileId}";
+
+        // One variant per SOURCE MATERIAL, not per name: two different embedded materials can share
+        // a name, and handing the second one the first one's clone would silently recolor it. The
+        // recorded origin (importer userData) disambiguates; a genuine collision gets a numbered path.
         string path = $"{FolderPath}/{Sanitize(src.name)}{Suffix}.mat";
-        Material existing = AssetDatabase.LoadAssetAtPath<Material>(path);
-        if (existing != null) return existing;
+        for (int n = 2; ; n++)
+        {
+            Material existing = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (existing == null) break; // free path — create the variant here
+            string origin = AssetImporter.GetAtPath(path)?.userData;
+            if (string.IsNullOrEmpty(origin) || origin == srcKey) return existing;
+            path = $"{FolderPath}/{Sanitize(src.name)}{Suffix}_{n}.mat";
+        }
 
         Material clone = new Material(src); // copies base map/color and every other property
         clone.name = src.name + Suffix;

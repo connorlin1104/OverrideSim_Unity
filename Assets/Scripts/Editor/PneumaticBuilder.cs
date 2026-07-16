@@ -369,6 +369,19 @@ public static class PneumaticSetup
             group = Undo.GetCurrentGroup();
         }
 
+        // Renaming the link between edits changes its id — sweep any OTHER mechanism registered on
+        // this same link (its actuator is about to be replaced anyway), or the old id's registry
+        // row and button bindings would dangle forever.
+        foreach (RobotMechanisms.Mechanism stale in registry.mechanisms.ToArray())
+        {
+            if (stale == null || stale.id == id) continue;
+            GameObject holder = stale.motor != null ? stale.motor.gameObject
+                : stale.pneumatic != null ? stale.pneumatic.gameObject : null;
+            if (holder != o.link) continue;
+            UrdfPostProcessor.RemoveMechanism(registry, stale.id, useUndo);
+            MechanismBuildUtil.ClearMechanismBindings(registry.robotId, stale.id);
+        }
+
         // Axis / anchor / endpoints per mode.
         ResolveAxisAnchor(o, linear, out Vector3 axis, out Vector3 jointAnchor);
         float lower = linear ? 0f : o.retractedDeg;
