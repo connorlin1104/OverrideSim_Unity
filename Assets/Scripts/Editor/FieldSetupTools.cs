@@ -410,6 +410,81 @@ public class FixGoals : EditorWindow
     }
 }
 
+// Attaches the RollerSnap detent to the 4 field rollers' hinge bodies. The saved scene was rigged by
+// FixRollers at some point but WITHOUT the RollerSnap component (its guid appears nowhere in the scene),
+// so the rollers spin freely today. Re-running the full Rig Rollers tool would work too, but it
+// regenerates bodies/joints/colliders from a selection and can't run headless — this targeted fix only
+// ensures the detent component and its damping. Idempotent: re-running syncs the existing components.
+// Batch: -executeMethod FixRollerDetents.RunBatch (opens and saves SampleScene).
+public static class FixRollerDetents
+{
+    private const string ScenePath = "Assets/Scenes/SampleScene.unity";
+    private static readonly string[] RollerNames = { "RollerNorth", "RollerSouth", "RollerEast", "RollerWest" };
+
+    [MenuItem("Tools/RoboSim/Field & Pieces/Attach Roller Detents (Scene Fix)", false, 4)]
+    private static void AttachInteractive()
+    {
+        int touched = Apply(useUndo: true);
+        EditorUtility.DisplayDialog("Attach Roller Detents",
+            touched > 0
+                ? $"RollerSnap detents ensured on {touched} roller(s). Save the scene to keep them."
+                : "No rigged rollers found — open SampleScene and run Rig Rollers (Hinge Joints) first.",
+            "OK");
+    }
+
+    // Batch entry point for -executeMethod: throws on failure (nonzero exit).
+    public static void RunBatch()
+    {
+        var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        int touched = Apply(useUndo: false);
+        if (touched == 0)
+            throw new System.InvalidOperationException(
+                $"Attach Roller Detents: no rigged rollers found in {ScenePath}.");
+        if (!EditorSceneManager.SaveScene(scene))
+            throw new System.InvalidOperationException($"Attach Roller Detents: failed to save {ScenePath}.");
+        Debug.Log($"Attach Roller Detents: RollerSnap ensured on {touched} roller(s); scene saved.");
+    }
+
+    private static int Apply(bool useUndo)
+    {
+        int touched = 0;
+        foreach (string name in RollerNames)
+        {
+            GameObject roller = GameObject.Find(name);
+            if (roller == null)
+            {
+                Debug.LogWarning($"Attach Roller Detents: no '{name}' in the open scene — skipped.");
+                continue;
+            }
+
+            // The hinge body (RollerFace*) is the spinning link the detent belongs on.
+            HingeJoint hinge = roller.GetComponentInChildren<HingeJoint>(true);
+            if (hinge == null)
+            {
+                Debug.LogWarning($"Attach Roller Detents: '{name}' has no HingeJoint — run Rig Rollers first; skipped.");
+                continue;
+            }
+
+            GameObject face = hinge.gameObject;
+            RollerSnap snap = face.GetComponent<RollerSnap>();
+            if (snap == null)
+                snap = useUndo ? Undo.AddComponent<RollerSnap>(face) : face.AddComponent<RollerSnap>();
+
+            Rigidbody rb = face.GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                if (useUndo) Undo.RecordObject(rb, "Attach Roller Detents");
+                rb.angularDamping = snap.FreeSpinDamping;
+            }
+
+            EditorUtility.SetDirty(face);
+            EditorSceneManager.MarkSceneDirty(face.scene);
+            touched++;
+        }
+        return touched;
+    }
+}
+
 public class FixRollers : EditorWindow
 {
     [MenuItem("Tools/RoboSim/Field & Pieces/Rig Rollers (Hinge Joints)", false, 3)]
