@@ -19,6 +19,10 @@ public class MatchLoaderController : MonoBehaviour
     [Tooltip("If checked, the loader stays up as long as an object is inside the tape trigger.")]
     [SerializeField] private bool stayUpWhileOccupied = true;
 
+    [Header("Manual Matchloading")]
+    [Tooltip("Extra height (world units) added to a MANUAL spawn (Match Load button, when Automatic Matchloading is off in Settings) so the piece falls into the robot instead of resting on the loader. World is 10x scale, so 2 = 0.2 m.")]
+    [SerializeField] private float manualSpawnExtraHeight = 2f;
+
     [Header("Animation Settings")]
     [SerializeField] private float liftHeight = 2.8f;    // Preserved your custom height!
     [SerializeField] private float liftSpeed = 10f;       // Preserved your custom speed!
@@ -61,10 +65,11 @@ public class MatchLoaderController : MonoBehaviour
         robotColliders.Add(other);
 
         // Spawn at most one piece per robot visit, and only once the previous piece has
-        // been carried out of the loader.
-        if (readyToSpawn && !LoaderOccupied())
+        // been carried out of the loader. With Automatic Matchloading off (Settings), arrival
+        // only tracks/raises the arm — spawning waits for the Match Load button instead.
+        if (MatchLoadSettings.Automatic && readyToSpawn && !LoaderOccupied())
         {
-            SpawnSingleMatchLoad();
+            SpawnSingleMatchLoad(0f);
             readyToSpawn = false;
         }
 
@@ -95,6 +100,27 @@ public class MatchLoaderController : MonoBehaviour
         }
     }
 
+    // True while any robot collider is inside this loader's tape trigger — i.e. "the robot is at
+    // this loader". The Match Load button uses this to pick which loader a manual spawn comes from.
+    public bool RobotOnTape => robotColliders.Count > 0;
+
+    // Could a manual spawn happen right now? Manual mode only (the button is hidden otherwise),
+    // robot on the tape, and the previous piece carried away. Deliberately does NOT consume or
+    // require the readyToSpawn leave-and-return latch: the button press is the deliberate act, and
+    // leaving the latch alone means flipping the setting mid-session can't wedge a loader.
+    public bool CanManualSpawn =>
+        !MatchLoadSettings.Automatic && RobotOnTape && !LoaderOccupied()
+        && elementPrefab != null && spawnPoint != null;
+
+    // Spawn one match load from extra height so it can fall into the robot. Returns false when the
+    // loader isn't ready (see CanManualSpawn) so the button can try the next loader.
+    public bool RequestManualSpawn()
+    {
+        if (!CanManualSpawn) return false;
+        SpawnSingleMatchLoad(manualSpawnExtraHeight);
+        return true;
+    }
+
     // A collider belongs to the robot if its owning Rigidbody OR articulation link carries the
     // robot tag (the articulation-rigged robot's colliders hang off ArticulationBody links,
     // which never report an attachedRigidbody).
@@ -118,12 +144,13 @@ public class MatchLoaderController : MonoBehaviour
         return Vector3.Distance(pos, spawnPoint.position) <= clearRadius;
     }
 
-    private void SpawnSingleMatchLoad()
+    private void SpawnSingleMatchLoad(float extraHeight)
     {
         if (spawnPoint == null || elementPrefab == null) return;
 
-        // Spawns exactly ONE cup/pin unit at the anchor position and rotation
-        currentItem = Instantiate(elementPrefab, spawnPoint.position, spawnPoint.rotation);
+        // Spawns exactly ONE cup/pin unit at the anchor position and rotation. Manual spawns add
+        // extraHeight straight up so the unit drops into a waiting robot.
+        currentItem = Instantiate(elementPrefab, spawnPoint.position + Vector3.up * extraHeight, spawnPoint.rotation);
 
         // Zero out physics velocity instantly at birth so it drops cleanly, and give each body
         // a MinHeightClamp so it can't be crushed through the floor. The prefab root has no

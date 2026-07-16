@@ -69,6 +69,7 @@ public static class BuildDriveControls
                 $"Build Drive Controls: no root 'Canvas' object in {ScenePath}.");
 
         EnsureTopBarButtons(canvasGo);
+        EnsureMatchLoadButton(canvasGo);
         BuildShoulderClusters(canvasGo);
         BuildDiamondPads(canvasGo);
         string appearanceStatus = EnsureControlsAppearance(scene, out _);
@@ -119,6 +120,20 @@ public static class BuildDriveControls
         nav.sceneName = "SampleScene";
         if (created)
             UnityEventTools.AddPersistentListener(resetButton.onClick, nav.Load);
+    }
+
+    // Manual match-load trigger, centered directly under the Home/Reset pair. MatchLoadButton
+    // hides it at runtime while Automatic Matchloading (Settings) is on, wires its own onClick,
+    // and enables it only while a loader can actually spawn — nothing to wire here.
+    private static void EnsureMatchLoadButton(GameObject canvasGo)
+    {
+        Button button = EnsureButton(canvasGo.transform, "MatchLoadButton", "Match Load", 28f, BuildHomeScene.AccentColor);
+        RectTransform rect = (RectTransform)button.transform;
+        rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 1f);
+        rect.pivot = new Vector2(0.5f, 1f);
+        rect.anchoredPosition = new Vector2(0f, -96f);
+        rect.sizeDelta = new Vector2(200f, 64f);
+        EnsureComponent<MatchLoadButton>(button.gameObject);
     }
 
     // --- Shoulder buttons ---------------------------------------------------------------------

@@ -48,6 +48,10 @@ public class HomeScreenController : MonoBehaviour
     [Tooltip("Label above the slider; shows the current opacity as a percentage.")]
     [SerializeField] private TMP_Text controlsOpacityLabel;
 
+    [Header("Match Loading")]
+    [Tooltip("Checkbox for Automatic Matchloading (persisted via MatchLoadSettings). When off, the field scene shows a Match Load button for manual spawns.")]
+    [SerializeField] private Toggle automaticMatchloadToggle;
+
     [Header("Controller Config")]
     [Tooltip("The Configure Controller sub-screen (button -> mechanism mapping).")]
     [SerializeField] private ControllerConfigScreen controllerConfig;
@@ -70,6 +74,7 @@ public class HomeScreenController : MonoBehaviour
         BuildModelList();
         InitJoystickSizeControl();
         InitControlsOpacityControl();
+        InitAutomaticMatchloadControl();
     }
 
     // --- Button hooks (wired as persistent onClick listeners by the Build Home Scene tool) ---
@@ -231,5 +236,17 @@ public class HomeScreenController : MonoBehaviour
     {
         if (controlsOpacityLabel != null)
             controlsOpacityLabel.text = $"Controls Opacity — {Mathf.RoundToInt(value * 100f)}%";
+    }
+
+    // --- Automatic matchloading ---
+
+    // Same pattern as the sliders; guarded so an older HomeScene still runs without the toggle.
+    // MatchLoadButton and MatchLoaderController read the setting when the field scene loads.
+    private void InitAutomaticMatchloadControl()
+    {
+        if (automaticMatchloadToggle == null) return;
+
+        automaticMatchloadToggle.SetIsOnWithoutNotify(MatchLoadSettings.Automatic);
+        automaticMatchloadToggle.onValueChanged.AddListener(value => MatchLoadSettings.Automatic = value);
     }
 }

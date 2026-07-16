@@ -164,7 +164,8 @@ public class BuildHomeScene
         if (controller == null) return false;
         SerializedObject so = new SerializedObject(controller);
         return IsRefSet(so, "catalog") && IsRefSet(so, "controllerConfig") &&
-               IsRefSet(so, "controlsLayout") && IsRefSet(so, "loadingOverlay");
+               IsRefSet(so, "controlsLayout") && IsRefSet(so, "loadingOverlay") &&
+               IsRefSet(so, "automaticMatchloadToggle");
     }
 
     private static bool IsRefSet(SerializedObject so, string propertyName)
@@ -368,6 +369,12 @@ public class BuildHomeScene
             ControlsOpacitySettings.DefaultOpacity);
         SetLayoutHeight(opacitySlider.gameObject, 56f);
 
+        // Automatic matchloading: checkbox (persisted via MatchLoadSettings). When off, the field
+        // scene shows a Match Load button and the loaders wait for it instead of spawning on arrival.
+        Toggle autoMatchloadToggle = CreateToggle("AutomaticMatchloadToggle", settingsPanel.transform,
+            "Automatic Matchloading", MatchLoadSettings.DefaultAutomatic);
+        SetLayoutHeight(autoMatchloadToggle.gameObject, 64f);
+
         // Entry point to the button -> mechanism mapping screen.
         Button configureButton = CreateButton("ConfigureControllerButton", settingsPanel.transform,
             "Configure Controller", 40f, AccentColor);
@@ -413,6 +420,7 @@ public class BuildHomeScene
         so.FindProperty("joystickSizeLabel").objectReferenceValue = joystickLabel;
         so.FindProperty("controlsOpacitySlider").objectReferenceValue = opacitySlider;
         so.FindProperty("controlsOpacityLabel").objectReferenceValue = opacityLabel;
+        so.FindProperty("automaticMatchloadToggle").objectReferenceValue = autoMatchloadToggle;
 
         // Controller config screen: same root object, wired to the diagram it opens.
         ControllerConfigScreen configScreen = homeRoot.AddComponent<ControllerConfigScreen>();
@@ -1066,6 +1074,56 @@ public class BuildHomeScene
         slider.maxValue = max;
         slider.value = value;
         return slider;
+    }
+
+    // Checkbox row built from Unity's DefaultControls toggle (correct Background/Checkmark/Toggle
+    // wiring), then restyled to match the panel: a 44px box on the left, accent checkmark, and the
+    // legacy Text label replaced with a left-aligned TMP label like the rest of the settings rows.
+    private static Toggle CreateToggle(string name, Transform parent, string label, bool isOn)
+    {
+        var resources = new DefaultControls.Resources
+        {
+            standard = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd"),
+            background = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Background.psd"),
+            checkmark = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Checkmark.psd"),
+        };
+
+        GameObject go = DefaultControls.CreateToggle(resources);
+        go.name = name;
+        go.transform.SetParent(parent, false);
+        foreach (Transform child in go.GetComponentsInChildren<Transform>(true))
+            child.gameObject.layer = LayerMask.NameToLayer("UI");
+
+        // The checkbox: middle-left of the row, panel-dark box, accent checkmark filling it.
+        RectTransform background = (RectTransform)go.transform.Find("Background");
+        background.anchorMin = background.anchorMax = new Vector2(0f, 0.5f);
+        background.pivot = new Vector2(0f, 0.5f);
+        background.anchoredPosition = new Vector2(8f, 0f);
+        background.sizeDelta = new Vector2(44f, 44f);
+        background.GetComponent<Image>().color = ListColor;
+        RectTransform checkmark = (RectTransform)background.Find("Checkmark");
+        checkmark.anchorMin = Vector2.zero;
+        checkmark.anchorMax = Vector2.one;
+        checkmark.anchoredPosition = Vector2.zero;
+        checkmark.sizeDelta = Vector2.zero;
+        checkmark.GetComponent<Image>().color = AccentColor;
+
+        // Replace the legacy Text label with the panel's TMP style, left-aligned beside the box.
+        Transform legacyLabel = go.transform.Find("Label");
+        if (legacyLabel != null) UnityEngine.Object.DestroyImmediate(legacyLabel.gameObject);
+        TextMeshProUGUI text = CreateText("Label", go.transform, label, 40f);
+        text.fontStyle = FontStyles.Bold;
+        text.alignment = TextAlignmentOptions.MidlineLeft;
+        text.raycastTarget = false; // taps belong to the toggle, not the label
+        RectTransform textRect = text.rectTransform;
+        textRect.anchorMin = Vector2.zero;
+        textRect.anchorMax = Vector2.one;
+        textRect.offsetMin = new Vector2(68f, 0f);
+        textRect.offsetMax = Vector2.zero;
+
+        Toggle toggle = go.GetComponent<Toggle>();
+        toggle.isOn = isOn;
+        return toggle;
     }
 
     private static void TintChildImage(GameObject root, string path, Color color)
