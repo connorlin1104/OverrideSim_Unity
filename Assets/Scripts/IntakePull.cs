@@ -17,6 +17,10 @@ using UnityEngine.Rendering;
 // orbited a moving target, fought gravity, and only "arrived" inside a tiny radius it kept overshooting,
 // so pieces floated around the robot forever instead of settling. A kinematic glide is the fix.
 //
+// Stacking is BOTTOM-FED, like a real intake: a piece enters at the mouth (slot 0, the bottom) and shoves
+// the current stack UP a slot, so the FIRST piece intaked rides on TOP. Ejecting removes the bottom slot
+// and the next piece refills the bottom, so a partial stack keeps its top piece put across eject/refill.
+//
 // Reverse plays the intake BACKWARDS: held pieces are LAUNCHED out one at a time (bottom of the stack
 // first, spaced by ejectInterval so they don't come out as a clump that overlaps and jams) — each sent
 // flying outward in WORLD space as a free dynamic body (so it separates from the bot instead of clinging
@@ -440,12 +444,20 @@ public class IntakePull : MonoBehaviour
     }
 
     // Begin holding a piece: make it kinematic (so it glides cleanly, immune to gravity/knocks) and ghost
-    // it so it passes through the CAD. Assigns a free slot.
+    // it so it passes through the CAD. Drops it into the bottom slot, pushing the stack up (bottom-fed).
     private void Capture(Rigidbody rb)
     {
         if (rb == null || held.Count >= maxHeld || IsHeld(rb)) return;
-        int slot = NextFreeSlot();
-        if (slot < 0) return;
+
+        // Bottom-fed magazine: a piece enters at the MOUTH (slot 0, the bottom). If slot 0 is occupied,
+        // shove the current stack UP one slot to make room underneath, so the FIRST piece intaked ends up
+        // on TOP — like a real intake, instead of the first piece sitting on the bottom. When slot 0 is
+        // already free (e.g. right after an eject), nothing shifts: the new piece just drops into the
+        // bottom, leaving the eject-then-refill behavior unchanged (eject the bottom, next piece to bottom).
+        int free = NextFreeSlot();
+        if (free < 0) return;
+        ShiftUpBelow(free);
+        int slot = 0;
         inMouth.Remove(rb);
 
         // Descoring: a piece seated on a goal by GoalStackMagnet must leave the goal's stack the
@@ -582,6 +594,16 @@ public class IntakePull : MonoBehaviour
             if (!used) return i;
         }
         return -1;
+    }
+
+    // Push every held piece in slots [0, top-1] up one slot (into [1, top]) to vacate slot 0 for a piece
+    // just captured at the mouth — the bottom-fed stacking that leaves the first-intaked piece on top.
+    // `top` is the lowest free slot, so [0, top-1] is a contiguous occupied run and this keeps the stack
+    // gapless. Cleared 'arrived' so each shifted piece GLIDES up to its raised slot instead of snapping.
+    private void ShiftUpBelow(int top)
+    {
+        foreach (Held h in held)
+            if (h.slot < top) { h.slot += 1; h.arrived = false; }
     }
 
     private static void SetPieceColliders(Rigidbody rb, bool enabled)
