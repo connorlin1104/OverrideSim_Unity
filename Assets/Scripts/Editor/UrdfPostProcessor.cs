@@ -555,7 +555,7 @@ public class UrdfPostProcessor : EditorWindow
         pistonDrive.driveType = ArticulationDriveType.Target;
         pistonDrive.stiffness = piston.stiffness;
         pistonDrive.damping = piston.damping;
-        pistonDrive.forceLimit = piston.cylinderForce;
+        pistonDrive.forceLimit = float.MaxValue; // uncapped: the piston always reaches its target
         pistonDrive.target = piston.retractedTarget;
         body.xDrive = pistonDrive;
 

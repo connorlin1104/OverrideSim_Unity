@@ -30,8 +30,17 @@ public class PneumaticRig : MonoBehaviour
     public Vector3 customAxis = Vector3.right;
     [Tooltip("Pivot/slide origin in the link's local space (used with a non-Auto axis, or when no pivot marker is set).")]
     public Vector3 anchor = Vector3.zero;
-    [Tooltip("Rotary: optional child Transform marking the pivot point — overrides the anchor.")]
+    [Tooltip("Rotary: optional child Transform marking the MOVING METAL's hinge (the pivot it rotates about) — overrides the anchor.")]
     public Transform pivotMarker;
+
+    [Tooltip("Rotary: optional cylinder BODY (barrel) that visually swivels about the mount to stay aimed at the moving metal (cosmetic — no joint of its own).")]
+    public GameObject pneumaticBody;
+    [Tooltip("Rotary: optional cylinder ROD that swivels with the body AND slides out to reach the moving metal (cosmetic — the visible stroke).")]
+    public GameObject cylinderRod;
+    [Tooltip("Rotary: optional child Transform marking where the cylinder is pinned to the chassis (its mount). The body swivels about this point.")]
+    public Transform pneumaticPivot;
+    [Tooltip("Rotary: flip the cosmetic ROD's slide direction (use if the rod extends when it should retract and vice-versa).")]
+    public bool flipRod;
 
     public bool reverse;
     public bool startExtended;

@@ -27,3 +27,9 @@ MonoBehaviour:
     - id: liftmotor
       displayName: DR4B Lift
       type: motor
+    - id: movingforwards
+      displayName: Endgame Mech
+      type: pneumatic
+    - id: metalpart
+      displayName: Doinker
+      type: pneumatic

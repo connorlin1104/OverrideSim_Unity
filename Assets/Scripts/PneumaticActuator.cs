@@ -3,14 +3,11 @@ using UnityEngine.InputSystem;
 
 // Generic pneumatic piston driver for a prismatic ArticulationBody joint.
 //
-// VEX pneumatic cylinders are binary: full pressure toward one of two positions, with force
-// capped by air pressure. We model that as a position-target drive with high stiffness (snap
-// to the endpoint), moderate damping (no ringing), and a forceLimit standing in for the
-// air-pressure force cap — push against something too heavy and the piston stalls, just like
-// real air.
-//
-// NOTE: nothing in the current scene uses this component yet. It exists so URDF-imported
-// mechanisms (and future scratch-built lifts/claws) have a ready-made prismatic actuator.
+// VEX pneumatic cylinders are binary: full pressure snaps toward one of two positions. We model that
+// as a position-target drive with high stiffness (snap to the endpoint) and moderate damping (no
+// ringing). The drive's force is UNCAPPED (forceLimit = infinite) so the piston ALWAYS reaches its
+// target — it never stalls partway (which also showed up as "starts slightly extended and won't fully
+// retract" when a low force cap couldn't overcome contact/friction).
 //
 // Usage: put it on a prismatic ArticulationBody link (or assign one), set the extended and
 // retracted joint positions, then call Extend()/Retract()/Toggle() from code — or bind the
@@ -26,8 +23,6 @@ public class PneumaticActuator : MonoBehaviour
     public float retractedTarget;
 
     [Header("Drive Settings")]
-    [Tooltip("Drive force limit — the air-pressure-limited force the cylinder can exert.")]
-    public float cylinderForce = 500f;
     [Tooltip("Position spring gain. High, so the piston snaps between endpoints like real binary pneumatics.")]
     public float stiffness = 20000f;
     [Tooltip("Velocity damping. Enough to kill ringing at the endpoints without feeling sluggish.")]
@@ -51,11 +46,13 @@ public class PneumaticActuator : MonoBehaviour
         }
 
         // Bake the cylinder model into the joint's X drive (struct: copy, modify, assign back).
+        // forceLimit is uncapped so the piston always reaches its target — no air-pressure stall.
+        // Set here at runtime, so it also overrides any lower cap baked into an older prefab's drive.
         ArticulationDrive d = body.xDrive;
         d.driveType = ArticulationDriveType.Target;
         d.stiffness = stiffness;
         d.damping = damping;
-        d.forceLimit = cylinderForce;
+        d.forceLimit = float.MaxValue;
         d.target = startExtended ? extendedTarget : retractedTarget;
         body.xDrive = d;
         IsExtended = startExtended;
