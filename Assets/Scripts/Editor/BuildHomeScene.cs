@@ -327,13 +327,42 @@ public class BuildHomeScene
         // size/opacity sliders and the controller-config entry point. Taller than the main
         // panel to fit everything under the list (which absorbs the leftover height).
         GameObject settingsPanel = CreatePanel("SettingsPanel", canvasGo.transform, new Vector2(680f, 980f));
-        AddVerticalLayout(settingsPanel, 40, 24f);
 
-        TextMeshProUGUI header = CreateText("HeaderLabel", settingsPanel.transform, "Select Robot Model", 48f);
+        // The settings rows (model list + every control row + buttons) can total more than the
+        // panel's height, so they live in a vertical scroll view that fills the panel. Without it
+        // the fixed layout overflows centered and the lower rows — the matchloading toggle and the
+        // buttons — get pushed off-screen. The viewport clips; the content grows to fit and scrolls.
+        GameObject viewport = CreateUIObject("SettingsViewport", settingsPanel.transform);
+        RectTransform viewportRect = (RectTransform)viewport.transform;
+        viewportRect.anchorMin = Vector2.zero;
+        viewportRect.anchorMax = Vector2.one;
+        viewportRect.offsetMin = new Vector2(12f, 12f);
+        viewportRect.offsetMax = new Vector2(-12f, -12f);
+        viewport.AddComponent<RectMask2D>();
+        ScrollRect settingsScroll = viewport.AddComponent<ScrollRect>();
+        settingsScroll.horizontal = false;
+        settingsScroll.vertical = true;
+        settingsScroll.movementType = ScrollRect.MovementType.Clamped;
+        settingsScroll.scrollSensitivity = 28f;
+
+        GameObject content = CreateUIObject("SettingsContent", viewport.transform);
+        RectTransform contentRect = (RectTransform)content.transform;
+        contentRect.anchorMin = new Vector2(0f, 1f);
+        contentRect.anchorMax = new Vector2(1f, 1f);
+        contentRect.pivot = new Vector2(0.5f, 1f);
+        contentRect.anchoredPosition = Vector2.zero;
+        contentRect.sizeDelta = Vector2.zero; // width stretches to the viewport; height fits content
+        AddVerticalLayout(content, 24, 24f);
+        ContentSizeFitter contentFitter = content.AddComponent<ContentSizeFitter>();
+        contentFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        settingsScroll.viewport = viewportRect;
+        settingsScroll.content = contentRect;
+
+        TextMeshProUGUI header = CreateText("HeaderLabel", content.transform, "Select Robot Model", 48f);
         header.fontStyle = FontStyles.Bold;
         SetLayoutHeight(header.gameObject, 70f);
 
-        GameObject modelList = CreateUIObject("ModelList", settingsPanel.transform);
+        GameObject modelList = CreateUIObject("ModelList", content.transform);
         Image listImage = modelList.AddComponent<Image>();
         listImage.sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Background.psd");
         listImage.type = Image.Type.Sliced;
@@ -341,7 +370,7 @@ public class BuildHomeScene
         VerticalLayoutGroup listLayout = AddVerticalLayout(modelList, 20, 14f);
         listLayout.childAlignment = TextAnchor.UpperCenter;
         LayoutElement listElement = modelList.AddComponent<LayoutElement>();
-        listElement.flexibleHeight = 1f; // list absorbs the leftover panel height
+        listElement.flexibleHeight = 0f; // inside the scroll view the list takes its natural height
 
         Button template = CreateButton("ModelButtonTemplate", modelList.transform, "Model", 40f, NeutralColor);
         SetLayoutHeight(template.gameObject, 84f);
@@ -349,43 +378,43 @@ public class BuildHomeScene
 
         // Joystick size control: label (also the live percentage readout) + slider. The
         // controller reads/writes JoystickSettings; the field scene's JoystickScaler applies it.
-        TextMeshProUGUI joystickLabel = CreateText("JoystickSizeLabel", settingsPanel.transform, "Joystick Size", 40f);
+        TextMeshProUGUI joystickLabel = CreateText("JoystickSizeLabel", content.transform, "Joystick Size", 40f);
         joystickLabel.fontStyle = FontStyles.Bold;
         SetLayoutHeight(joystickLabel.gameObject, 56f);
 
-        Slider joystickSlider = CreateSlider("JoystickSizeSlider", settingsPanel.transform,
+        Slider joystickSlider = CreateSlider("JoystickSizeSlider", content.transform,
             JoystickSettings.MinScale, JoystickSettings.MaxScale, JoystickSettings.DefaultScale);
         SetLayoutHeight(joystickSlider.gameObject, 56f);
 
         // Controls opacity: label (live percentage readout) + slider. Applies to joysticks AND
         // the on-screen controller buttons (ControlsAppearance reads it in the field scene).
-        TextMeshProUGUI opacityLabel = CreateText("ControlsOpacityLabel", settingsPanel.transform,
+        TextMeshProUGUI opacityLabel = CreateText("ControlsOpacityLabel", content.transform,
             "Controls Opacity", 40f);
         opacityLabel.fontStyle = FontStyles.Bold;
         SetLayoutHeight(opacityLabel.gameObject, 56f);
 
-        Slider opacitySlider = CreateSlider("ControlsOpacitySlider", settingsPanel.transform,
+        Slider opacitySlider = CreateSlider("ControlsOpacitySlider", content.transform,
             ControlsOpacitySettings.MinOpacity, ControlsOpacitySettings.MaxOpacity,
             ControlsOpacitySettings.DefaultOpacity);
         SetLayoutHeight(opacitySlider.gameObject, 56f);
 
         // Automatic matchloading: checkbox (persisted via MatchLoadSettings). When off, the field
         // scene shows a Match Load button and the loaders wait for it instead of spawning on arrival.
-        Toggle autoMatchloadToggle = CreateToggle("AutomaticMatchloadToggle", settingsPanel.transform,
+        Toggle autoMatchloadToggle = CreateToggle("AutomaticMatchloadToggle", content.transform,
             "Automatic Matchloading", MatchLoadSettings.DefaultAutomatic);
         SetLayoutHeight(autoMatchloadToggle.gameObject, 64f);
 
         // Entry point to the button -> mechanism mapping screen.
-        Button configureButton = CreateButton("ConfigureControllerButton", settingsPanel.transform,
+        Button configureButton = CreateButton("ConfigureControllerButton", content.transform,
             "Configure Controller", 40f, AccentColor);
         SetLayoutHeight(configureButton.gameObject, 84f);
 
         // Entry point to the drag-to-reposition control layout screen.
-        Button editLayoutButton = CreateButton("EditLayoutButton", settingsPanel.transform,
+        Button editLayoutButton = CreateButton("EditLayoutButton", content.transform,
             "Edit Control Layout", 40f, AccentColor);
         SetLayoutHeight(editLayoutButton.gameObject, 84f);
 
-        Button backButton = CreateButton("BackButton", settingsPanel.transform, "Back", 44f, AccentColor);
+        Button backButton = CreateButton("BackButton", content.transform, "Back", 44f, AccentColor);
         SetLayoutHeight(backButton.gameObject, 96f);
 
         settingsPanel.SetActive(false); // controller shows it via OnSettingsPressed
@@ -1094,13 +1123,14 @@ public class BuildHomeScene
         foreach (Transform child in go.GetComponentsInChildren<Transform>(true))
             child.gameObject.layer = LayerMask.NameToLayer("UI");
 
-        // The checkbox: middle-left of the row, panel-dark box, accent checkmark filling it.
+        // The checkbox: middle-left of the row, a LIGHT box so it's clearly visible against the
+        // dark panel (a panel-dark box on the panel was effectively invisible), accent checkmark.
         RectTransform background = (RectTransform)go.transform.Find("Background");
         background.anchorMin = background.anchorMax = new Vector2(0f, 0.5f);
         background.pivot = new Vector2(0f, 0.5f);
         background.anchoredPosition = new Vector2(8f, 0f);
-        background.sizeDelta = new Vector2(44f, 44f);
-        background.GetComponent<Image>().color = ListColor;
+        background.sizeDelta = new Vector2(48f, 48f);
+        background.GetComponent<Image>().color = new Color(0.82f, 0.85f, 0.92f, 1f);
         RectTransform checkmark = (RectTransform)background.Find("Checkmark");
         checkmark.anchorMin = Vector2.zero;
         checkmark.anchorMax = Vector2.one;

@@ -35,8 +35,18 @@ public class MotorActuator : MonoBehaviour
     [Tooltip("Flip if the mechanism empirically runs backward for 'forward' input.")]
     public bool invert;
 
+    [Header("Idle hold")]
+    [Tooltip("Hold the joint's current angle when input is 0 — for a lift/arm that must not sag or be shoved off its height by contact. A plain velocity drive only fights the SPEED of a back-drive, so a sustained push (e.g. ramming a round field roller, whose reaction is angled UP, unlike a flat wall) slowly creeps the joint. This pins the angle instead. Leave OFF for free-spinning rollers that should coast. Revolute joints only.")]
+    public bool holdPositionWhenIdle;
+    [Tooltip("Position spring stiffness while holding idle (only if Hold Position When Idle). Higher = firmer hold against external pushes; the hold torque is still capped by the stall torque, so a shove past stall still gives — but it springs back when released instead of staying where it was pushed.")]
+    public float holdStiffness = 20000f;
+
     // Last commanded input in [-1, 1]; ButtonRouter uses it to skip redundant drive writes.
     public float CurrentInput { get; private set; }
+
+    // True while the idle position-hold drive is engaged (so the hold angle is captured only ONCE,
+    // on the moving->idle transition — a push while idle must not ratchet the hold angle upward).
+    private bool holding;
 
     private bool IsPrismatic => body != null && body.jointType == ArticulationJointType.PrismaticJoint;
 
@@ -64,6 +74,11 @@ public class MotorActuator : MonoBehaviour
         body.maxJointVelocity = IsPrismatic
             ? maxLinearSpeed * 1.1f
             : maxRpm * Mathf.PI * 2f / 60f * 1.1f;
+
+        // If configured to hold when idle, engage the hold now so the joint is pinned from frame 0
+        // (ButtonRouter may never send an explicit SetInput(0), so we can't wait for one). Runs
+        // regardless of Awake order vs. whoever set the flag — see SetHoldPositionWhenIdle.
+        if (holdPositionWhenIdle) EnterHold();
     }
 
     // Live-set the free-spin speed (RPM, revolute) and re-apply the joint's velocity cap so a FASTER
@@ -78,18 +93,73 @@ public class MotorActuator : MonoBehaviour
             body.maxJointVelocity = maxRpm * Mathf.PI * 2f / 60f * 1.1f;
     }
 
-    // input in [-1, 1]: +1 full forward, -1 full reverse, 0 brake (velocity target 0 with
-    // damping > 0 actively resists motion, like a motor holding against backdrive).
+    // input in [-1, 1]: +1 full forward, -1 full reverse, 0 brake. With holdPositionWhenIdle a zero
+    // input pins the joint's current angle (a position drive) so contact can't back-drive it;
+    // otherwise 0 is a velocity target of 0 (damping resists motion but slow sustained force creeps).
     public void SetInput(float input)
     {
         if (body == null) return;
         CurrentInput = Mathf.Clamp(input, -1f, 1f);
+
+        if (holdPositionWhenIdle && !IsPrismatic && Mathf.Abs(CurrentInput) < 1e-4f)
+        {
+            if (!holding) EnterHold();   // capture the angle once; a later idle push must not re-capture
+            return;
+        }
+        if (holding) ExitHold();
+
         float sign = invert ? -1f : 1f;
         // Revolute drive targets are in DEGREES per second: rpm x 360/60 = rpm x 6.
         float target = IsPrismatic
             ? CurrentInput * maxLinearSpeed
             : CurrentInput * maxRpm * 6f;
         body.SetDriveTargetVelocity(ArticulationDriveAxis.X, target * sign);
+    }
+
+    // Enable/disable idle position-hold at runtime, applying it immediately if the joint is already
+    // idle. Dr4bLift turns this on for its lift driver at startup, so an EXISTING lift prefab is
+    // fixed with no rebuild. Resolves body itself so it works whatever the Awake order is.
+    public void SetHoldPositionWhenIdle(bool enabled)
+    {
+        holdPositionWhenIdle = enabled;
+        if (body == null) body = GetComponent<ArticulationBody>();
+        if (enabled)
+        {
+            if (!holding && !IsPrismatic && Mathf.Abs(CurrentInput) < 1e-4f) EnterHold();
+        }
+        else if (holding) ExitHold();
+    }
+
+    // Pin the joint at its current angle with a stiff position-target drive (force-capped by the
+    // stall torque, so a shove past stall still gives — but it springs back on release).
+    private void EnterHold()
+    {
+        if (body == null) return;
+        ArticulationReducedSpace p = body.jointPosition;
+        float angleDeg = (p.dofCount > 0 ? p[0] : 0f) * Mathf.Rad2Deg;
+        if (float.IsNaN(angleDeg)) return;   // joint not stepped yet — a later idle call retries
+
+        ArticulationDrive d = body.xDrive;
+        d.driveType = ArticulationDriveType.Target;
+        d.stiffness = holdStiffness;
+        d.damping = velocityDriveDamping;
+        d.forceLimit = stallTorque;
+        body.xDrive = d;
+        body.SetDriveTarget(ArticulationDriveAxis.X, angleDeg);
+        holding = true;
+    }
+
+    // Restore the velocity drive so the motor runs on command again.
+    private void ExitHold()
+    {
+        if (body == null) return;
+        ArticulationDrive d = body.xDrive;
+        d.driveType = ArticulationDriveType.Velocity;
+        d.stiffness = 0f;
+        d.damping = velocityDriveDamping;
+        d.forceLimit = stallTorque;
+        body.xDrive = d;
+        holding = false;
     }
 
     void OnDisable()

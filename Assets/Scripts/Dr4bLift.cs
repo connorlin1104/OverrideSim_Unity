@@ -105,6 +105,11 @@ public class Dr4bLift : MonoBehaviour
         if (driverMotor == null) return;
         float sec = Mathf.Max(0.05f, liftRaiseSeconds);
         driverMotor.SetMaxRpm(Mathf.Abs(sweepDeg) / (6f * sec));
+        // Pin the lift's height whenever the button is released, so contact can't back-drive it up.
+        // Without this, ramming a round field roller (its reaction is angled UP, unlike a flat wall)
+        // slowly creeps the stiffness-0 velocity drive and the lift rises on its own. Enabled here so
+        // an existing DR4B prefab is fixed with no rebuild (Dr4bLift already holds the driver motor).
+        driverMotor.SetHoldPositionWhenIdle(true);
         lastAppliedRaiseSeconds = liftRaiseSeconds;
     }
 

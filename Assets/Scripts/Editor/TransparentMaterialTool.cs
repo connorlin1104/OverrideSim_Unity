@@ -25,10 +25,12 @@ using UnityEditor.SceneManagement;
 public static class TransparentMaterialTool
 {
     private const string FolderRoot = "Assets/Materials";
-    private const string FolderPath = "Assets/Materials/Transparent";
+    public const string FolderPath = "Assets/Materials/Transparent";
     private const string PrefabFolder = "Assets/Models/MatchLoadPreFabs"; // same set TunePiecePhysics touches
     private const string Suffix = "_Transparent";
-    private const float DefaultAlpha = 0.5f;
+    // Default see-through amount for a freshly-created variant. Low so clear plastic reads as a faint
+    // tint, not a white film; fine-tune per material afterward with Tune Transparency (less white).
+    private const float DefaultAlpha = 0.2f;
 
     // --- Menu: selected renderers only -----------------------------------------------------------
 
@@ -131,29 +133,8 @@ public static class TransparentMaterialTool
         Material clone = new Material(src); // copies base map/color and every other property
         clone.name = src.name + Suffix;
 
-        // URP/Lit surface → Transparent (alpha blend): the same recipe IntakePull.UnlitMaterial
-        // proves at runtime, plus the Lit-specific blend/clip properties and both-face rendering
-        // (the cup wall is a thin shell — its inside should stay visible through the outside).
-        if (clone.HasProperty("_Surface")) clone.SetFloat("_Surface", 1f);   // 0=opaque, 1=transparent
-        if (clone.HasProperty("_Blend")) clone.SetFloat("_Blend", 0f);       // 0=alpha blend
-        if (clone.HasProperty("_SrcBlend")) clone.SetFloat("_SrcBlend", (float)BlendMode.SrcAlpha);
-        if (clone.HasProperty("_DstBlend")) clone.SetFloat("_DstBlend", (float)BlendMode.OneMinusSrcAlpha);
-        if (clone.HasProperty("_ZWrite")) clone.SetFloat("_ZWrite", 0f);
-        if (clone.HasProperty("_AlphaClip")) clone.SetFloat("_AlphaClip", 0f);
-        if (clone.HasProperty("_Cull")) clone.SetFloat("_Cull", (float)CullMode.Off);
-        clone.DisableKeyword("_ALPHATEST_ON");
-        clone.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-        clone.SetOverrideTag("RenderType", "Transparent");
-        clone.renderQueue = (int)RenderQueue.Transparent;
-        clone.SetShaderPassEnabled("ShadowCaster", false); // clear plastic shouldn't cast a solid shadow
-
-        // The see-through amount = the base color's alpha. Start at half; edit on the .mat asset.
-        if (clone.HasProperty("_BaseColor"))
-        {
-            Color c = clone.GetColor("_BaseColor");
-            c.a = DefaultAlpha;
-            clone.SetColor("_BaseColor", c);
-        }
+        // Flip the clone's URP/Lit surface to a clean, low-white transparent (shared recipe).
+        ApplyTransparent(clone, DefaultAlpha, killSheen: true);
 
         AssetDatabase.CreateAsset(clone, path);
 
@@ -167,6 +148,70 @@ public static class TransparentMaterialTool
         }
         AssetDatabase.SaveAssets();
         return AssetDatabase.LoadAssetAtPath<Material>(path);
+    }
+
+    // The transparent look, shared by variant creation and the Tune Transparency retune tool.
+    // alpha = how much of the surface's OWN color shows (low = mostly see-through, little white
+    // film). killSheen removes URP/Lit's specular highlight + environment reflection and flattens
+    // the surface — that glare is what makes clear plastic read as bright white from most angles.
+    internal static void ApplyTransparent(Material m, float alpha, bool killSheen)
+    {
+        if (m.HasProperty("_Surface")) m.SetFloat("_Surface", 1f);   // 0=opaque, 1=transparent
+        if (m.HasProperty("_Blend")) m.SetFloat("_Blend", 0f);       // 0=alpha blend
+        if (m.HasProperty("_SrcBlend")) m.SetFloat("_SrcBlend", (float)BlendMode.SrcAlpha);
+        if (m.HasProperty("_DstBlend")) m.SetFloat("_DstBlend", (float)BlendMode.OneMinusSrcAlpha);
+        if (m.HasProperty("_ZWrite")) m.SetFloat("_ZWrite", 0f);
+        if (m.HasProperty("_AlphaClip")) m.SetFloat("_AlphaClip", 0f);
+        if (m.HasProperty("_Cull")) m.SetFloat("_Cull", (float)CullMode.Off); // thin shells: show both faces
+        m.DisableKeyword("_ALPHATEST_ON");
+        m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        m.SetOverrideTag("RenderType", "Transparent");
+        m.renderQueue = (int)RenderQueue.Transparent;
+        m.SetShaderPassEnabled("ShadowCaster", false); // clear plastic shouldn't cast a solid shadow
+
+        // The white "film" is mostly URP/Lit's specular + reflection glare on a smooth surface;
+        // turning both off and flattening the surface leaves a faint colored tint you see through.
+        if (killSheen)
+        {
+            if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0f);
+            if (m.HasProperty("_Metallic")) m.SetFloat("_Metallic", 0f);
+            if (m.HasProperty("_SpecularHighlights")) m.SetFloat("_SpecularHighlights", 0f);
+            if (m.HasProperty("_EnvironmentReflections")) m.SetFloat("_EnvironmentReflections", 0f);
+            m.EnableKeyword("_SPECULARHIGHLIGHTS_OFF");
+            m.EnableKeyword("_ENVIRONMENTREFLECTIONS_OFF");
+        }
+        else
+        {
+            if (m.HasProperty("_SpecularHighlights")) m.SetFloat("_SpecularHighlights", 1f);
+            if (m.HasProperty("_EnvironmentReflections")) m.SetFloat("_EnvironmentReflections", 1f);
+            m.DisableKeyword("_SPECULARHIGHLIGHTS_OFF");
+            m.DisableKeyword("_ENVIRONMENTREFLECTIONS_OFF");
+        }
+
+        // The see-through amount = the base color's alpha (URP reads _BaseColor; some shaders also
+        // key the legacy _Color, so set both).
+        SetColorAlpha(m, "_BaseColor", alpha);
+        SetColorAlpha(m, "_Color", alpha);
+        EditorUtility.SetDirty(m);
+    }
+
+    private static void SetColorAlpha(Material m, string prop, float alpha)
+    {
+        if (!m.HasProperty(prop)) return;
+        Color c = m.GetColor(prop);
+        c.a = alpha;
+        m.SetColor(prop, c);
+    }
+
+    // Every transparent variant material currently in the variants folder (for the retune tool).
+    internal static IEnumerable<Material> AllVariants()
+    {
+        if (!AssetDatabase.IsValidFolder(FolderPath)) yield break;
+        foreach (string guid in AssetDatabase.FindAssets("t:Material", new[] { FolderPath }))
+        {
+            Material m = AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath(guid));
+            if (m != null) yield return m;
+        }
     }
 
     // The original a variant was cloned from: resolved from the guid:fileID recorded at creation,
@@ -203,7 +248,28 @@ public static class TransparentMaterialTool
         return null;
     }
 
-    private static bool IsVariant(Material m) =>
+    // Headless retune for the editor-closed pass: flatten every existing variant to a low-white
+    // transparent (kills the specular/reflection sheen, drops alpha). The interactive Tune
+    // Transparency window does the same with a chosen alpha and a selection.
+    public static void RetuneAllVariantsBatch() => RetuneAll(0.2f, killSheen: true);
+
+    public static void RetuneAll(float alpha, bool killSheen)
+    {
+        int n = 0;
+        foreach (Material m in AllVariants())
+        {
+            ApplyTransparent(m, alpha, killSheen);
+            Debug.Log($"  retuned {m.name} -> alpha {alpha:0.00}");
+            n++;
+        }
+        AssetDatabase.SaveAssets();
+        Debug.Log($"Retune Transparent Variants: {n} variant(s) updated (alpha {alpha:0.00}, killSheen {killSheen}).");
+        if (n == 0)
+            Debug.LogWarning("Retune Transparent Variants: no variants found in " + FolderPath +
+                             " — nothing to retune (make some transparent first).");
+    }
+
+    internal static bool IsVariant(Material m) =>
         m != null && AssetDatabase.GetAssetPath(m).StartsWith(FolderPath);
 
     // --- Renderer plumbing ------------------------------------------------------------------------

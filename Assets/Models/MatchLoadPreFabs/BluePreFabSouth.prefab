@@ -116,6 +116,7 @@ GameObject:
   m_Component:
   - component: {fileID: 8792512220252419885}
   - component: {fileID: 5262435108041076586}
+  - component: {fileID: 2817210952331237309}
   m_Layer: 0
   m_Name: CupPreFab
   m_TagString: Untagged
@@ -180,6 +181,44 @@ Rigidbody:
   m_Interpolate: 0
   m_Constraints: 0
   m_CollisionDetection: 2
+--- !u!114 &2817210952331237309
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 431212381017904566}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cc21103d725754082b9ca244139e29a9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PieceStackMagnet
+  localBaseOffset: {x: -0.0000019073486, y: -0.0000076293945, z: -0.03753662}
+  localUpAxis: {x: 0, y: 0, z: -1}
+  restLinearSpeed: 0.6
+  restAngularSpeed: 1.2
+  maxCupTiltDeg: 35
+  captureRadius: 0.5
+  captureAbove: 0.7
+  captureBelow: 0.3
+  maxCaptureLinearSpeed: 3
+  maxCaptureFallSpeed: 20
+  maxCaptureAngularSpeed: 4
+  maxPullSpeed: 8
+  pullGain: 8
+  maxPullPerStep: 2
+  maxTiltSpeed: 6
+  tiltGain: 6
+  maxTiltCorrectionPerStep: 0.8
+  releaseRadius: 0.9
+  maxStack: 3
+  pieceProfiles:
+  - namePrefix: Cup
+    restHeight: 0.43001965
+    stackAdvance: 0.8600393
+  - namePrefix: Pin
+    restHeight: 0.43751854
+    stackAdvance: 0.8750371
 --- !u!1 &1343055379548838975
 GameObject:
   m_ObjectHideFlags: 0
@@ -246,7 +285,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 5609766208039222949, guid: f17a927cca8b54a15b3534415e569c99, type: 3}
+  - {fileID: 2100000, guid: b23d6b7256de2480c9bcc5b836690802, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0

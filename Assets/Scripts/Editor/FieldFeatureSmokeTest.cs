@@ -27,6 +27,9 @@ public static class FieldFeatureSmokeTest
     private const float MinUprightDot = 0.95f;        // cos of allowed tilt once seated
     private const float MaxDetentErrorDeg = 2f;
     private const float MaxDetentRestSpeed = 0.3f;    // rad/s about the axle once settled
+    private const float MaxCupAxisError = 0.2f;       // world units off a cup's stack axis once held
+
+    private static PieceStackMagnet[] _cupMagnets;
 
     [MenuItem("Tools/RoboSim/Field & Pieces/Validate Field Features (Magnets + Detents)", false, 6)]
     private static void ValidateMenu()
@@ -36,7 +39,7 @@ public static class FieldFeatureSmokeTest
         {
             Run();
             EditorUtility.DisplayDialog("Validate Field Features",
-                "All field-feature smoke tests PASSED (magnet hit, hold, miss; roller detent).\n" +
+                "All field-feature smoke tests PASSED (magnet hit, hold, miss; roller detent; cup magnet).\n" +
                 "See the Console for details.", "OK");
         }
         catch (System.Exception e)
@@ -59,6 +62,10 @@ public static class FieldFeatureSmokeTest
         if (snaps.Length == 0)
             throw new System.InvalidOperationException(
                 "No RollerSnap in the scene — run Tools > RoboSim > Field & Pieces > Attach Roller Detents first.");
+        _cupMagnets = Object.FindObjectsByType<PieceStackMagnet>(FindObjectsInactive.Exclude);
+        if (_cupMagnets.Length == 0)
+            Debug.Log("FieldFeatureSmokeTest: no PieceStackMagnet in the scene — cup-magnet check " +
+                      "skipped (run Add Cup Stack Magnets to include it).");
 
         var failures = new List<string>();
         SimulationMode previous = Physics.simulationMode;
@@ -68,6 +75,7 @@ public static class FieldFeatureSmokeTest
             TestMagnetHitAndHold(magnets, snaps, failures);
             TestMagnetMiss(magnets, snaps, failures);
             TestDetent(magnets, snaps, failures);
+            TestCupMagnet(magnets, snaps, failures);
         }
         finally
         {
@@ -79,7 +87,7 @@ public static class FieldFeatureSmokeTest
         if (failures.Count > 0)
             throw new System.InvalidOperationException(
                 "Field-feature smoke tests FAILED:\n  - " + string.Join("\n  - ", failures));
-        Debug.Log("FieldFeatureSmokeTest: PASSED (magnet hit, hold, miss; roller detent).");
+        Debug.Log("FieldFeatureSmokeTest: PASSED (magnet hit, hold, miss; roller detent; cup magnet).");
     }
 
     // One combined physics step: manual component ticks (edit-mode sim runs no MonoBehaviours),
@@ -89,6 +97,8 @@ public static class FieldFeatureSmokeTest
         for (int i = 0; i < steps; i++)
         {
             foreach (GoalStackMagnet m in magnets) if (m != null) m.StepMagnet(StepSeconds);
+            if (_cupMagnets != null)
+                foreach (PieceStackMagnet c in _cupMagnets) if (c != null) c.StepMagnet(StepSeconds);
             foreach (RollerSnap s in snaps) if (s != null) s.StepDetent(StepSeconds);
             Physics.Simulate(StepSeconds);
         }
@@ -202,6 +212,100 @@ public static class FieldFeatureSmokeTest
             failures.Add($"detent: roller '{snap.name}' settled {errorDeg:0.#} deg off a 120-deg face (max {MaxDetentErrorDeg})");
         if (axisSpeed > MaxDetentRestSpeed)
             failures.Add($"detent: roller '{snap.name}' is still spinning at {axisSpeed:0.##} rad/s after 3 s");
+    }
+
+    // Cup magnet: drop a pin onto a cup held perfectly still + upright (re-pinned each step at a
+    // clear high spot, so the test isolates the magnet's capture/hold from the cup settling itself),
+    // and require the pin to be captured, centered on the cup's axis, and to survive a small bump.
+    // Skipped (not failed) if no cup magnet is in the scene.
+    private static void TestCupMagnet(GoalStackMagnet[] magnets, RollerSnap[] snaps, List<string> failures)
+    {
+        PieceStackMagnet cupMag = null;
+        foreach (PieceStackMagnet m in _cupMagnets)
+        {
+            if (m == null) continue;
+            foreach (PieceStackMagnet.PieceProfile p in m.pieceProfiles)
+                if (p != null && p.namePrefix == "Pin") { cupMag = m; break; }
+            if (cupMag != null) break;
+        }
+        if (cupMag == null) return; // none applied — Run() logged the skip
+
+        Rigidbody cup = cupMag.GetComponent<Rigidbody>();
+        Rigidbody pin = FindLoosePieceForCup("Pin", cup);
+        if (cup == null || pin == null)
+        {
+            failures.Add("cup magnet: no cup rigidbody or no loose Pin* piece to test with");
+            return;
+        }
+
+        // Hold the cup upright and still at a clear high spot (2 m up), re-pinned every step.
+        Vector3 cupPos = new Vector3(0f, 20f, 0f);
+        Vector3 cupWorldUp = cupMag.transform.TransformDirection(cupMag.localUpAxis);
+        cupWorldUp = cupWorldUp.sqrMagnitude > 1e-4f ? cupWorldUp.normalized : cupMag.transform.up;
+        Quaternion cupRot = Quaternion.FromToRotation(cupWorldUp, Vector3.up) * cup.transform.rotation;
+
+        float pinRest = 0.8f;
+        foreach (PieceStackMagnet.PieceProfile p in cupMag.pieceProfiles)
+            if (p != null && p.namePrefix == "Pin") pinRest = p.restHeight;
+
+        PinCup(cup, cupPos, cupRot);
+        Vector3 basePos = cupMag.transform.TransformPoint(cupMag.localBaseOffset);
+        PlacePieceCenter(pin, basePos + Vector3.up * (pinRest + 0.4f));
+        pin.linearVelocity = Vector3.down * 2f;
+
+        bool everClaimed = false;
+        for (int i = 0; i < 300 && !(everClaimed && i > 200); i++)
+        {
+            PinCup(cup, cupPos, cupRot);           // keep the base perfectly at rest + upright
+            Step(magnets, snaps, 1);
+            everClaimed |= PieceStackMagnet.IsClaimed(pin);
+        }
+
+        if (!PieceStackMagnet.IsClaimed(pin))
+        {
+            float off = AxisDistanceUp(cupMag.transform.TransformPoint(cupMag.localBaseOffset), pin.worldCenterOfMass);
+            failures.Add($"cup magnet: '{pin.name}' dropped onto cup '{cup.name}' was not held " +
+                         $"(ever claimed: {everClaimed}; pin ended {off:0.###}u off the cup axis)");
+            return;
+        }
+
+        float axisError = AxisDistanceUp(cupMag.transform.TransformPoint(cupMag.localBaseOffset), pin.worldCenterOfMass);
+        if (axisError > MaxCupAxisError)
+            failures.Add($"cup magnet: held '{pin.name}' is {axisError:0.###}u off the cup's stack axis (max {MaxCupAxisError})");
+
+        // Casual bump: a sideways shove within the magnet's strength must self-correct.
+        pin.linearVelocity += Vector3.forward * 2f;
+        for (int i = 0; i < 150; i++) { PinCup(cup, cupPos, cupRot); Step(magnets, snaps, 1); }
+        if (!PieceStackMagnet.IsClaimed(pin))
+            failures.Add("cup magnet hold: a 2 u/s bump knocked the pin off the cup");
+    }
+
+    // Force a cup to a fixed, motionless, upright pose (the deterministic resting base for the test).
+    private static void PinCup(Rigidbody cup, Vector3 pos, Quaternion rot)
+    {
+        cup.transform.SetPositionAndRotation(pos, rot);
+        cup.linearVelocity = Vector3.zero;
+        cup.angularVelocity = Vector3.zero;
+        Physics.SyncTransforms();
+    }
+
+    // Horizontal distance of a point from a vertical axis through basePos (world up).
+    private static float AxisDistanceUp(Vector3 basePos, Vector3 point)
+    {
+        Vector3 delta = point - basePos;
+        return (delta - Vector3.up * Vector3.Dot(delta, Vector3.up)).magnitude;
+    }
+
+    // A loose, unclaimed dynamic piece by prefix, excluding a specific body (the test cup).
+    private static Rigidbody FindLoosePieceForCup(string prefix, Rigidbody exclude)
+    {
+        foreach (Rigidbody rb in Object.FindObjectsByType<Rigidbody>(FindObjectsInactive.Exclude))
+        {
+            if (!rb.name.StartsWith(prefix) || rb.isKinematic || rb == exclude) continue;
+            if (GoalStackMagnet.IsClaimed(rb) || PieceStackMagnet.IsClaimed(rb)) continue;
+            return rb;
+        }
+        return null;
     }
 
     // A deterministic test goal: prefer a Neutral goal (standard geometry, sits flat mid-field)

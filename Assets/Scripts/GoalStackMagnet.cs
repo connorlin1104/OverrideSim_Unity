@@ -40,8 +40,10 @@ public class GoalStackMagnet : MonoBehaviour
     public Transform stackAnchor;
 
     [Header("Capture (small on purpose — a clear miss must stay out)")]
-    [Tooltip("How far off the stack axis (world units, horizontal) a piece's center may be and still get captured into the next slot.")]
+    [Tooltip("How far off the stack axis (world units, horizontal) a piece's center may be and still get captured NEAR THE POST TOP — the wide mouth of the capture funnel, where a ring dropping onto the stake is caught and guided down.")]
     public float captureRadius = 0.6f;
+    [Tooltip("Capture radius AT the seated slot (world units) — the TIGHT bottom of the funnel. A piece near the base must be nearly centered on the stake to be grabbed, so a ring merely leaning against the SIDE of the post is left loose and can be knocked off instead of sticking. The allowed radius widens linearly from this at the slot up to Capture Radius at the post top.")]
+    public float seatedCaptureRadius = 0.25f;
     [Tooltip("How far BELOW the next slot (world units, along the stack axis) a piece's center may be and still get captured.")]
     public float captureVerticalWindow = 0.9f;
     [Tooltip("How far ABOVE the next slot the capture window reaches. Tall on purpose: these goals are STAKES — a ring piece must be caught near the top of the post and guided down around it, or it just deflects off the post top and slides away. Baked from the goal's own height by the Add Goal Stack Magnets tool.")]
@@ -74,6 +76,8 @@ public class GoalStackMagnet : MonoBehaviour
     public float maxTiltCorrectionPerStep = 0.8f;
     [Tooltip("A seated piece whose center drifts this far (world units) from its slot has been forced off — the magnet releases it back to ordinary physics.")]
     public float releaseRadius = 1.2f;
+    [Tooltip("Extra vertical clearance between stacked pieces (world units): the magnet holds each piece this much ABOVE where its collider would otherwise rest, so stacked meshes keep a hair of separation instead of clipping. Raise it if pieces still overlap.")]
+    public float stackClearance = 0.15f;
 
     [Header("Stack")]
     [Tooltip("Most pieces this goal holds; further pieces are simply not captured (they stay loose on top).")]
@@ -177,7 +181,7 @@ public class GoalStackMagnet : MonoBehaviour
                 continue;
             }
 
-            Vector3 slot = stackAnchor.position + up * (baseHeight + s.profile.restHeight);
+            Vector3 slot = stackAnchor.position + up * (baseHeight + s.profile.restHeight + stackClearance);
             Vector3 posError = slot - s.rb.worldCenterOfMass;
 
             // Pull-in phase gets a leash long enough to cover the whole descent from the post top;
@@ -211,7 +215,7 @@ public class GoalStackMagnet : MonoBehaviour
             }
 
             HoldOnSlot(s, slot, up);
-            baseHeight += s.profile.stackAdvance;
+            baseHeight += s.profile.stackAdvance + stackClearance;
         }
 
         // 2) Look for a new piece settling onto the next open slot.
@@ -232,7 +236,15 @@ public class GoalStackMagnet : MonoBehaviour
         Vector3 desiredVel;
         if (s.arrived)
         {
-            desiredVel = Vector3.ClampMagnitude((slot - rb.worldCenterOfMass) * pullGain, maxPullSpeed);
+            // ONE-DIRECTIONAL hold: pull fully toward the slot sideways AND firmly LIFT a piece that
+            // has sunk below its slot, but NEVER pull one DOWN into the piece beneath it. Holding each
+            // piece up at its clean baked height (surface + restHeight + stackClearance) is what keeps
+            // stacked meshes from settling into each other; the downward half of the old pull was the
+            // clipping. Still capped by maxPullSpeed / maxPullPerStep, so it stays gentle.
+            Vector3 toSlot = slot - rb.worldCenterOfMass;
+            float along = Vector3.Dot(toSlot, up);
+            Vector3 lateral = toSlot - up * along;
+            desiredVel = Vector3.ClampMagnitude((lateral + up * Mathf.Max(along, 0f)) * pullGain, maxPullSpeed);
         }
         else
         {
@@ -305,7 +317,13 @@ public class GoalStackMagnet : MonoBehaviour
             Vector3 delta = rb.worldCenterOfMass - (nextSlot + up * profile.restHeight);
             float vertical = Vector3.Dot(delta, up);
             float horizontal = (delta - up * vertical).magnitude;
-            if (vertical > captureHeight || vertical < -captureVerticalWindow || horizontal > captureRadius) continue;
+            if (vertical > captureHeight || vertical < -captureVerticalWindow) continue;
+            // Funnel, not a cylinder: the allowed off-axis distance is TIGHT at the seated slot and
+            // widens to captureRadius at the post top. A ring dropping onto the stake is still caught
+            // up high and guided down; a piece leaning against the SIDE of the post near the base is
+            // off-axis at a low height, falls outside the narrow bottom, and stays loose (knockable).
+            float funnelT = Mathf.Clamp01(vertical / Mathf.Max(0.01f, captureHeight));
+            if (horizontal > Mathf.Lerp(seatedCaptureRadius, captureRadius, funnelT)) continue;
 
             // The catch: kill the excess speed the moment the magnet claims it — a piece falling at
             // ~15+ u/s would otherwise ricochet off the pocket (or the held piece below) faster
