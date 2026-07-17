@@ -338,7 +338,7 @@ public class Dr4bLiftBuilderWindow : EditorWindow
     }
 }
 
-// Headless-runnable core (window/core split like AddLiftWindow/LiftSetup).
+// Headless-runnable core (window/core split like PneumaticBuilderWindow/PneumaticSetup).
 public static class Dr4bLiftSetup
 {
     private const string UndoName = "Build DR4B Lift";
