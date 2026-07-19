@@ -124,6 +124,12 @@ public class RobotMotorController : MonoBehaviour
         float throttle = manualInput ? manualThrottle : leftStickInput.y;
         float turn = (manualInput ? manualTurn : rightStickInput.x) * turnRate;
 
+        // "Reverse Drive Direction" (Settings): flip which end is "front". That's a 180° rotation of
+        // the control frame, so BOTH the forward axis and the steering axis invert — negating throttle
+        // alone would mirror-image the steering when driving from the new front. Read live from
+        // PlayerPrefs so no spawner/instance wiring is needed.
+        if (ReverseDriveSettings.Reversed) { throttle = -throttle; turn = -turn; }
+
         float left = Mathf.Clamp(throttle + turn, -1f, 1f);
         float right = Mathf.Clamp(throttle - turn, -1f, 1f);
 

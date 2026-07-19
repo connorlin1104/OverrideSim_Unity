@@ -19,6 +19,18 @@ public static class VhacdNative
 {
     private const string LibraryName = "robosim_vhacd";
 
+    // --- thin-plate pre-scale (see GenerateConvexMeshes) ---
+    // A part counts as a "thin plate" when its smallest bounding extent is under this fraction of its
+    // MIDDLE extent (e.g. a 4.9 x 2.06 x 0.04 polycarb plate: 0.04 << 0.35 x 2.06).
+    private const float PlateThinRatio = 0.35f;
+    // When it is, the thin axis is stretched so its extent becomes this fraction of the middle extent
+    // (aspect ratio ~2) — thick enough that VHACD will actually decompose it, then the hull vertices are
+    // un-stretched. Higher = VHACD finds more concavity so a rounded/cut profile splits into MORE hulls
+    // that hug the curve tighter (measured on the Goal Aligner plate: 0.3 -> 2 hulls / 7.6% overhang,
+    // 0.5 -> 4 hulls / 3.1% overhang). Beyond ~0.5 it stops adding hulls at these params; to chord a
+    // curve even finer, lower the caller's VhacdConcavity toward 0 (slower, and affects all plastics).
+    private const float PlateTargetThicknessFrac = 0.5f;
+
     [StructLayout(LayoutKind.Sequential)]
     private struct Parameters
     {
@@ -65,7 +77,18 @@ public static class VhacdNative
     // Decomposes the mesh into at most maxHulls convex hull meshes (mesh-local space).
     // Returns null/empty when decomposition fails; throws DllNotFoundException when the native
     // plugin is missing — callers are expected to catch and fall back.
-    public static List<Mesh> GenerateConvexMeshes(Mesh mesh, uint maxHulls, uint resolution)
+    //
+    // THIN CUT PLATES (polycarb) need special handling. This VHACD build structurally refuses to
+    // decompose a thin/flat part no matter the concavity/resolution/down-sampling: measured directly
+    // against the dylib, an L-notched plate splits into 2 hulls at thickness >= ~0.25 of its width but
+    // collapses to ONE box-filling hull once it gets thinner (and a real polycarb plate at 122:1 aspect
+    // stays 1 hull even at concavity=0, res=4M). So instead of tuning thresholds (which cannot work), we
+    // STRETCH the plate's thin axis into a splittable aspect ratio before decomposing, then un-stretch
+    // the resulting hull vertices. Affine axis scaling preserves convexity, so the thin hulls still
+    // follow the 2D cut profile. Non-plate parts (funnels/dishes, whose extents are comparable) are left
+    // unscaled and decompose normally. maxHulls still caps the count.
+    public static List<Mesh> GenerateConvexMeshes(Mesh mesh, uint maxHulls, uint resolution,
+        double concavity, uint downsampling, double minVolumePerHull)
     {
         Vector3[] vertices = mesh.vertices;
         int[] meshTriangles = mesh.triangles;
@@ -82,19 +105,40 @@ public static class VhacdNative
         uint[] triangles = new uint[meshTriangles.Length];
         for (int i = 0; i < meshTriangles.Length; i++) triangles[i] = (uint)meshTriangles[i];
 
-        // Defaults mirror VHACD.h Parameters::Init(), with OpenCL off (not compiled in).
+        // Thin-plate pre-scale: stretch the smallest bounding axis so VHACD will decompose it (see the
+        // method header). Computed from the mesh AABB; scaleK stays 1 for non-plate parts.
+        Vector3 mn = vertices[0], mx = vertices[0];
+        for (int i = 1; i < vertices.Length; i++) { mn = Vector3.Min(mn, vertices[i]); mx = Vector3.Max(mx, vertices[i]); }
+        Vector3 ext = mx - mn;
+        int thinAxis = 0;
+        if (ext[1] < ext[thinAxis]) thinAxis = 1;
+        if (ext[2] < ext[thinAxis]) thinAxis = 2;
+        float thin = ext[thinAxis];
+        float median = ext[0] + ext[1] + ext[2]
+                       - Mathf.Min(ext[0], Mathf.Min(ext[1], ext[2]))
+                       - Mathf.Max(ext[0], Mathf.Max(ext[1], ext[2]));
+        double scaleK = 1.0;
+        if (thin > 1e-9f && thin < PlateThinRatio * median)
+        {
+            scaleK = (PlateTargetThicknessFrac * median) / thin;
+            for (int i = 0; i < vertices.Length; i++)
+                points[i * 3 + thinAxis] = (float)(points[i * 3 + thinAxis] * scaleK);
+        }
+
+        // Defaults mirror VHACD.h Parameters::Init() (OpenCL off), EXCEPT the split-sensitivity knobs
+        // (concavity / down-sampling / minVolumePerCH), which the caller tunes for thin cut plates.
         Parameters parameters = new Parameters
         {
-            concavity = 0.001,
+            concavity = concavity,
             alpha = 0.05,
             beta = 0.05,
-            minVolumePerCH = 0.0001,
+            minVolumePerCH = minVolumePerHull,
             callback = IntPtr.Zero,
             logger = IntPtr.Zero,
             resolution = resolution,
             maxNumVerticesPerCH = 64,
-            planeDownsampling = 4,
-            convexhullDownsampling = 4,
+            planeDownsampling = downsampling,
+            convexhullDownsampling = downsampling,
             pca = 0,
             mode = 0, // voxel-based (recommended)
             convexhullApproximation = 1,
@@ -128,10 +172,13 @@ public static class VhacdNative
                 Vector3[] hullVertices = new Vector3[hull.nPoints];
                 for (int v = 0; v < hullVertices.Length; v++)
                 {
-                    hullVertices[v] = new Vector3(
+                    Vector3 hv = new Vector3(
                         (float)rawPoints[v * 3],
                         (float)rawPoints[v * 3 + 1],
                         (float)rawPoints[v * 3 + 2]);
+                    // Undo the thin-plate pre-scale so the hull sits back in the mesh's real dimensions.
+                    if (scaleK != 1.0) hv[thinAxis] = (float)(hv[thinAxis] / scaleK);
+                    hullVertices[v] = hv;
                 }
 
                 Mesh hullMesh = new Mesh();

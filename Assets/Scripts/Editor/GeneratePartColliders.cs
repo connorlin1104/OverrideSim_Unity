@@ -64,22 +64,57 @@ public static class GeneratePartColliders
     private const string ObbChildName = "_OBBCollider";
 
     // --- Fill-ratio triage: tighter colliders for parts a single box grossly over-covers ---
-    // Everything below works from fill = meshVolume / referenceBoxVolume (the tighter of the
-    // AABB/OBB). Solid-ish parts (gears ~0.79, boxes 1.0) keep the classic single box.
-    private const float FillRatioSingleBox = 0.55f;
-    // Below this fill, PLASTIC parts (RobotPartClassifier.IsPlastic: the Polycarb Funnel and
-    // the 276-* Web panels) get VHACD convex hulls — the only shape that makes a dish/bend
-    // physically real in every axis on a dynamic articulation (non-convex MeshColliders are
-    // illegal there). The gate is name-based on purpose: a purely geometric one either missed
-    // the funnel (a near-flat dish) or hulled ~29 gears/motor caps for 282 colliders.
-    private const float FillRatioVhacd = 0.4f;
+    // fill = meshVolume / referenceBoxVolume (the AABB box). A PLASTIC part is convex-decomposed (VHACD)
+    // UNLESS it reads as a near-solid block (fill at or above this), which keeps a cheap single box.
+    // Hulls are the only thing that makes a dish/bend/cut physically real in every axis on a dynamic
+    // articulation — non-convex MeshColliders are illegal there. The plastic gate is name-based
+    // (IsUnderPlastic) on purpose: a purely geometric one hulled ~29 gears/motor caps for 282 colliders.
+    //
+    // This cutoff is deliberately HIGH (0.92, was 0.55). Polycarb is water-jet/router cut into a 2D
+    // profile: a flat plate cut into an L / crescent / notched bracket fills 55-90% of its bounding
+    // rectangle, so a 0.55 gate boxed exactly the cut plates the user needs hulled (the box fills in the
+    // notch the part was cut to make). Only an essentially-full solid block (>= 0.92) now keeps a box.
+    // Critically, an UNMEASURABLE mesh (open/non-manifold sheet, where the signed volume is garbage) is
+    // treated as "decompose", NOT as "solid" — see TryMeasureFill. The old FillOf collapsed both to 1.0,
+    // which silently boxed every non-watertight plastic plate however concave.
+    private const float FillRatioPlasticHull = 0.92f;
     private const int MaxSlabs = 6;
     // Slab decomposition is kept only when its boxes' total volume beats the single box by at
     // least this margin; a FLAT panel fails this and falls back to its (already tight) box.
     private const float SlabAcceptRatio = 0.7f;
     private const string SlabChildName = "_SlabCollider";
-    private const uint VhacdMaxHulls = 10;
-    private const uint VhacdResolution = 100000;
+    // Minimum emitted slab-box thickness (world units) so a thin sheet's slab isn't a near-zero-thickness
+    // sliver that tunnels or reads as "not around the visual". ~2 mm at the 10x world scale.
+    private const float MinSlabThickness = 0.02f;
+    private const string GroupColliderChildName = "_GroupCollider";
+    // Max convex hulls per PLASTIC part (VHACD is gated to plastic — see the structural loop). Polycarb is
+    // usually router/water-jet cut into a specific 2D profile — moon slivers, hole-riddled web panels,
+    // scalloped funnel lips — and only a hull cloud that follows that outline collides right; too few and a
+    // piece rests on a collider that ignores the cut. This is a CAP, not a target: VHACD keeps splitting
+    // only until it meets the concavity threshold, so a near-solid plate still yields a few hulls while a
+    // heavily-cut profile is free to follow its curve. History: 10 in the first model, over-trimmed to 6
+    // (too coarse for cut plates), then 32, now 64 (a complex aligner profile still read coarse at 32).
+    // Plastic is a handful of parts so the extra hulls stay cheap — and it's a per-plastic-part cost, not
+    // a per-robot one; the old "way too complex" blow-up came from hulling ~29 gears/motors, which the
+    // plastic gate excludes. Bump this further if an intricate profile still reads coarse.
+    private const uint VhacdMaxHulls = 64;
+    // Voxel budget for the decomposition. Higher = each hull hugs the cut curve tighter and finer features
+    // survive voxelization; needs to be generous enough that up to VhacdMaxHulls distinct regions actually
+    // resolve (at 100k a thin sheet is only ~3 voxels thick). Editor-time only, a few plastic parts — cost
+    // is fine; the single-part rebuild tool pays it for just one part.
+    private const uint VhacdResolution = 1000000;
+    // V-HACD split-sensitivity (see VhacdNative). NOTE: for a THIN cut plate these thresholds cannot make
+    // it split — VHACD structurally collapses a flat part to one box-filling hull at ANY concavity (proven
+    // directly against the dylib: a 122:1 plate stays 1 hull even at concavity=0, res=4M). VhacdNative
+    // handles that by pre-stretching the plate's thin axis into a splittable aspect ratio; these knobs
+    // then govern how finely the (now-thick) part decomposes. Values below are the measured sweet spot:
+    // real cut plates split into 2 tight profile-following hulls; a genuinely solid block stays 1 hull.
+    // Dial VhacdConcavity/VhacdDownsampling UP if decomposition gets too busy or too slow; DOWN if it
+    // reads coarse. (For a plate that still reads as one blocky hull, the lever is VhacdNative's
+    // PlateTargetThicknessFrac, not these.)
+    private const double VhacdConcavity = 0.0005;
+    private const uint VhacdDownsampling = 2;
+    private const double VhacdMinVolumePerHull = 0.000001;
     // Hull meshes must be persisted or the saved scene's MeshColliders reference dead meshes.
     private const string HullAssetRootFolder = "Assets/RobotColliders";
 
@@ -93,6 +128,9 @@ public static class GeneratePartColliders
         public int boxCount, obbChildCount, sphereCount, skippedFasteners, skippedDegenerate;
         public int slabParts, slabBoxCount, vhacdParts, hullCount;
         public List<RobotPartClassifier.WheelCluster> wheelClusters;
+        // Human-readable reasons a PLASTIC-named part kept a box instead of getting convex hulls, so the
+        // "why didn't my polycarb hull?" question is answered in the Console instead of by guessing.
+        public List<string> plasticBoxNotes = new List<string>();
     }
 
     [MenuItem("Tools/RoboSim/Robot/Advanced/Rebuild Part Colliders", false, 1)]
@@ -106,6 +144,272 @@ public static class GeneratePartColliders
             return;
         }
         Generate(robot);
+    }
+
+    [MenuItem("Tools/RoboSim/Robot/Advanced/Remove Part Colliders", false, 2)]
+    private static void RemoveCollidersFromSelection()
+    {
+        GameObject robot = Selection.activeGameObject;
+        if (robot == null)
+        {
+            EditorUtility.DisplayDialog("Remove Part Colliders",
+                "Select your Robot root in the Hierarchy first.", "OK");
+            return;
+        }
+
+        int count = robot.GetComponentsInChildren<Collider>(true).Length;
+        if (count == 0)
+        {
+            EditorUtility.DisplayDialog("Remove Part Colliders",
+                $"'{robot.name}' has no colliders to remove.", "OK");
+            return;
+        }
+
+        if (!EditorUtility.DisplayDialog("Remove Part Colliders",
+            $"Remove ALL {count} collider(s) from '{robot.name}'?\n\n" +
+            "Deletes every generated collider (wheel spheres, part boxes, the _OBBCollider/_SlabCollider " +
+            "child objects, and convex-hull MeshColliders) plus this robot's saved hull meshes under " +
+            "Assets/RobotColliders. Meshes and the rig are kept. Use this to clear over-generated colliders, " +
+            "then run Rebuild Part Colliders to make clean ones.\n\n" +
+            "Undo restores the box/sphere colliders, but the deleted plastic hull meshes are NOT restored — " +
+            "undoing leaves the plastic parts with empty MeshColliders, so just run Rebuild Part Colliders " +
+            "instead of undoing.",
+            "Remove them", "Cancel"))
+            return;
+
+        Undo.IncrementCurrentGroup();
+        Undo.SetCurrentGroupName("Remove Part Colliders");
+        int group = Undo.GetCurrentGroup();
+        int removed = StripColliders(robot, useUndo: true);
+        Undo.CollapseUndoOperations(group);
+
+        EditorUtility.SetDirty(robot);
+        EditorUtility.DisplayDialog("Remove Part Colliders",
+            $"Removed {removed} collider(s) from '{robot.name}'.\n\n" +
+            "Next: run Rebuild Part Colliders when you want fresh ones.", "OK");
+        Debug.Log($"Remove Part Colliders: removed {removed} collider(s) from '{robot.name}'.", robot);
+    }
+
+    [MenuItem("Tools/RoboSim/Robot/Advanced/Rebuild Selected Part Colliders", false, 3)]
+    private static void RebuildSelectedPart()
+    {
+        GameObject part = Selection.activeGameObject;
+        if (part == null)
+        {
+            EditorUtility.DisplayDialog("Rebuild Selected Part Colliders",
+                "Select the PART in the Hierarchy first — its named component node (e.g. \"Goal Aligner\" " +
+                "or a wheel), not the whole robot.", "OK");
+            return;
+        }
+
+        // If the user picked a generated collider holder (_OBBCollider/_SlabCollider/_GroupCollider),
+        // walk up to the real part that owns it — a holder has no meshes of its own to rebuild.
+        while (part != null &&
+               (part.name == ObbChildName || part.name == SlabChildName || part.name == GroupColliderChildName))
+            part = part.transform.parent != null ? part.transform.parent.gameObject : null;
+        if (part == null)
+        {
+            EditorUtility.DisplayDialog("Rebuild Selected Part Colliders",
+                "Select the named part node, not a generated _OBBCollider/_SlabCollider holder.", "OK");
+            return;
+        }
+
+        // The whole robot? Send them to the whole-robot tool — this one is for a single part and would
+        // strip every collider under the selection then rebuild only what it re-detects.
+        if (part.GetComponent<RobotMotorController>() != null ||
+            part.GetComponent<RobotDriveController>() != null ||
+            part.GetComponent<RobotMechanisms>() != null)
+        {
+            EditorUtility.DisplayDialog("Rebuild Selected Part Colliders",
+                $"'{part.name}' is the whole robot. Use Rebuild Part Colliders for the entire bot, or " +
+                "select a single part under it for this tool.", "OK");
+            return;
+        }
+
+        GameObject root = ResolveRobotRoot(part);
+        if (root == null) root = part;
+        // Resolve the wheel/structural decision up front (same call RebuildPart makes) so the dialog can
+        // show it — a wheel becomes ONE sphere, so a mis-selected group is visible before it runs.
+        bool asWheel = IsWheelPart(part, null);
+
+        if (!EditorUtility.DisplayDialog("Rebuild Selected Part Colliders",
+            $"Rebuild colliders for '{part.name}' only?\n\n" +
+            $"(part of robot '{root.name}')\n\n" +
+            $"Resolves to: {(asWheel ? "a WHEEL → one rolling sphere over the part" : "structural → plastic → convex hulls, everything else → one box")}\n\n" +
+            "Auto-cleans just this part first — its colliders and its own saved hull meshes — then " +
+            "regenerates only this part. The rest of the robot's colliders are untouched, so you can " +
+            "re-run one bad part after tuning instead of rebuilding the whole bot.",
+            "Rebuild it", "Cancel"))
+            return;
+
+        Undo.IncrementCurrentGroup();
+        Undo.SetCurrentGroupName("Rebuild Selected Part Colliders");
+        int group = Undo.GetCurrentGroup();
+        Report report = RebuildPart(part, root);
+        Undo.CollapseUndoOperations(group);
+
+        EditorUtility.DisplayDialog("Rebuild Selected Part Colliders",
+            $"Rebuilt '{part.name}':\n" +
+            $"  {report.hullCount} convex hull(s) on {report.vhacdParts} concave part(s)\n" +
+            $"  {report.boxCount + report.obbChildCount} box(es), {report.slabBoxCount} slab box(es)\n" +
+            $"  {report.sphereCount} wheel sphere(s)\n" +
+            $"  skipped {report.skippedFasteners} fastener(s), {report.skippedDegenerate} decal(s)", "OK");
+    }
+
+    // Rebuilds colliders for a SINGLE part subtree without touching the rest of the robot — the per-part
+    // counterpart to Generate. Auto-cleans first: deletes THIS part's own persisted hull meshes (found via
+    // its MeshColliders, so the other parts' hulls survive — a folder-wide wipe like StripColliders would
+    // kill them all), strips this part's colliders and _OBB/_Slab/_Group holders, then re-runs the same
+    // triage over just this subtree (wheel → sphere, plastic → hulls, else one box per component). `root`
+    // is the robot root, used only for ancestor-chain classification + the hull folder name so the part
+    // classifies identically to a whole-bot pass. Hull-asset delete/create is outside Undo (see Generate's
+    // TryBuildVhacdHulls note) — the collider changes undo, but re-running is cleaner than undoing.
+    public static Report RebuildPart(GameObject part, GameObject root, string wheelNamePrefix = null)
+    {
+        if (part == null) throw new System.ArgumentNullException(nameof(part));
+        if (root == null) root = part;
+
+        PhysicsMaterial wheelMat = GetOrCreateMaterial(WheelMaterialPath, "WheelPhysics",
+            WheelDynamicFriction, WheelStaticFriction, PhysicsMaterialCombine.Maximum);
+        PhysicsMaterial chassisMat = GetOrCreateMaterial(ChassisMaterialPath, "ChassisPhysics",
+            ChassisFriction, ChassisFriction, PhysicsMaterialCombine.Minimum);
+        AssetDatabase.SaveAssets();
+
+        var report = new Report { wheelClusters = new List<RobotPartClassifier.WheelCluster>() };
+
+        // 1) Auto-clean — delete THIS part's persisted hull meshes (the assets its MeshColliders point at,
+        //    and only ones under our hull folder — never a shared FBX mesh), then strip its colliders and
+        //    the _OBB/_Slab/_Group child holders. The robot's other hull assets are left in place.
+        foreach (MeshCollider mc in part.GetComponentsInChildren<MeshCollider>(true))
+        {
+            if (mc == null || mc.sharedMesh == null) continue;
+            string assetPath = AssetDatabase.GetAssetPath(mc.sharedMesh);
+            if (!string.IsNullOrEmpty(assetPath) &&
+                assetPath.StartsWith(HullAssetRootFolder + "/", System.StringComparison.Ordinal))
+                AssetDatabase.DeleteAsset(assetPath);
+        }
+        foreach (Transform t in part.GetComponentsInChildren<Transform>(true))
+        {
+            // Skip `part` itself: GetComponentsInChildren includes the root, and if the caller passed a
+            // holder-named node, destroying it here would invalidate `part` before the collider sweep.
+            if (t != null && t != part.transform && t.gameObject != null &&
+                (t.name == ObbChildName || t.name == SlabChildName || t.name == GroupColliderChildName))
+                DestroyObject(t.gameObject, useUndo: true);
+        }
+        foreach (Collider col in part.GetComponentsInChildren<Collider>(true))
+            if (col != null) DestroyObject(col, useUndo: true);
+
+        // 2) A wheel gets ONE rolling sphere over the whole part (a boxed wheel can't roll); anything else
+        //    goes through the structural triage scoped to this subtree.
+        if (IsWheelPart(part, wheelNamePrefix))
+            BuildWheelSphere(part, wheelMat, report);
+        else
+            BuildStructuralColliders(part, root, null, chassisMat, hullConcaveStructural: true, report);
+
+        AssetDatabase.SaveAssets(); // flush any new hull meshes
+        EditorUtility.SetDirty(part);
+        if (part.scene.IsValid()) EditorSceneManager.MarkSceneDirty(part.scene);
+
+        Debug.Log($"Rebuild Selected Part Colliders: '{part.name}' → {report.sphereCount} sphere(s), " +
+                  $"{report.boxCount + report.obbChildCount} box(es), {report.slabBoxCount} slab box(es), " +
+                  $"{report.hullCount} hull(s) on {report.vhacdParts} concave part(s).", part);
+        LogPlasticBoxNotes(report, part);
+        return report;
+    }
+
+    // The robot root for a selected part: the highest ancestor carrying rig data, else the selection
+    // itself. Mirrors CleanRobotRig.ResolveRobotRoot so the per-part tool resolves the same root a full
+    // rebuild ran on (matching hull-folder name + ancestor-chain classification).
+    private static GameObject ResolveRobotRoot(GameObject sel)
+    {
+        if (sel == null) return null;
+        RobotMechanisms reg = sel.GetComponentInParent<RobotMechanisms>();
+        if (reg != null) return reg.gameObject;
+        RobotMotorController motor = sel.GetComponentInParent<RobotMotorController>();
+        if (motor != null) return motor.gameObject;
+        RobotDriveController drive = sel.GetComponentInParent<RobotDriveController>();
+        if (drive != null) return drive.gameObject;
+        ArticulationBody ab = sel.GetComponentInParent<ArticulationBody>();
+        if (ab != null)
+        {
+            Transform top = ab.transform;
+            for (Transform t = top.parent; t != null; t = t.parent)
+                if (t.GetComponent<ArticulationBody>() != null) top = t;
+            return top.gameObject;
+        }
+        return sel; // nothing rigged yet — treat the selection as the robot
+    }
+
+    // True when the SELECTED node itself reads as a wheel by name — so the per-part rebuild gives it a
+    // rolling sphere instead of a box. Matches the selected node's OWN name only, never its subtree: a
+    // group/rail/robot-root that merely CONTAINS a wheel must go through the structural triage, or the
+    // whole selection would be wrapped in one giant sphere. Uses the broad DefaultWheelTokens so it catches
+    // omni/traction/flex on any bot; a wheel-assembly node ("Flexwheel w/ inserts", "3.25 AS Omni ...") is
+    // itself wheel-named, so selecting the wheel still spheres correctly.
+    private static bool IsWheelPart(GameObject part, string wheelNamePrefix)
+    {
+        string[] tokens = (string.IsNullOrEmpty(wheelNamePrefix)
+            ? RobotPartClassifier.DefaultWheelTokens : wheelNamePrefix).Split(',');
+        string n = RobotPartClassifier.NormalizeName(part.name);
+        foreach (string tok in tokens)
+        {
+            string trimmed = tok.Trim();
+            if (trimmed.Length > 0 && n.IndexOf(trimmed, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+        }
+        return false;
+    }
+
+    // One rolling SphereCollider sized to the part's whole renderer bounds, on the part node — the
+    // single-part equivalent of the wheel-cluster sphere in Generate (which merges coincident omni halves;
+    // here the user's selection already IS the wheel, so its combined bounds are the wheel).
+    private static void BuildWheelSphere(GameObject part, PhysicsMaterial wheelMat, Report report)
+    {
+        Renderer[] rends = part.GetComponentsInChildren<Renderer>(true);
+        if (rends.Length == 0) return;
+        Bounds b = rends[0].bounds;
+        for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+
+        Transform node = part.transform;
+        SphereCollider sphere = Undo.AddComponent<SphereCollider>(node.gameObject);
+        sphere.center = node.InverseTransformPoint(b.center);
+        Vector3 lossy = node.lossyScale;
+        float scale = Mathf.Max(Mathf.Max(Mathf.Abs(lossy.x), Mathf.Abs(lossy.y)), Mathf.Abs(lossy.z));
+        Vector3 s = b.size;
+        float worldRadius = Mathf.Max(s.x, Mathf.Max(s.y, s.z)) * 0.5f;
+        sphere.radius = worldRadius / Mathf.Max(scale, 1e-6f);
+        sphere.sharedMaterial = wheelMat;
+        report.sphereCount++;
+    }
+
+    // Removes every collider from the robot: the _OBBCollider/_SlabCollider child objects first (so we
+    // don't orphan empties), then every remaining Collider, then this robot's persisted hull meshes
+    // under Assets/RobotColliders. Returns how many colliders were present (and removed). Shared by
+    // Generate (which rebuilds after) and the Remove Part Colliders menu item.
+    public static int StripColliders(GameObject root, bool useUndo)
+    {
+        if (root == null) throw new System.ArgumentNullException(nameof(root));
+
+        int removed = root.GetComponentsInChildren<Collider>(true).Length;
+
+        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (t != null && t.gameObject != null &&
+                (t.name == ObbChildName || t.name == SlabChildName || t.name == GroupColliderChildName))
+                DestroyObject(t.gameObject, useUndo);
+        }
+        foreach (Collider col in root.GetComponentsInChildren<Collider>(true))
+        {
+            if (col != null) DestroyObject(col, useUndo);
+        }
+        AssetDatabase.DeleteAsset(HullAssetRootFolder + "/" + SanitizeFileName(root.name));
+        return removed;
+    }
+
+    private static void DestroyObject(Object obj, bool useUndo)
+    {
+        if (useUndo) Undo.DestroyObjectImmediate(obj);
+        else Object.DestroyImmediate(obj);
     }
 
     // Batch entry for -executeMethod: opens the scene, finds the robot on its own, regenerates,
@@ -146,7 +450,11 @@ public static class GeneratePartColliders
     // Rebuilds all colliders under root. One collapsed Undo group so a single Ctrl+Z reverts it.
     // wheelNamePrefix selects which nodes get rolling SphereColliders instead of boxes; null
     // uses this project's drivetrain wheel name. Pass a new robot's wheel prefix when importing.
-    public static Report Generate(GameObject root, string wheelNamePrefix = null)
+    // hullConcaveStructural true: concave PLASTIC (funnels/webs that pieces rest in) gets convex-hull
+    // mesh colliders that follow their shape (the first-model behavior); false: boxes only. Either way
+    // wheels get spheres and EVERY other component (metal, standoffs, sensors, motors, misc) gets ONE
+    // box covering its whole part, oriented by its own node; fasteners and decals are skipped.
+    public static Report Generate(GameObject root, string wheelNamePrefix = null, bool hullConcaveStructural = true)
     {
         Undo.SetCurrentGroupName(UndoName);
         int undoGroup = Undo.GetCurrentGroup();
@@ -160,18 +468,9 @@ public static class GeneratePartColliders
         var report = new Report();
 
         // 1) Strip everything a previous run (or the old fix tools) left behind: the _OBBCollider
-        //    and _SlabCollider child objects first (so we don't orphan empties), then every
-        //    remaining collider, then the previous run's persisted hull meshes.
-        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
-        {
-            if (t != null && t.gameObject != null && (t.name == ObbChildName || t.name == SlabChildName))
-                Undo.DestroyObjectImmediate(t.gameObject);
-        }
-        foreach (Collider col in root.GetComponentsInChildren<Collider>(true))
-        {
-            if (col != null) Undo.DestroyObjectImmediate(col);
-        }
-        AssetDatabase.DeleteAsset(HullAssetRootFolder + "/" + SanitizeFileName(root.name));
+        //    and _SlabCollider child objects, every remaining collider, and the previous run's
+        //    persisted hull meshes. Shared with the Remove Part Colliders menu item.
+        StripColliders(root, useUndo: true);
 
         // 2) Wheels: one sphere per physical wheel, on the cluster's shallowest node.
         var clusters = RobotPartClassifier.FindWheelClusters(root, wheelNamePrefix);
@@ -193,92 +492,38 @@ public static class GeneratePartColliders
             sphere.sharedMaterial = wheelMat;
             report.sphereCount++;
 
-            // Everything inside the wheel subtrees is covered by the sphere.
+            // Everything physically inside the wheel is already covered by the sphere. Consume by WORLD
+            // CONTAINMENT (a mesh whose bounds-center sits within the wheel sphere), not just the
+            // wheel-named node's subtree — so a hub/insert/hex-adapter that is a SIBLING of the wheel
+            // node (e.g. under a "Flexwheel w/ inserts" group) doesn't get its own box collider inside
+            // the rolling wheel. Using the bounds CENTER keeps a long axle that merely passes through
+            // the wheel from being consumed. Position-based, so it's robust to the post-rig hierarchy.
             foreach (Transform node in cluster.nodes)
                 foreach (MeshFilter mf in node.GetComponentsInChildren<MeshFilter>(true))
                     consumed.Add(mf);
-        }
-
-        // 3) Structural parts: one tight box per remaining mesh.
-        foreach (MeshFilter mf in root.GetComponentsInChildren<MeshFilter>(true))
-        {
-            if (consumed.Contains(mf)) continue;
-            Mesh mesh = mf.sharedMesh;
-            if (mesh == null) continue;
-
-            // Meshes sit on generic "Body1" leaf nodes, so the fastener name lives on an
-            // ancestor group node — test the whole chain up to the root.
-            if (IsUnderFastener(mf.transform, root.transform))
+            Vector3 wheelCenter = cluster.worldBounds.center;
+            float wheelR2 = worldRadius * worldRadius;
+            float wheelDiameter = 2f * worldRadius;
+            foreach (MeshFilter innerMf in root.GetComponentsInChildren<MeshFilter>(true))
             {
-                report.skippedFasteners++;
-                continue;
-            }
-
-            Vector3 absLossy = Abs(mf.transform.lossyScale);
-            Vector3 worldExtents = Vector3.Scale(mesh.bounds.extents, absLossy);
-            if (Mathf.Max(worldExtents.x, Mathf.Max(worldExtents.y, worldExtents.z)) < DecalMaxWorldExtent)
-            {
-                report.skippedDegenerate++;
-                continue;
-            }
-
-            // Prefer a PCA-oriented box when it is clearly tighter than the axis-aligned one
-            // (long parts modeled diagonally inside their node). Both boxes are computed in mesh
-            // space; an ancestor's uniform 10x scale applies to both identically.
-            Vector3 aabbSize = mesh.bounds.size;
-            float aabbVolume = aabbSize.x * aabbSize.y * aabbSize.z;
-            bool useObb = TryComputeObb(mesh, out Vector3 obbCenter, out Quaternion obbRotation, out Vector3 obbSize)
-                && obbSize.x * obbSize.y * obbSize.z < ObbMaxVolumeRatio * aabbVolume
-                && Quaternion.Angle(Quaternion.identity, obbRotation) > ObbMinAngleDegrees;
-
-            // Fill-ratio triage: how much of its reference box does the part actually occupy?
-            // Open/non-manifold meshes yield garbage volumes (<= 0 or bigger than the box) —
-            // those read as "solid" and keep the single-box path.
-            Vector3 refSize = useObb ? obbSize : aabbSize;
-            float refVolume = refSize.x * refSize.y * refSize.z;
-            float meshVolume = ComputeMeshVolume(mesh);
-            float fill = (meshVolume > 0f && !float.IsNaN(meshVolume) && meshVolume <= refVolume)
-                ? meshVolume / Mathf.Max(refVolume, 1e-12f)
-                : 1f;
-
-            if (fill < FillRatioSingleBox)
-            {
-                // Very hollow plastic (the funnel's dish, the webs' bends): convex decomposition
-                // follows the shape in every axis. Falls through to slabs when VHACD is
-                // unavailable or produces nothing.
-                if (fill < FillRatioVhacd && IsUnderPlastic(mf.transform, root.transform) &&
-                    TryBuildVhacdHulls(mf, chassisMat, root.name, report))
-                    continue;
-
-                // Everything else hollow: slab boxes along the long axis; the volume-acceptance
-                // test inside falls back to the single box when slabs don't actually win.
-                if (TryBuildSlabColliders(mf, mesh, useObb ? obbRotation : Quaternion.identity,
-                        chassisMat, report))
-                    continue;
-            }
-
-            if (useObb)
-            {
-                GameObject child = new GameObject(ObbChildName);
-                Undo.RegisterCreatedObjectUndo(child, UndoName);
-                child.transform.SetParent(mf.transform, false);
-                child.transform.localPosition = obbCenter;
-                child.transform.localRotation = obbRotation;
-                BoxCollider box = Undo.AddComponent<BoxCollider>(child);
-                box.center = Vector3.zero;
-                box.size = obbSize;
-                box.sharedMaterial = chassisMat;
-                report.obbChildCount++;
-            }
-            else
-            {
-                BoxCollider box = Undo.AddComponent<BoxCollider>(mf.gameObject);
-                box.center = mesh.bounds.center;
-                box.size = mesh.bounds.size;
-                box.sharedMaterial = chassisMat;
-                report.boxCount++;
+                if (consumed.Contains(innerMf)) continue;
+                Renderer rend = innerMf.GetComponent<Renderer>();
+                if (rend == null) continue; // can't size it safely — leave its box
+                Bounds b = rend.bounds;
+                // Consume only a SMALL part CENTERED inside the wheel (a hub/insert/hex-adapter), not a
+                // large part (a roller/bracket/sensor) that merely happens to be centered near the hub
+                // but extends well past the tyre — bounding the extent keeps that part's own collider.
+                if ((b.center - wheelCenter).sqrMagnitude <= wheelR2 &&
+                    Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z)) <= wheelDiameter)
+                    consumed.Add(innerMf);
             }
         }
+
+        // 3) Structural parts — the first-model (654V v1) approach: concave PLASTIC (funnels / web panels
+        //    pieces rest in) gets shape-following convex hulls; EVERYTHING else gets ONE box per whole
+        //    component. Shared with the single-part rebuild tool (Rebuild Selected Part Colliders) via
+        //    BuildStructuralColliders. Fasteners + decals are skipped.
+        BuildStructuralColliders(root, root, consumed, chassisMat, hullConcaveStructural, report);
         AssetDatabase.SaveAssets(); // flush any hull meshes written above
 
         // 4) Drive setup — all conditional, so the tool also runs cleanly on URDF/ArticulationBody
@@ -327,6 +572,7 @@ public static class GeneratePartColliders
                   $"{report.slabBoxCount} slab box(es) on {report.slabParts} sheet part(s), " +
                   $"{report.hullCount} convex hull(s) on {report.vhacdParts} concave part(s); skipped " +
                   $"{report.skippedFasteners} fastener mesh(es), {report.skippedDegenerate} decal mesh(es).", root);
+        LogPlasticBoxNotes(report, root);
         return report;
     }
 
@@ -348,6 +594,273 @@ public static class GeneratePartColliders
             volume += Vector3.Dot(a, Vector3.Cross(b, c)) / 6.0;
         }
         return Mathf.Abs((float)volume);
+    }
+
+    // --- Part-group boxing helpers -------------------------------------------------------
+
+    // Measures fill = meshVolume / AABB-box volume and reports whether the measurement is TRUSTWORTHY.
+    // A closed manifold mesh gives a signed volume in (0, refVol]; an open/non-manifold sheet gives
+    // garbage (<= 0, NaN, or bigger than its own box). Callers must NOT read the returned fill as "solid"
+    // when this returns false — for a plastic part, unmeasurable means "decompose", not "box". The old
+    // FillOf collapsed both cases to fill = 1.0, which silently boxed every non-watertight plastic plate
+    // however concave; that was the main reason cut polycarb refused to hull.
+    private static bool TryMeasureFill(Mesh mesh, out float fill)
+    {
+        Vector3 s = mesh.bounds.size;
+        float refVol = s.x * s.y * s.z;
+        float v = ComputeMeshVolume(mesh);
+        if (v > 0f && !float.IsNaN(v) && v <= refVol && refVol > 1e-12f)
+        {
+            fill = v / refVol;
+            return true;
+        }
+        fill = 1f;
+        return false;
+    }
+
+    // The named component a mesh belongs to. Meshes sit on generic "Body1".."BodyN" leaves under a
+    // named part group ("V5 Vision Sensor v1", "18 - 2x C-Chan v1", "0.750 Standoff"); return that
+    // named node so ONE box covers the whole component instead of one box per mesh. `boundary` is the
+    // highest node the walk may reach — the robot root in the whole-robot path, the selected part in a
+    // single-part rebuild (they are equal in the whole-robot path). Never returns a node above it, so a
+    // single-part rebuild can't escape the selection; falls back to the mesh's own node at the boundary.
+    private static Transform PartGroupOf(Transform meshNode, Transform boundary)
+    {
+        Transform t = meshNode;
+        while (t != null && t != boundary && IsGenericBodyName(t.name)) t = t.parent;
+        return (t != null && t != boundary) ? t : meshNode;
+    }
+
+    // "Body", "Body1", "Body23" (+ importer ":N"/" (N)" suffixes NormalizeName strips) — the generic
+    // per-body leaf names Fusion exports, which carry no part identity.
+    private static bool IsGenericBodyName(string name)
+    {
+        string n = RobotPartClassifier.NormalizeName(name);
+        if (n.Length < 4 || !n.StartsWith("Body", System.StringComparison.OrdinalIgnoreCase)) return false;
+        for (int i = 4; i < n.Length; i++) if (!char.IsDigit(n[i])) return false;
+        return true;
+    }
+
+    // The structural-collider triage, shared by the whole-robot Generate and the single-part rebuild.
+    // For every non-consumed mesh under `scope`: fasteners + decals are skipped; concave PLASTIC gets
+    // shape-following convex hulls (else falls through); everything else accumulates by component so it
+    // gets ONE box. `root` is the robot root — used for the ancestor-chain classification (fastener /
+    // plastic / simple-shape) and the hull asset folder name — so a part rebuilt in isolation classifies
+    // and files its hulls exactly as it would in a whole-bot pass. `consumed` (may be null) is the set of
+    // wheel-covered meshes to skip.
+    private static void BuildStructuralColliders(GameObject scope, GameObject root,
+        HashSet<MeshFilter> consumed, PhysicsMaterial chassisMat, bool hullConcaveStructural, Report report)
+    {
+        var partGroups = new Dictionary<Transform, List<MeshFilter>>();
+        // How each PLASTIC-named part's meshes classified, keyed by the part's readable label. A Fusion
+        // part is many generic "BodyN" leaf meshes under one named group, so tally per part and emit ONE
+        // accurate note after the loop instead of a duplicate (and possibly self-contradictory) line per leaf.
+        var plasticOutcomes = new Dictionary<string, PlasticPartOutcome>();
+        foreach (MeshFilter mf in scope.GetComponentsInChildren<MeshFilter>(true))
+        {
+            if (consumed != null && consumed.Contains(mf)) continue;
+            Mesh mesh = mf.sharedMesh;
+            if (mesh == null) continue;
+
+            // Meshes sit on generic "Body1" leaf nodes, so the fastener name lives on an ancestor
+            // group node — test the whole chain up to the root.
+            if (IsUnderFastener(mf.transform, root.transform))
+            {
+                report.skippedFasteners++;
+                continue;
+            }
+
+            Vector3 absLossy = Abs(mf.transform.lossyScale);
+            Vector3 worldExtents = Vector3.Scale(mesh.bounds.extents, absLossy);
+            if (Mathf.Max(worldExtents.x, Mathf.Max(worldExtents.y, worldExtents.z)) < DecalMaxWorldExtent)
+            {
+                report.skippedDegenerate++;
+                continue;
+            }
+
+            // Concave PLASTIC -> convex hulls that follow the shape (a dish/bend/cut a piece can sit in or
+            // against), the one thing a box can't reproduce. Falls back to slab boxes, then the component
+            // box below. Gated to plastic only (like the first model), and never on a motor/gear/sensor
+            // (SimpleShape) even when it's bundled under a plastic assembly. hullConcaveStructural off
+            // = boxes only. When a plastic part ends up boxed anyway, record WHY (report.plasticBoxNotes)
+            // so "why didn't my polycarb hull?" is answered in the Console, not by digging in the scene.
+            if (hullConcaveStructural && IsUnderPlastic(mf.transform, root.transform))
+            {
+                // Tally this leaf's outcome under its named part so ONE summary note is emitted later.
+                PlasticPartOutcome outcome = GetPlasticOutcome(
+                    plasticOutcomes, NamedPartLabel(mf.transform, root.transform));
+                if (IsUnderSimpleShape(mf.transform, root.transform))
+                {
+                    // A motor/gear/sensor ancestor forces a box even on plastic — remember which one, since a
+                    // mis-named CAD subassembly ("...Gearbox", "...Sensor Mount") shadowing a plate is a
+                    // common and otherwise-invisible reason a polycarb part refuses to hull. Falls to the box.
+                    outcome.simpleBox++;
+                    outcome.simpleAncestor = FirstSimpleShapeAncestorName(mf.transform, root.transform);
+                }
+                else
+                {
+                    // Decompose unless the part is a measured near-solid block. An UNMEASURABLE mesh
+                    // (open/non-manifold sheet) is decomposed, not assumed solid — that trap is exactly
+                    // what boxed non-watertight cut plates before (see FillRatioPlasticHull / TryMeasureFill).
+                    bool measured = TryMeasureFill(mesh, out float fill);
+                    if (!measured || fill < FillRatioPlasticHull)
+                    {
+                        if (TryBuildVhacdHulls(mf, chassisMat, root.name, report)) { outcome.hulled++; continue; }
+                        if (TryBuildSlabColliders(mf, mesh, Quaternion.identity, chassisMat, report))
+                        { outcome.slabbed++; continue; }
+                        outcome.failBox++; // VHACD + slab both declined; falls to the box below
+                    }
+                    else
+                    {
+                        outcome.solidBox++; // reads as a solid block; a single box is right, falls below
+                        outcome.lastSolidFill = fill;
+                    }
+                }
+            }
+
+            // Everything else (metal, standoffs, sensors, motors, gears, misc, solid plastic) ->
+            // collect the component's meshes so it gets ONE box (below). Bounded by `scope` (not `root`):
+            // in the whole-robot path scope==root so this is unchanged, but in a single-part rebuild it
+            // stops the box-owner walk at the selected part so a box is never placed on an ancestor
+            // OUTSIDE the selection (which would touch "the rest of the robot" the tool promised not to).
+            Transform group = PartGroupOf(mf.transform, scope.transform);
+            if (!partGroups.TryGetValue(group, out List<MeshFilter> groupList))
+            {
+                groupList = new List<MeshFilter>();
+                partGroups[group] = groupList;
+            }
+            groupList.Add(mf);
+        }
+
+        // One box per component (a standoff, C-channel, sensor, motor, ...), covering all its meshes.
+        foreach (KeyValuePair<Transform, List<MeshFilter>> kv in partGroups)
+            BuildPartGroupBox(kv.Key, kv.Value, chassisMat, report);
+
+        // One diagnostic line per plastic part that did NOT fully convert to hulls (fully-hulled or
+        // fully-slabbed parts stay silent — they came out shape-following, nothing to explain).
+        foreach (KeyValuePair<string, PlasticPartOutcome> kv in plasticOutcomes)
+        {
+            string note = ComposePlasticNote(kv.Key, kv.Value);
+            if (note != null) report.plasticBoxNotes.Add(note);
+        }
+    }
+
+    // Per-named-part tally of how its meshes classified, so the plastic diagnostic emits one accurate note
+    // per part (a Fusion part is many BodyN leaf meshes under one named group) rather than a duplicate,
+    // possibly-contradictory line per leaf.
+    private class PlasticPartOutcome
+    {
+        public int hulled, slabbed, solidBox, failBox, simpleBox;
+        public string simpleAncestor;
+        public float lastSolidFill;
+    }
+
+    private static PlasticPartOutcome GetPlasticOutcome(Dictionary<string, PlasticPartOutcome> map, string key)
+    {
+        if (!map.TryGetValue(key, out PlasticPartOutcome o)) { o = new PlasticPartOutcome(); map[key] = o; }
+        return o;
+    }
+
+    // One human-readable line summarizing why a plastic part kept box collider(s), reflecting the mix
+    // across its meshes (e.g. "'Goal Aligner': 1 region hulled, 2 kept a box: reads as a solid block ...").
+    // Returns null when nothing was boxed (every mesh hulled or slabbed) — that part needs no explanation.
+    private static string ComposePlasticNote(string name, PlasticPartOutcome o)
+    {
+        int boxed = o.solidBox + o.failBox + o.simpleBox;
+        if (boxed == 0) return null;
+
+        var reasons = new List<string>();
+        if (o.simpleBox > 0)
+            reasons.Add($"a simple-shape ancestor '{o.simpleAncestor}' (motor/gear/sensor) forces a box — " +
+                        "rename it if the part is really plastic");
+        if (o.solidBox > 0)
+            reasons.Add($"reads as a solid block (fill {o.lastSolidFill:0.00} >= {FillRatioPlasticHull:0.00}), " +
+                        "no cut-out to follow");
+        if (o.failBox > 0)
+            reasons.Add("VHACD and slab produced nothing (mesh may be non-manifold, or the VHACD plugin is missing)");
+
+        int decomposed = o.hulled + o.slabbed;
+        string prefix = decomposed > 0
+            ? $"'{name}': {decomposed} region(s) decomposed, {boxed} kept a box"
+            : $"'{name}' kept a box";
+        return $"{prefix}: {string.Join("; ", reasons)}";
+    }
+
+    // One box for a whole component. A single-mesh component keeps the tight per-mesh box (PCA-oriented
+    // when the part is modeled diagonally). A multi-mesh component (a sensor/motor exported as many
+    // meshes) gets ONE box on the component node, sized in that node's own frame so it is oriented
+    // ("angled") and centered on the whole part — not on the union of its offset mount hardware.
+    private static void BuildPartGroupBox(Transform group, List<MeshFilter> meshes,
+        PhysicsMaterial mat, Report report)
+    {
+        if (meshes.Count == 1)
+        {
+            BuildSingleMeshBox(meshes[0], meshes[0].sharedMesh, mat, report);
+            return;
+        }
+
+        Matrix4x4 worldToGroup = group.worldToLocalMatrix;
+        bool has = false;
+        Vector3 min = Vector3.zero, max = Vector3.zero;
+        foreach (MeshFilter mf in meshes)
+        {
+            Mesh mesh = mf.sharedMesh;
+            if (mesh == null) continue;
+            Matrix4x4 m = worldToGroup * mf.transform.localToWorldMatrix;
+            Vector3 c = mesh.bounds.center, e = mesh.bounds.extents;
+            for (int i = 0; i < 8; i++)
+            {
+                Vector3 corner = c + new Vector3(
+                    (i & 1) == 0 ? -e.x : e.x,
+                    (i & 2) == 0 ? -e.y : e.y,
+                    (i & 4) == 0 ? -e.z : e.z);
+                Vector3 g = m.MultiplyPoint3x4(corner);
+                if (!has) { min = max = g; has = true; }
+                else { min = Vector3.Min(min, g); max = Vector3.Max(max, g); }
+            }
+        }
+        if (!has) return;
+
+        BoxCollider box = Undo.AddComponent<BoxCollider>(group.gameObject);
+        box.center = (min + max) * 0.5f;
+        box.size = max - min;
+        box.sharedMaterial = mat;
+        report.boxCount++;
+    }
+
+    // One tight box for a single mesh: a PCA-oriented box on an "_OBBCollider" child when the part is
+    // modeled diagonally (and the transform preserves handedness), else the mesh-local AABB on the
+    // mesh's own object. This is the first-model behavior for every structural part.
+    private static void BuildSingleMeshBox(MeshFilter mf, Mesh mesh, PhysicsMaterial mat, Report report)
+    {
+        if (mesh == null) return;
+        Vector3 aabbSize = mesh.bounds.size;
+        float aabbVolume = aabbSize.x * aabbSize.y * aabbSize.z;
+        bool useObb = TryComputeObb(mesh, out Vector3 obbCenter, out Quaternion obbRotation, out Vector3 obbSize)
+            && obbSize.x * obbSize.y * obbSize.z < ObbMaxVolumeRatio * aabbVolume
+            && Quaternion.Angle(Quaternion.identity, obbRotation) > ObbMinAngleDegrees
+            && mf.transform.localToWorldMatrix.determinant >= 0f;
+        if (useObb)
+        {
+            GameObject child = new GameObject(ObbChildName);
+            Undo.RegisterCreatedObjectUndo(child, UndoName);
+            child.transform.SetParent(mf.transform, false);
+            child.transform.localPosition = obbCenter;
+            child.transform.localRotation = obbRotation;
+            BoxCollider box = Undo.AddComponent<BoxCollider>(child);
+            box.center = Vector3.zero;
+            box.size = obbSize;
+            box.sharedMaterial = mat;
+            report.obbChildCount++;
+        }
+        else
+        {
+            BoxCollider box = Undo.AddComponent<BoxCollider>(mf.gameObject);
+            box.center = mesh.bounds.center;
+            box.size = mesh.bounds.size;
+            box.sharedMaterial = mat;
+            report.boxCount++;
+        }
     }
 
     // Slab decomposition along the part's longest axis (in the OBB frame when one exists):
@@ -445,7 +958,7 @@ public static class GeneratePartColliders
         for (int s = 0; s < MaxSlabs; s++)
         {
             if (!occupied[s]) continue;
-            Vector3 size = Vector3.Max(slabMax[s] - slabMin[s], Vector3.one * 1e-4f);
+            Vector3 size = Vector3.Max(slabMax[s] - slabMin[s], Vector3.one * MinSlabThickness);
             Vector3 mid = (slabMax[s] + slabMin[s]) * 0.5f;
             GameObject child = new GameObject(SlabChildName);
             Undo.RegisterCreatedObjectUndo(child, UndoName);
@@ -478,7 +991,8 @@ public static class GeneratePartColliders
         List<Mesh> hulls;
         try
         {
-            hulls = VhacdNative.GenerateConvexMeshes(mf.sharedMesh, VhacdMaxHulls, VhacdResolution);
+            hulls = VhacdNative.GenerateConvexMeshes(mf.sharedMesh, VhacdMaxHulls, VhacdResolution,
+                VhacdConcavity, VhacdDownsampling, VhacdMinVolumePerHull);
         }
         catch (System.Exception e)
         {
@@ -487,7 +1001,14 @@ public static class GeneratePartColliders
                              "falling back to slab boxes.", mf);
             return false;
         }
-        if (hulls == null || hulls.Count == 0) return false;
+        if (hulls == null || hulls.Count == 0)
+        {
+            // VHACD ran but decomposed to nothing (usually a non-manifold/degenerate mesh). Warn so the
+            // slab/box fallback that follows is never fully silent — mirrors the exception path above.
+            Debug.LogWarning($"Generate Part Colliders: VHACD produced 0 hulls for '{mf.name}' " +
+                             "(mesh may be non-manifold); falling back to slab boxes.", mf);
+            return false;
+        }
 
         string folder = EnsureHullFolder(rootName);
         // Mesh leaf nodes repeat generic names (Body1...), so the per-run part index keeps the
@@ -497,7 +1018,11 @@ public static class GeneratePartColliders
         {
             Mesh hull = hulls[i];
             hull.name = $"{baseName}_hull{i}";
-            AssetDatabase.CreateAsset(hull, $"{folder}/{hull.name}.asset");
+            // A full rebuild wiped this folder first so the base name is free; a SINGLE-part rebuild does
+            // NOT wipe the folder (it must preserve the other parts' hulls), so two parts whose meshes
+            // share a generic BodyN name could otherwise write the same path and clobber each other's
+            // asset. GenerateUniqueAssetPath appends " 1"/" 2" to avoid that.
+            AssetDatabase.CreateAsset(hull, AssetDatabase.GenerateUniqueAssetPath($"{folder}/{hull.name}.asset"));
             MeshCollider collider = Undo.AddComponent<MeshCollider>(mf.gameObject);
             collider.sharedMesh = hull;
             collider.convex = true;
@@ -547,6 +1072,52 @@ public static class GeneratePartColliders
             if (t == root) break;
         }
         return false;
+    }
+
+    // True when the node or any ancestor up to (and including) root is a motor/gearbox that should
+    // stay a single simple box.
+    private static bool IsUnderSimpleShape(Transform node, Transform root)
+    {
+        for (Transform t = node; t != null; t = t.parent)
+        {
+            if (RobotPartClassifier.IsSimpleShape(t.name)) return true;
+            if (t == root) break;
+        }
+        return false;
+    }
+
+    // The first node on the chain node..root (inclusive) whose name reads as a motor/gear/sensor — the
+    // ancestor responsible for a plastic part being forced to a single box. Diagnostics only.
+    private static string FirstSimpleShapeAncestorName(Transform node, Transform root)
+    {
+        for (Transform t = node; t != null; t = t.parent)
+        {
+            if (RobotPartClassifier.IsSimpleShape(t.name)) return t.name;
+            if (t == root) break;
+        }
+        return "(unknown)";
+    }
+
+    // A readable label for a mesh: the nearest non-generic ("BodyN") named ancestor up to root, else the
+    // mesh's own node name. Diagnostics only — so a note names "Goal Aligner", not its "Body3" leaf.
+    private static string NamedPartLabel(Transform node, Transform root)
+    {
+        for (Transform t = node; t != null; t = t.parent)
+        {
+            if (!IsGenericBodyName(t.name)) return t.name;
+            if (t == root) break;
+        }
+        return node.name;
+    }
+
+    // One Console warning listing every plastic part that kept a box (and why), so the reason is visible
+    // after a rebuild instead of requiring a dig through the hierarchy. No-op when every plastic hulled.
+    private static void LogPlasticBoxNotes(Report report, Object context)
+    {
+        if (report == null || report.plasticBoxNotes == null || report.plasticBoxNotes.Count == 0) return;
+        Debug.LogWarning(
+            $"Part Colliders: {report.plasticBoxNotes.Count} plastic part(s) did not fully convert to " +
+            "convex hulls:\n  - " + string.Join("\n  - ", report.plasticBoxNotes), context);
     }
 
     private static PhysicsMaterial GetOrCreateMaterial(string path, string name,

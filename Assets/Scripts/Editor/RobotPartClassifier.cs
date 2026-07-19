@@ -39,6 +39,10 @@ public static class RobotPartClassifier
     // Wheel group nodes are named "3.25 AS Omni, Round Insert v1" (plus duplicate suffixes).
     public const string WheelNamePrefix = "3.25 AS Omni";
 
+    // Broader default for new imports: catch ALL circular wheels by name — flex wheels, traction, and
+    // omni — not just this project's original omni. Comma-separated tokens matched anywhere in a name.
+    public const string DefaultWheelTokens = "Wheel, Omni, Traction, Flex";
+
     // Coincident omni halves sit essentially on top of each other; anything within this world
     // distance is the same physical wheel. Wheels on the same rail are several units apart
     // (world is 10x scale), so there is a wide safe margin on both sides of this value.
@@ -119,6 +123,62 @@ public static class RobotPartClassifier
     {
         string name = NormalizeName(rawName);
         foreach (string token in PlasticTokens)
+        {
+            if (name.IndexOf(token, System.StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        }
+        // Material-named plastics (nylon, acetal/delrin, abs, petg, pvc, uhmw/hdpe, polycarbonate):
+        // the density table already knows them, and everything under the metal threshold is a plastic.
+        return TryGetDensity(rawName, out float d) && d > 0f && d < MetalDensityThreshold;
+    }
+
+    // Density (kg/m^3) at or above which a part reads as metal rather than plastic; every DensityByToken
+    // entry sits cleanly on one side (aluminium 2700+ vs plastics <= 1410).
+    public const float MetalDensityThreshold = 2000f;
+
+    // Structural-metal shape tokens that may carry no material word (VEX names these by shape).
+    // Material-named metals (aluminium/steel/6061/c chan/...) are caught via the density table.
+    // NOTE: "High Strength"/"HS" is deliberately NOT here — in this project it names gears/sprockets
+    // (e.g. "12T High Strength Sprocket", "48T HS Gear"), which must stay simple boxes (see
+    // SimpleShapeTokens). Real structural metal is still caught by the density table (aluminium/steel/
+    // 6061/c chan) plus these shape tokens.
+    public static readonly string[] MetalShapeTokens =
+    {
+        "C-Channel", "C-Chan", "Angle", "Standoff", "Gusset", "Rail",
+    };
+
+    // True when the (normalized) name reads as a metal part — a dense material or a metal shape token.
+    // Same ancestor-chain caveat as IsFastener/IsPlastic: test the whole chain, not just the leaf.
+    public static bool IsMetal(string rawName)
+    {
+        if (TryGetDensity(rawName, out float d) && d >= MetalDensityThreshold) return true;
+        string name = NormalizeName(rawName);
+        foreach (string token in MetalShapeTokens)
+        {
+            if (name.IndexOf(token, System.StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        }
+        return false;
+    }
+
+    // Parts that should always get ONE simple box, never hull/slab decomposition, however concave:
+    // motors/gearboxes (internals never need real collision), gears/sprockets (internal, don't touch the
+    // field), and sensors/electronics (a single footprint is enough; their shape must not add collider
+    // complexity). Checked WITH PRECEDENCE over metal/plastic on the whole ancestor chain, so a sensor
+    // or gear bundled with a metal standoff/mount doesn't inherit the mount's "hull me" classification.
+    // (Screws/spacers are skipped outright via FastenerDenyList; these keep a box because they're a real
+    // solid the robot can bump into.)
+    public static readonly string[] SimpleShapeTokens =
+    {
+        "Motor", "Gearbox", "Cartridge",
+        "Gear", "Sprocket", "Pinion",
+        "Sensor", "Vision", "Brain", "Battery", "Radio",
+    };
+
+    // True when the (normalized) name reads as a motor/gearbox. Same ancestor-chain caveat as
+    // IsFastener/IsPlastic: meshes live on generic "Body1" leaves, so test the whole chain.
+    public static bool IsSimpleShape(string rawName)
+    {
+        string name = NormalizeName(rawName);
+        foreach (string token in SimpleShapeTokens)
         {
             if (name.IndexOf(token, System.StringComparison.OrdinalIgnoreCase) >= 0) return true;
         }

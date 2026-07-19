@@ -376,6 +376,11 @@ public class BuildHomeScene
         SetLayoutHeight(template.gameObject, 84f);
         template.gameObject.SetActive(false); // template stays inactive; controller clones it
 
+        // Edit button under the list: toggles delete mode so junk test models can be removed from the
+        // catalog. The controller flips its label to "Done" and re-tints the rows while active.
+        Button editModelsButton = CreateButton("EditModelsButton", content.transform, "Edit Models", 36f, NeutralColor);
+        SetLayoutHeight(editModelsButton.gameObject, 72f);
+
         // Joystick size control: label (also the live percentage readout) + slider. The
         // controller reads/writes JoystickSettings; the field scene's JoystickScaler applies it.
         TextMeshProUGUI joystickLabel = CreateText("JoystickSizeLabel", content.transform, "Joystick Size", 40f);
@@ -403,6 +408,12 @@ public class BuildHomeScene
         Toggle autoMatchloadToggle = CreateToggle("AutomaticMatchloadToggle", content.transform,
             "Automatic Matchloading", MatchLoadSettings.DefaultAutomatic);
         SetLayoutHeight(autoMatchloadToggle.gameObject, 64f);
+
+        // Reverse drive direction: checkbox (persisted via ReverseDriveSettings). Flips which end of
+        // the robot the drive controls treat as front (intake-forward vs scoring-forward).
+        Toggle reverseDriveToggle = CreateToggle("ReverseDriveToggle", content.transform,
+            "Reverse Drive Direction", ReverseDriveSettings.DefaultReversed);
+        SetLayoutHeight(reverseDriveToggle.gameObject, 64f);
 
         // Entry point to the button -> mechanism mapping screen.
         Button configureButton = CreateButton("ConfigureControllerButton", content.transform,
@@ -445,11 +456,13 @@ public class BuildHomeScene
         so.FindProperty("loadingOverlay").objectReferenceValue = loadingOverlay;
         so.FindProperty("modelListParent").objectReferenceValue = modelList.transform;
         so.FindProperty("modelButtonTemplate").objectReferenceValue = template;
+        so.FindProperty("editModelsButton").objectReferenceValue = editModelsButton;
         so.FindProperty("joystickSizeSlider").objectReferenceValue = joystickSlider;
         so.FindProperty("joystickSizeLabel").objectReferenceValue = joystickLabel;
         so.FindProperty("controlsOpacitySlider").objectReferenceValue = opacitySlider;
         so.FindProperty("controlsOpacityLabel").objectReferenceValue = opacityLabel;
         so.FindProperty("automaticMatchloadToggle").objectReferenceValue = autoMatchloadToggle;
+        so.FindProperty("reverseDriveToggle").objectReferenceValue = reverseDriveToggle;
 
         // Controller config screen: same root object, wired to the diagram it opens.
         ControllerConfigScreen configScreen = homeRoot.AddComponent<ControllerConfigScreen>();
@@ -494,6 +507,7 @@ public class BuildHomeScene
         UnityEventTools.AddPersistentListener(settingsButton.onClick, controller.OnSettingsPressed);
         UnityEventTools.AddPersistentListener(backButton.onClick, controller.OnBackPressed);
         UnityEventTools.AddPersistentListener(configureButton.onClick, controller.OnConfigureControllerPressed);
+        UnityEventTools.AddPersistentListener(editModelsButton.onClick, controller.OnEditModelsPressed);
         UnityEventTools.AddPersistentListener(configParts.backButton.onClick, controller.OnConfigBackPressed);
         UnityEventTools.AddPersistentListener(editLayoutButton.onClick, controller.OnEditLayoutPressed);
         UnityEventTools.AddPersistentListener(layoutParts.backButton.onClick, controller.OnLayoutBackPressed);

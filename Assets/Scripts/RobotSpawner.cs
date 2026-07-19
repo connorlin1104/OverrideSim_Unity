@@ -24,6 +24,14 @@ public class RobotSpawner : MonoBehaviour
     [Tooltip("Keep the robot's collider footprint at least this far (world units) inside the field walls.")]
     [SerializeField] private float wallClearance = 0.5f;
 
+    [Tooltip("Field floor surface Y. The robot is dropped so its LOWEST collider starts just above this " +
+             "(then settles under gravity), so a bot whose FBX pivot sits anywhere still lands on the floor " +
+             "instead of clipping into it. Matches the field floor used elsewhere (RobotDriveController / MinHeightClamp).")]
+    [SerializeField] private float floorY = 0.72f;
+
+    [Tooltip("How far above the floor the robot's lowest point starts before it settles.")]
+    [SerializeField] private float dropClearance = 0.05f;
+
     void Awake()
     {
         if (catalog == null)
@@ -56,7 +64,8 @@ public class RobotSpawner : MonoBehaviour
     // as-is, an off-pivot bot lands offset from the spawn point and can drop onto a wall (the 654V
     // did). Two steps fix that: shift the root so the robot's collision footprint CENTER sits on the
     // spawn point, then pull the footprint fully inside the field walls so a wide bot near the wall
-    // can't overlap it and get ejected on top. Y is left alone so the drop height is unchanged.
+    // can't overlap it and get ejected on top. Y is set from the footprint so the robot's lowest point
+    // starts just above the floor — an off-pivot bot no longer clips into or below the ground.
     //
     // The correction is applied via ArticulationBody.TeleportRoot: for an articulation ROOT, writing
     // transform.position is silently ignored (the physics engine owns the root pose), so the old
@@ -70,11 +79,14 @@ public class RobotSpawner : MonoBehaviour
         Physics.SyncTransforms();
         if (!TryGetWorldFootprint(robot, out Bounds bounds)) return;
 
-        // 1) Center the footprint on the spawn point (X/Z only; keep the spawn Y as the drop height).
-        //    Move the footprint in-code — the colliders aren't re-read before the single apply below,
-        //    so a pure translation keeps bounds.center/extents correct without another SyncTransforms.
+        // 1) Center the footprint on the spawn point (X/Z), and set Y so the robot's LOWEST collider
+        //    point starts just above the floor regardless of where the FBX pivot sits — then play-mode
+        //    gravity settles it. The old fixed spawnPosition.y was baked for the original drivetrain's
+        //    pivot and clipped an off-pivot bot into the ground. Move the footprint in-code — the
+        //    colliders aren't re-read before the single apply below, so a pure translation keeps
+        //    bounds.center/extents correct without another SyncTransforms.
         Vector3 delta = spawnPosition - bounds.center;
-        delta.y = 0f;
+        delta.y = (floorY + dropClearance) - bounds.min.y;
         bounds.center += delta;
 
         // 2) Clamp the centered footprint inside the field walls. Uses the actual wall colliders, so

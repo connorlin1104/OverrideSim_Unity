@@ -33,3 +33,7 @@ MonoBehaviour:
     - id: metalpart
       displayName: Doinker
       type: pneumatic
+  - id: 654v-v2
+    displayName: 654V v2
+    prefab: {fileID: 3368822269678000047, guid: b24e7cadad95c403791ed70b472595ec, type: 3}
+    mechanisms: []

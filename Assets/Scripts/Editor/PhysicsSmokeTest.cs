@@ -115,8 +115,9 @@ public class PhysicsSmokeTest
     }
 
     // Spawns a robot prefab into the field scene, validates it, and lets ValidateBody's scene-reload
-    // discard the temporary instance — mirroring how the robot reaches the field at runtime.
-    private static void ValidateSpawnedPrefab(GameObject prefab)
+    // discard the temporary instance — mirroring how the robot reaches the field at runtime. Public so
+    // Set Up Imported Robot can validate the prefab it just saved without reopening the working scene.
+    public static void ValidateSpawnedPrefab(GameObject prefab)
     {
         if (prefab == null) throw new System.ArgumentNullException(nameof(prefab));
         if (prefab.GetComponentInChildren<ArticulationBody>(true) == null)
@@ -239,7 +240,8 @@ public class PhysicsSmokeTest
         float vertical = Mathf.Abs(delta.y);
         float horizontal = Planar(delta);
         if (vertical > MaxSettleVertical)
-            Fail($"settle: root moved {vertical:F2} units vertically (limit {MaxSettleVertical}) — fell through the floor or exploded.");
+            Fail($"settle: root moved {vertical:F2} units vertically (limit {MaxSettleVertical}) — fell through " +
+                 $"the floor or exploded.{DescribeExplosionSuspects(root)}");
         if (horizontal > MaxSettleHorizontal)
             Fail($"settle: root slid {horizontal:F2} units horizontally (limit {MaxSettleHorizontal}) — unstable rig.");
 
@@ -336,6 +338,36 @@ public class PhysicsSmokeTest
                "chassis. Raise them, or exclude them from colliders, so only the drive wheels touch the ground.";
     }
 
+    // On a settle blow-up ("fell 200m" / exploded), name the usual suspects so the fix is obvious: the
+    // single largest collider (a giant/degenerate box from a bad mesh ejects the whole rig) and the body
+    // carrying the most colliders (a dense pile of overlapping boxes overwhelms the articulation solver).
+    private static string DescribeExplosionSuspects(ArticulationBody root)
+    {
+        Collider biggest = null;
+        float biggestSize = 0f;
+        var counts = new Dictionary<ArticulationBody, int>();
+        foreach (Collider c in root.GetComponentsInChildren<Collider>())
+        {
+            float s = Mathf.Max(c.bounds.size.x, Mathf.Max(c.bounds.size.y, c.bounds.size.z));
+            if (s > biggestSize) { biggestSize = s; biggest = c; }
+            ArticulationBody b = c.GetComponentInParent<ArticulationBody>();
+            if (b != null) { counts.TryGetValue(b, out int n); counts[b] = n + 1; }
+        }
+
+        ArticulationBody worst = null;
+        int worstN = 0;
+        foreach (KeyValuePair<ArticulationBody, int> kv in counts)
+            if (kv.Value > worstN) { worstN = kv.Value; worst = kv.Key; }
+
+        string big = biggest != null
+            ? $"largest collider '{biggest.transform.parent?.name}/{biggest.name}' spans {biggestSize:F1} units"
+            : "no colliders found";
+        string dense = worst != null ? $"; body '{worst.name}' carries {worstN} colliders" : "";
+        return $" Likely cause: {big}{dense}. A single oversized collider (from a bad mesh) ejects the rig; " +
+               "a dense pile of colliders on one body destabilizes the solver. Run Remove Part Colliders then " +
+               "Rebuild Part Colliders (which now collapses dense motor/gearbox clusters into one box).";
+    }
+
     private static void RunDriveTest(ArticulationBody root, ArticulationBody[] wheels)
     {
         Vector3 startPos = root.transform.position;
@@ -404,6 +436,13 @@ public class PhysicsSmokeTest
     {
         float yawStart = root.transform.eulerAngles.y;
 
+        // Record each wheel's spin so a turn failure can say WHETHER the wheels moved — undriven vs.
+        // spinning-but-not-turning point at very different fixes.
+        var allWheels = new List<ArticulationBody>(leftWheels);
+        allWheels.AddRange(rightWheels);
+        float[] jointStart = new float[allWheels.Count];
+        for (int i = 0; i < allWheels.Count; i++) jointStart[i] = JointPositionRad(allWheels[i]);
+
         foreach (ArticulationBody wheel in leftWheels)
             wheel.SetDriveTargetVelocity(ArticulationDriveAxis.X, DriveDegPerSec);
         foreach (ArticulationBody wheel in rightWheels)
@@ -414,9 +453,47 @@ public class PhysicsSmokeTest
         FailIfNotFinite();
         float yawDelta = Mathf.DeltaAngle(yawStart, root.transform.eulerAngles.y);
         if (Mathf.Abs(yawDelta) <= MinTurnYawDeg)
-            Fail($"turn: yaw changed {yawDelta:F1}° (need |change| > {MinTurnYawDeg}°) — differential drive is not turning the robot.");
+        {
+            float maxSpinRad = 0f;
+            for (int i = 0; i < allWheels.Count; i++)
+                maxSpinRad = Mathf.Max(maxSpinRad, Mathf.Abs(JointPositionRad(allWheels[i]) - jointStart[i]));
+
+            Fail($"turn: yaw changed {yawDelta:F1}° (need |change| > {MinTurnYawDeg}°) — differential drive is " +
+                 $"not turning the robot.{DescribeTurnFailure(root, leftWheels, rightWheels, maxSpinRad)}");
+        }
 
         Debug.Log($"PhysicsSmokeTest PASS turn: yaw changed {yawDelta:F1}°.");
+    }
+
+    // Best-guess reason a differential turn produced no yaw, appended to the turn failure so the driver
+    // gets a concrete fix to try instead of a bare threshold. Turn runs BEFORE drive, so this is the
+    // first place the "wheels off the ground" cause shows up — the drive test's version never runs when
+    // the turn already failed. Three common new-robot causes: the wheels aren't being driven at all,
+    // they spin but are held off the ground, or they're all on one side so both rails turn the same way.
+    private static string DescribeTurnFailure(ArticulationBody root, ArticulationBody[] leftWheels,
+        ArticulationBody[] rightWheels, float maxSpinRad)
+    {
+        int nLeft = leftWheels != null ? leftWheels.Length : 0;
+        int nRight = rightWheels != null ? rightWheels.Length : 0;
+        string split = $" Drive wheels: {nLeft} left / {nRight} right; max wheel spin {maxSpinRad * Mathf.Rad2Deg:F0}°.";
+
+        // A one-sided split can't turn: both rails drive the same direction.
+        if (nLeft == 0 || nRight == 0)
+            return split + " One side has no wheels, so there is no differential — re-run Rig Drivetrain, or " +
+                   "select the missing wheels and use Add Selected Wheels to Drivetrain, to put wheels on both sides.";
+
+        // Wheels barely moved: the drive isn't reaching them (wiring / joint setup), not a traction issue.
+        if (maxSpinRad <= MinWheelSpinRad)
+            return split + " The wheels barely spun, so the drive isn't reaching them — check that Rig Drivetrain " +
+                   "wired these links with a revolute X drive (not the chassis).";
+
+        // Wheels spun but no yaw: usual cause is the wheels are off the ground.
+        string belowWheels = DescribeBelowWheelParts(root);
+        if (belowWheels != null)
+            return split + " The wheels spun but the robot didn't turn: " + belowWheels;
+
+        return split + " The wheels spun and appear to be on the ground but the robot didn't turn — the left/right " +
+               "split may be wrong (both sides spinning the same way). Check Rig Drivetrain's LS/RS assignment.";
     }
 
     // --- Helpers --------------------------------------------------------------------------

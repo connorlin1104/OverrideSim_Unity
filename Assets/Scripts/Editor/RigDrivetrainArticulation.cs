@@ -17,9 +17,13 @@ using UnityEngine.SceneManagement;
 // articulations and drives.
 //
 // Axis note (verified against the Unity PhysicsModule docs): a RevoluteJoint rotates about the
-// X axis of the joint anchor. Every wheel link is created with world rotation == wrapper
-// rotation, so link-local +X is already the axle (the wrapper's right axis) and no
-// anchorRotation gymnastics are needed.
+// X axis of the joint anchor. Each wheel link is oriented so its local +X is the drivetrain's
+// ACTUAL axle — detected from the wheels' own disc shape (a wheel is thinnest along its axle),
+// NOT assumed to be the wrapper's right axis. An FBX imported at another orientation (e.g. rotated
+// 90° so its lateral axis is wrapper.forward) has its axle along a different wrapper axis; forcing
+// wrapper.right made those wheels spin about the wrong axis and turn on their side instead of
+// rolling. With anchorRotation forced to identity, the anchor's X (the twist axis) is the link's
+// local +X, i.e. the detected axle.
 //
 // Usage: select the Robot object in the Hierarchy, then
 // Tools > RoboSim > Robot > Mechanisms > Rig Drivetrain.
@@ -323,39 +327,42 @@ public class RigDrivetrainArticulation
         List<ArticulationBody> rightLinks = new List<ArticulationBody>();
         StringBuilder linkSummary = new StringBuilder();
 
-        // The wrapper's origin sits well off the chassis center (the FBX pivot is ~1.2 units to
-        // one side), so the sign of a cluster's local X says nothing about its side — every wheel
-        // lands negative. Split against the MEAN X of all clusters instead: the two rails
-        // straddle their own average.
-        float meanClusterX = 0f;
+        // Axle (twist) axis shared by every wheel link: the drivetrain's lateral direction, read from
+        // the wheels' own disc shape (a wheel is thinnest along its axle). The old rig ASSUMED the axle
+        // was the wrapper's right axis and spun every wheel about it — but an FBX imported at another
+        // orientation (e.g. rotated 90°) has its axle along a different wrapper axis, so the wheels spun
+        // about the wrong axis and turned on their side instead of rolling. axleDir is a world-space unit
+        // vector (one of the wrapper's right/up/forward axes); the link is rotated so its local +X is it.
+        Vector3 axleDir = DetermineAxleAxis(clusters, wrapper);
+        Quaternion linkRotation = Quaternion.FromToRotation(wrapper.right, axleDir) * wrapper.rotation;
+        Debug.Log($"{UndoName}: drive axle = {AxisLabel(axleDir, wrapper)}; wheels spin about it, and the " +
+                  "two rails straddle it.");
+
+        // Split the wheels into two rails along the AXLE: the rails straddle the mean of the wheel
+        // centers projected onto the axle. For a normal robot the axle IS wrapper.right, so this reduces
+        // to the old local-X split; for a rotated import it splits along whatever axis the wheels actually
+        // straddle, so the differential still gets one rail on each side. (The wrapper origin sits off the
+        // chassis center, so the raw sign of the projection is meaningless — the MEAN is the divider.)
+        float meanAxleProj = 0f;
         foreach (RobotPartClassifier.WheelCluster cluster in clusters)
-            meanClusterX += robot.transform.InverseTransformPoint(cluster.Center).x;
-        meanClusterX /= clusters.Count;
+            meanAxleProj += Vector3.Dot(cluster.Center, axleDir);
+        meanAxleProj /= clusters.Count;
 
         foreach (RobotPartClassifier.WheelCluster cluster in clusters)
         {
-            // Axle axis = the world axis of the cluster's smallest AABB extent (wheels are thin
-            // along their axle). Pure sanity gate: the link is oriented to the wrapper below, so
-            // a bad axis here means the classifier grabbed something that isn't wheel-shaped.
-            Vector3 ext = cluster.worldBounds.extents;
-            Vector3 axleWorld;
-            if (ext.x <= ext.y && ext.x <= ext.z) axleWorld = Vector3.right;
-            else if (ext.y <= ext.z) axleWorld = Vector3.up;
-            else axleWorld = Vector3.forward;
+            // Sanity gate: this cluster's own thinnest axis should line up with the drivetrain axle
+            // (wheels are thin along their axle). If it's far off, the classifier likely grabbed a part
+            // that isn't a wheel — warn, but still rig it to the shared axle.
+            WrapperExtents(cluster.worldBounds, wrapper, out float er, out float eu, out float ef);
+            Vector3 clusterThin = (er <= eu && er <= ef) ? wrapper.right : (ef <= eu ? wrapper.forward : wrapper.up);
+            float axleAngle = Vector3.Angle(clusterThin, axleDir);
+            if (Mathf.Min(axleAngle, 180f - axleAngle) > AxleAngleToleranceDeg)
+                Debug.LogWarning($"{UndoName}: cluster '{cluster.topmost.name}' is thinnest along a different " +
+                                 "axis than the drive axle — check that it's actually a wheel.", cluster.topmost);
 
-            float angle = Vector3.Angle(axleWorld, wrapper.right);
-            float foldedAngle = Mathf.Min(angle, 180f - angle); // axles have no preferred sign
-            if (foldedAngle > AxleAngleToleranceDeg)
-            {
-                Debug.LogWarning($"{UndoName}: cluster '{cluster.topmost.name}' smallest-extent axis is " +
-                                 $"{foldedAngle:F1}° off the wrapper's right axis; using wrapper.right as the axle.", cluster.topmost);
-                axleWorld = wrapper.right;
-            }
-            Vector3 axleWrapperSpace = wrapper.InverseTransformDirection(axleWorld);
-
-            // Side: geometric (wrapper-local X relative to the clusters' mean X; +X = robot
-            // right), cross-checked against the FBX group names ("Drivetrain LS"/"Drivetrain RS").
-            bool isLeft = wrapper.InverseTransformPoint(cluster.Center).x < meanClusterX;
+            // Side: which rail the wheel is on, from its position along the axle relative to the mean,
+            // cross-checked against the FBX group names ("Drivetrain LS"/"Drivetrain RS").
+            bool isLeft = Vector3.Dot(cluster.Center, axleDir) < meanAxleProj;
             string nameSide = AncestorSideTag(cluster.topmost, wrapper);
             if (nameSide != null && (nameSide == "LS") != isLeft)
                 Debug.LogWarning($"{UndoName}: cluster '{cluster.topmost.name}' sits on the " +
@@ -365,14 +372,15 @@ public class RigDrivetrainArticulation
             int sideIndex = isLeft ? leftLinks.Count : rightLinks.Count;
             string linkName = $"WheelLink_{(isLeft ? "LS" : "RS")}{sideIndex}";
 
-            // Direct child of the wrapper, world rotation == wrapper rotation: the revolute
-            // joint spins about the ANCHOR's X axis (Unity PhysicsModule: "Revolute joint
-            // allows rotational movement around the X axis of the parent's anchor"), so with
-            // this orientation link-local +X IS the axle and matchAnchors needs no help.
+            // Direct child of the wrapper, rotated so its local +X is the detected axle: the revolute
+            // joint spins about the ANCHOR's X axis (Unity PhysicsModule: "Revolute joint allows
+            // rotational movement around the X axis of the parent's anchor"), and with anchorRotation
+            // forced to identity below, that anchor X is the link's local +X — the axle. So the wheel
+            // rolls about its real axle regardless of how the FBX was oriented.
             GameObject link = new GameObject(linkName);
             Undo.RegisterCreatedObjectUndo(link, UndoName);
             link.transform.SetParent(wrapper, false);
-            link.transform.SetPositionAndRotation(cluster.Center, wrapper.rotation);
+            link.transform.SetPositionAndRotation(cluster.Center, linkRotation);
             link.transform.localScale = Vector3.one;
 
             // Move the cluster's nodes (and their WS-B SphereColliders) under the link. Only
@@ -412,7 +420,7 @@ public class RigDrivetrainArticulation
             ab.xDrive = d;
 
             (isLeft ? leftLinks : rightLinks).Add(ab);
-            linkSummary.AppendLine($"  {linkName}: axle(wrapper-space) {axleWrapperSpace:F2}, nodes {cluster.nodes.Count}");
+            linkSummary.AppendLine($"  {linkName}: nodes {cluster.nodes.Count}");
         }
 
         // 4) Tag the wrapper AND every link "Player" — the match loaders identify the robot by
@@ -474,9 +482,19 @@ public class RigDrivetrainArticulation
         HashSet<ArticulationBody> alreadyWired = new HashSet<ArticulationBody>(left);
         alreadyWired.UnionWith(right);
 
-        // Existing wheels define the two rails; a new wheel joins whichever rail's mean X it's nearer.
-        float leftMeanX = MeanWrapperLocalX(left, wrapper);
-        float rightMeanX = MeanWrapperLocalX(right, wrapper);
+        // Match the existing wheels' axle so added wheels spin about the SAME axis and land on the
+        // correct rail. An existing wheel link's local +X IS the axle (Rig oriented it that way), and its
+        // rotation is what we reuse for the new link — so a robot whose axle isn't wrapper.right still gets
+        // rolling (not sideways-spinning) added wheels. Fall back to wrapper.right/rotation if somehow no
+        // wheel is wired yet.
+        ArticulationBody sampleWheel = FirstNonNull(left) ?? FirstNonNull(right);
+        Vector3 axleDir = sampleWheel != null ? sampleWheel.transform.right : wrapper.right;
+        Quaternion linkRotation = sampleWheel != null ? sampleWheel.transform.rotation : wrapper.rotation;
+
+        // Existing wheels define the two rails; a new wheel joins whichever rail's mean it's nearer,
+        // measured ALONG the axle (the lateral axis) rather than a hardcoded local X.
+        float leftMeanX = MeanAxleProj(left, axleDir);
+        float rightMeanX = MeanAxleProj(right, axleDir);
 
         Undo.IncrementCurrentGroup();
         Undo.SetCurrentGroupName(AddWheelsUndo);
@@ -497,18 +515,18 @@ public class RigDrivetrainArticulation
             Bounds bounds = renderers[0].bounds;
             for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
 
-            float localX = wrapper.InverseTransformPoint(bounds.center).x;
+            float localX = Vector3.Dot(bounds.center, axleDir);
             bool isLeft = DecideSide(localX, leftMeanX, rightMeanX);
             int sideIndex = isLeft ? left.Count : right.Count;
             string linkName = $"WheelLink_{(isLeft ? "LS" : "RS")}{sideIndex}_added";
 
-            // Direct child of the wrapper, world rotation == wrapper rotation, anchor forced to
-            // identity so the revolute twist axis is the link's +X (the axle) — the same setup Rig
-            // uses (see the axis note in this file's header).
+            // Direct child of the wrapper, rotated to match the existing wheels' axle, with the anchor
+            // forced to identity so the revolute twist axis is the link's +X (the axle) — the same setup
+            // Rig uses (see the axis note in this file's header).
             GameObject link = new GameObject(linkName);
             Undo.RegisterCreatedObjectUndo(link, AddWheelsUndo);
             link.transform.SetParent(wrapper, false);
-            link.transform.SetPositionAndRotation(bounds.center, wrapper.rotation);
+            link.transform.SetPositionAndRotation(bounds.center, linkRotation);
             link.transform.localScale = Vector3.one;
             Undo.SetTransformParent(part.transform, link.transform, AddWheelsUndo); // keeps world placement
 
@@ -553,8 +571,9 @@ public class RigDrivetrainArticulation
         return added;
     }
 
-    // Mean wrapper-local X of a wheel rail, or NaN when the rail is empty.
-    private static float MeanWrapperLocalX(List<ArticulationBody> wheels, Transform wrapper)
+    // Mean of a wheel rail's positions projected onto the axle axis, or NaN when the rail is empty.
+    // The rails straddle the drivetrain's axle, so their projections onto it are what separate them.
+    private static float MeanAxleProj(List<ArticulationBody> wheels, Vector3 axleDir)
     {
         if (wheels == null || wheels.Count == 0) return float.NaN;
         float sum = 0f;
@@ -562,14 +581,80 @@ public class RigDrivetrainArticulation
         foreach (ArticulationBody w in wheels)
         {
             if (w == null) continue;
-            sum += wrapper.InverseTransformPoint(w.transform.position).x;
+            sum += Vector3.Dot(w.transform.position, axleDir);
             n++;
         }
         return n == 0 ? float.NaN : sum / n;
     }
 
-    // Assigns a wheel to the nearer rail. The left rail sits at the smaller X (see Rig's mean-X
-    // split); when a rail is still empty, decide by the other rail, or by sign as a last resort.
+    // First non-null body in a list, or null.
+    private static ArticulationBody FirstNonNull(List<ArticulationBody> list)
+    {
+        if (list != null)
+            foreach (ArticulationBody a in list)
+                if (a != null) return a;
+        return null;
+    }
+
+    // The drivetrain's axle (lateral) axis, read from the wheels' own shape: a wheel is a disc, thinnest
+    // along its axle. Each cluster votes for the wrapper axis (right/up/forward) it's thinnest along, and
+    // the majority wins — robust to a stray non-wheel cluster. Ties prefer the horizontal axes (a real
+    // drive axle is horizontal) then right (the old assumed axle, so already-working robots are unchanged).
+    // Returns a world-space unit vector: one of wrapper.right / wrapper.up / wrapper.forward.
+    private static Vector3 DetermineAxleAxis(List<RobotPartClassifier.WheelCluster> clusters, Transform wrapper)
+    {
+        int right = 0, up = 0, forward = 0;
+        foreach (RobotPartClassifier.WheelCluster cluster in clusters)
+        {
+            WrapperExtents(cluster.worldBounds, wrapper, out float r, out float u, out float f);
+            if (r <= u && r <= f) right++;
+            else if (f <= u) forward++;
+            else up++;
+        }
+        if (right >= forward && right >= up) return wrapper.right;
+        if (forward >= up) return wrapper.forward;
+        return wrapper.up;
+    }
+
+    // Extents of a world-space AABB measured along the wrapper's right/up/forward axes (its 8 corners
+    // projected onto each axis). Exact when the robot is axis-aligned in world — including the 90°-rotated
+    // imports that matter here — and a conservative over-estimate otherwise, which still preserves which
+    // axis is thinnest in the common case.
+    private static void WrapperExtents(Bounds worldBounds, Transform wrapper,
+        out float alongRight, out float alongUp, out float alongForward)
+    {
+        Vector3 c = worldBounds.center, e = worldBounds.extents;
+        float rMin = float.PositiveInfinity, rMax = float.NegativeInfinity;
+        float uMin = float.PositiveInfinity, uMax = float.NegativeInfinity;
+        float fMin = float.PositiveInfinity, fMax = float.NegativeInfinity;
+        for (int sx = -1; sx <= 1; sx += 2)
+        for (int sy = -1; sy <= 1; sy += 2)
+        for (int sz = -1; sz <= 1; sz += 2)
+        {
+            Vector3 corner = c + new Vector3(sx * e.x, sy * e.y, sz * e.z);
+            float r = Vector3.Dot(corner, wrapper.right);
+            float u = Vector3.Dot(corner, wrapper.up);
+            float f = Vector3.Dot(corner, wrapper.forward);
+            if (r < rMin) rMin = r; if (r > rMax) rMax = r;
+            if (u < uMin) uMin = u; if (u > uMax) uMax = u;
+            if (f < fMin) fMin = f; if (f > fMax) fMax = f;
+        }
+        alongRight = rMax - rMin;
+        alongUp = uMax - uMin;
+        alongForward = fMax - fMin;
+    }
+
+    // Human-readable name for a detected axle axis, for the rig log.
+    private static string AxisLabel(Vector3 axis, Transform wrapper)
+    {
+        if (Vector3.Angle(axis, wrapper.right) < 1f) return "wrapper.right (robot left-right — normal)";
+        if (Vector3.Angle(axis, wrapper.forward) < 1f) return "wrapper.forward (robot front-back — FBX rotated 90°)";
+        if (Vector3.Angle(axis, wrapper.up) < 1f) return "wrapper.up (VERTICAL — wheels look flat; check the model)";
+        return axis.ToString("F2");
+    }
+
+    // Assigns a wheel to the nearer rail. The left rail sits at the smaller axle projection (see Rig's
+    // mean-along-axle split); when a rail is still empty, decide by the other rail, or by sign as a last resort.
     private static bool DecideSide(float localX, float leftMeanX, float rightMeanX)
     {
         bool haveLeft = !float.IsNaN(leftMeanX);

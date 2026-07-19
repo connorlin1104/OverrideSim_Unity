@@ -92,6 +92,11 @@ public class RobotDriveController : MonoBehaviour
         float forwardInput = leftStickInput.y;
         float turnInput = rightStickInput.x;
 
+        // "Reverse Drive Direction" (Settings): a 180° flip of the control frame inverts both the
+        // forward and steering axes (see RobotMotorController for the rationale). This legacy Rigidbody
+        // path isn't on any shipped prefab, but stays in agreement with the ArticulationBody path.
+        if (ReverseDriveSettings.Reversed) { forwardInput = -forwardInput; turnInput = -turnInput; }
+
         bool turning = turnInput > TurnDeadzone || turnInput < -TurnDeadzone;
 
         // Straight-line drive velocity (planar).
@@ -141,3 +146,4 @@ public class RobotDriveController : MonoBehaviour
         return lowest;
     }
 }
+

@@ -31,10 +31,14 @@ public class HomeScreenController : MonoBehaviour
     [SerializeField] private Transform modelListParent;
     [Tooltip("Inactive template Button under the list parent; cloned once per catalog entry.")]
     [SerializeField] private Button modelButtonTemplate;
+    [Tooltip("Toggles edit mode: while on, tapping a model removes it from the catalog instead of selecting it.")]
+    [SerializeField] private Button editModelsButton;
 
     [Header("Selection Tint")]
     [SerializeField] private Color selectedTint = new Color(0.24f, 0.49f, 0.92f); // accent blue
     [SerializeField] private Color normalTint = new Color(0.23f, 0.25f, 0.30f);   // neutral dark
+    [Tooltip("Row tint while Edit mode is on, signalling that tapping a model deletes it.")]
+    [SerializeField] private Color deleteTint = new Color(0.72f, 0.25f, 0.25f);   // delete red
 
     [Header("Joystick Size")]
     [Tooltip("Slider that scales the on-screen controls (persisted via JoystickSettings).")]
@@ -52,6 +56,10 @@ public class HomeScreenController : MonoBehaviour
     [Tooltip("Checkbox for Automatic Matchloading (persisted via MatchLoadSettings). When off, the field scene shows a Match Load button for manual spawns.")]
     [SerializeField] private Toggle automaticMatchloadToggle;
 
+    [Header("Drive")]
+    [Tooltip("Checkbox for Reverse Drive Direction (persisted via ReverseDriveSettings). Flips which end of the robot the drive controls treat as front.")]
+    [SerializeField] private Toggle reverseDriveToggle;
+
     [Header("Controller Config")]
     [Tooltip("The Configure Controller sub-screen (button -> mechanism mapping).")]
     [SerializeField] private ControllerConfigScreen controllerConfig;
@@ -66,15 +74,20 @@ public class HomeScreenController : MonoBehaviour
     // Guards against the field scene being loaded twice from repeated Drive taps.
     private bool isLoading;
 
+    // While true, the model list is in edit mode: tapping a row deletes that model from the catalog.
+    private bool editMode;
+
     void Start()
     {
         if (mainPanel != null) mainPanel.SetActive(true);
         if (settingsPanel != null) settingsPanel.SetActive(false);
         if (loadingOverlay != null) loadingOverlay.SetActive(false);
         BuildModelList();
+        UpdateEditButtonLabel();
         InitJoystickSizeControl();
         InitControlsOpacityControl();
         InitAutomaticMatchloadControl();
+        InitReverseDriveControl();
     }
 
     // --- Button hooks (wired as persistent onClick listeners by the Build Home Scene tool) ---
@@ -156,14 +169,35 @@ public class HomeScreenController : MonoBehaviour
             clone.gameObject.SetActive(true); // template itself stays inactive
 
             TMP_Text label = clone.GetComponentInChildren<TMP_Text>(true);
-            if (label != null) label.text = entry.displayName;
+            if (label != null) label.text = editMode ? "Remove  " + entry.displayName : entry.displayName;
 
             string id = entry.id; // capture per-iteration copy for the closure
-            clone.onClick.AddListener(() => SelectModel(id));
+            clone.onClick.AddListener(() => OnModelButtonPressed(id));
             modelButtons.Add(new KeyValuePair<Button, string>(clone, id));
         }
 
         RefreshHighlight();
+    }
+
+    // Destroy the current clones and rebuild the list — after a delete or an edit-mode toggle, so the
+    // labels, tints, and click behavior all reflect the current mode.
+    private void RebuildModelList()
+    {
+        foreach (KeyValuePair<Button, string> pair in modelButtons)
+        {
+            if (pair.Key == null) continue;
+            pair.Key.gameObject.SetActive(false); // hide now; Destroy is deferred to frame end
+            Destroy(pair.Key.gameObject);
+        }
+        modelButtons.Clear();
+        BuildModelList();
+    }
+
+    // A model row does one of two things depending on the mode: pick it, or (in edit mode) delete it.
+    private void OnModelButtonPressed(string id)
+    {
+        if (editMode) DeleteModel(id);
+        else SelectModel(id);
     }
 
     private void SelectModel(string id)
@@ -172,14 +206,54 @@ public class HomeScreenController : MonoBehaviour
         RefreshHighlight();
     }
 
-    // Tint the selected entry's button with the accent color so the current choice is visible.
+    // Remove a model entry from the catalog. In the Editor (where robots are set up, including Play
+    // mode) this is persisted to the catalog asset so it stays gone across restarts; in a player build
+    // the asset is read-only, so it is an in-memory removal for the session. The selection self-heals:
+    // RobotModelCatalog.SelectedModelId / SelectedModel fall back to the first entry when the saved id
+    // is gone, and RobotSpawner falls back to the first entry with a prefab. Only the catalog entry is
+    // removed — the prefab and mesh assets on disk are left untouched.
+    private void DeleteModel(string id)
+    {
+        if (catalog == null || catalog.models == null) return;
+        int removed = catalog.models.RemoveAll(e => e != null && e.id == id);
+        if (removed == 0) return;
+
+#if UNITY_EDITOR
+        UnityEditor.EditorUtility.SetDirty(catalog);
+        UnityEditor.AssetDatabase.SaveAssets();
+#endif
+
+        RebuildModelList();
+    }
+
+    // --- Edit mode ---
+
+    // Wired as a persistent onClick by the Build Home Scene tool. Toggles whether tapping a model
+    // selects or deletes it, and rebuilds the list so the rows show the current mode.
+    public void OnEditModelsPressed()
+    {
+        if (catalog == null) return; // nothing to edit
+        editMode = !editMode;
+        UpdateEditButtonLabel();
+        RebuildModelList();
+    }
+
+    private void UpdateEditButtonLabel()
+    {
+        if (editModelsButton == null) return; // older HomeScene built before this button existed
+        TMP_Text label = editModelsButton.GetComponentInChildren<TMP_Text>(true);
+        if (label != null) label.text = editMode ? "Done" : "Edit Models";
+    }
+
+    // Tint the selected entry with the accent color so the current choice is visible; in edit mode
+    // every row takes the delete tint so it reads as "tap to remove".
     private void RefreshHighlight()
     {
         string selected = catalog != null ? catalog.SelectedModelId : null;
         foreach (KeyValuePair<Button, string> pair in modelButtons)
         {
-            if (pair.Key != null && pair.Key.image != null)
-                pair.Key.image.color = pair.Value == selected ? selectedTint : normalTint;
+            if (pair.Key == null || pair.Key.image == null) continue;
+            pair.Key.image.color = editMode ? deleteTint : (pair.Value == selected ? selectedTint : normalTint);
         }
     }
 
@@ -248,5 +322,17 @@ public class HomeScreenController : MonoBehaviour
 
         automaticMatchloadToggle.SetIsOnWithoutNotify(MatchLoadSettings.Automatic);
         automaticMatchloadToggle.onValueChanged.AddListener(value => MatchLoadSettings.Automatic = value);
+    }
+
+    // --- Reverse drive direction ---
+
+    // Same pattern as the matchloading toggle; guarded so an older HomeScene still runs without it.
+    // RobotMotorController reads the setting live when driving in the field scene.
+    private void InitReverseDriveControl()
+    {
+        if (reverseDriveToggle == null) return;
+
+        reverseDriveToggle.SetIsOnWithoutNotify(ReverseDriveSettings.Reversed);
+        reverseDriveToggle.onValueChanged.AddListener(value => ReverseDriveSettings.Reversed = value);
     }
 }
