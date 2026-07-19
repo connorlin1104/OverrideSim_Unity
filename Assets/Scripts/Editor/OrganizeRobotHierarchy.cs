@@ -129,21 +129,27 @@ public static class OrganizeRobotHierarchy
             if (ReservedFolderNames.Contains(child.name)) continue;                 // our folder — already organized
             if (child.GetComponent<ArticulationBody>() != null) { stats.skippedRigged++; continue; } // don't disturb a rig
 
-            // A sub-assembly (named, non-mesh children) is recursed into, never bucketed — so a whole
-            // assembly is never swept into a bucket by a coincidental name-token match.
-            if (IsContainer(child)) { containers.Add(child); continue; }
-
+            // Classify FIRST: a recognized part is always bucketed whole, whatever its mesh-node
+            // naming looks like. (Deciding "container" before this is what broke sorting — real part
+            // groups whose mesh leaves aren't named "BodyN" were mistaken for sub-assemblies.)
             string[] path = Classify(child.name);
-            if (path == null) continue;                                             // unrecognized -> leave loose in place
-
-            string key = string.Join("/", path);
-            if (!buckets.TryGetValue(key, out List<Transform> list))
+            if (path != null)
             {
-                list = new List<Transform>();
-                buckets[key] = list;
-                bucketPaths[key] = path;
+                string key = string.Join("/", path);
+                if (!buckets.TryGetValue(key, out List<Transform> list))
+                {
+                    list = new List<Transform>();
+                    buckets[key] = list;
+                    bucketPaths[key] = path;
+                }
+                list.Add(child);
+                continue;
             }
-            list.Add(child);
+
+            // Unrecognized: only descend if it's a real sub-assembly (has named, non-mesh children),
+            // so its contents get organized; a plain unrecognized part is left loose in place. This
+            // gate only affects RECURSION now, never whether a recognized part gets sorted.
+            if (IsContainer(child)) containers.Add(child);
         }
 
         foreach (KeyValuePair<string, List<Transform>> bucket in buckets)
@@ -192,9 +198,10 @@ public static class OrganizeRobotHierarchy
         }
     }
 
-    // A node worth descending into: it has a named (non-mesh) child, i.e. it's a sub-assembly or a
-    // user folder rather than a single part. Part groups — whose children are just mesh leaves or
-    // generic "BodyN" nodes — return false, so they're bucketed whole and their meshes are never dug into.
+    // Used only to decide whether to RECURSE into an UNRECOGNIZED node (one Classify didn't sort):
+    // true when it has a named, non-mesh child — i.e. a real sub-assembly / folder worth descending
+    // into — rather than a lone part whose children are just mesh leaves (MeshFilter nodes or generic
+    // "BodyN"). It can no longer affect whether a recognized part gets bucketed.
     private static bool IsContainer(Transform node)
     {
         foreach (Transform child in node)
