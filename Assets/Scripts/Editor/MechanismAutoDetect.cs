@@ -226,49 +226,36 @@ public static class MechanismAutoDetect
                "Save the scene to keep the changes.";
     }
 
-    // Preferred button order for auto-assignment: shoulder/trigger pairs first (natural for
-    // hold-to-run motors), then the d-pad, then the face buttons.
-    private static readonly ControllerButton[] AssignOrder =
-    {
-        ControllerButton.R1, ControllerButton.R2, ControllerButton.L1, ControllerButton.L2,
-        ControllerButton.Up, ControllerButton.Down, ControllerButton.Left, ControllerButton.Right,
-        ControllerButton.X, ControllerButton.A, ControllerButton.B, ControllerButton.Y,
-    };
-
-    // Assigns the next free button(s) to a mechanism and saves the robot's map: a motor gets a
-    // forward/reverse pair, a pneumatic gets one toggle. Returns a short note of what it did.
+    // Assigns the next free button(s) to a mechanism and saves the robot's map, following the
+    // mechanism's CONTROL STYLE (default: a motor gets a hold forward/reverse pair, a pneumatic gets
+    // one toggle — but a mechanism the player already switched to the other style keeps it, so
+    // re-running a builder doesn't silently undo their choice). Returns a short note of what it did.
     public static string AssignButtons(string robotId, string mechanismId, AddMechanismJoint.JointType type)
     {
         ButtonMap map = ControllerMapSettings.Load(robotId);
+        string mechType = type == AddMechanismJoint.JointType.Prismatic
+            ? RobotMechanisms.TypePneumatic : RobotMechanisms.TypeMotor;
+        string[] modes = ControllerMapSettings.ModesFor(
+            mechType, ControllerMapSettings.GetStyle(map, mechanismId, mechType));
 
-        if (type == AddMechanismJoint.JointType.Prismatic)
+        var assigned = new List<string>();
+        string shortfall = null;
+        foreach (string mode in modes)
         {
-            if (!TryNextFree(map, out ControllerButton toggle)) return "no free button";
-            ControllerMapSettings.SetAssignment(map, toggle, mechanismId, ControllerMapSettings.ModeToggle);
-            ControllerMapSettings.Save(robotId, map);
-            return $"{toggle} = toggle";
+            if (!ControllerMapSettings.TryNextFree(map, out ControllerButton button))
+            {
+                shortfall = ControllerMapSettings.ModeLabel(mode);
+                break;
+            }
+            ControllerMapSettings.SetAssignment(map, button, mechanismId, mode);
+            assigned.Add($"{button} = {ControllerMapSettings.ModeLabel(mode)}");
         }
 
-        if (!TryNextFree(map, out ControllerButton fwd)) return "no free button";
-        ControllerMapSettings.SetAssignment(map, fwd, mechanismId, ControllerMapSettings.ModeForward);
-        if (TryNextFree(map, out ControllerButton rev))
-        {
-            ControllerMapSettings.SetAssignment(map, rev, mechanismId, ControllerMapSettings.ModeReverse);
-            ControllerMapSettings.Save(robotId, map);
-            return $"{fwd}/{rev} = forward/reverse";
-        }
+        if (assigned.Count == 0) return "no free button";
         ControllerMapSettings.Save(robotId, map);
-        return $"{fwd} = forward (no free button left for reverse)";
-    }
-
-    private static bool TryNextFree(ButtonMap map, out ControllerButton free)
-    {
-        foreach (ControllerButton b in AssignOrder)
-        {
-            if (ControllerMapSettings.Find(map, b) == null) { free = b; return true; }
-        }
-        free = ControllerButton.L1;
-        return false;
+        string note = string.Join(", ", assigned);
+        if (shortfall != null) note += $" (no free button left for {shortfall})";
+        return note;
     }
 
     // Best-guess joint axis (in the part/link's local frame) and anchor (link-local) from the part's

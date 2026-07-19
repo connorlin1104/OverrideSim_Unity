@@ -167,7 +167,7 @@ public class AddMechanismJointWindow : EditorWindow
             EditorGUILayout.LabelField(new GUIContent("Parts That Move Together",
                 "Extra parts on the SAME shaft to weld into this one moving link so the whole axle moves as a " +
                 "unit (the shaft, co-rotating plates). Leave the MOTOR out. For SEPARATE shafts linked by " +
-                "chain/gear (chained rollers, a DR4B), don't list them here — use Link Coupled Joints."),
+                "chain (chained rollers/sprockets), don't list them here — use Build Chain."),
                 EditorStyles.miniBoldLabel);
             for (int i = 0; i < alsoMove.Count; i++)
             {
@@ -356,7 +356,7 @@ public static class AddMechanismJoint
     // Turns `link` into a configured ArticulationBody joint of `type` (DOF locks, axis anchorRotation,
     // parent-anchor re-derivation, travel limits) WITHOUT wiring an actuator or touching the
     // registry/catalog — the reusable core shared by Apply (which then wires/registers a button
-    // mechanism) and the Link Coupled Joints tool (which then attaches a JointCoupler instead). When
+    // mechanism) and the Build Chain tool (which then attaches a JointCoupler instead). When
     // the link is a plain mesh part with no body, first splits a new link off the chassis (adds the
     // body + a geometry-derived mass). `registry` supplies the robot root (mass frame, tag,
     // drivetrain-wheel guard). Throws on any precondition failure. Returns the configured body.

@@ -12,7 +12,8 @@ using UnityEngine;
 //  - Position ("linkage" — a DR4B, geared arm pairs): the follower tracks the driver's ANGLE times
 //    the ratio (plus an offset). Baked as a stiff position-target drive (like PneumaticActuator).
 //    For a DR4B the follower must sit BELOW the driver in the articulation tree so its rotation
-//    compounds on the driver's — the Link Coupled Joints tool warns when it doesn't.
+//    compounds on the driver's. No tool authors this mode today (the DR4B builder moved to the
+//    transform followers in Dr4bMoveFollower/PivotRotateFollower); it's kept for future linkages.
 //
 // Units: an ArticulationBody's jointPosition/jointVelocity/maxJointVelocity are radians (and rad/s);
 // a revolute drive's target/limits are DEGREES (and deg/s) — same convention MotorActuator and
@@ -23,7 +24,7 @@ using UnityEngine;
 // A coupled follower is a passive linkage: it carries NO MotorActuator/PneumaticActuator and is NOT
 // in RobotMechanisms, so ButtonRouter never fights it for the drive.
 //
-// Usage: added and configured by Tools > RoboSim > Robot > Mechanisms > Link Coupled Joints.
+// Usage: added and configured by Tools > RoboSim > Robot > Mechanisms > Build Chain.
 [DisallowMultipleComponent]
 public class JointCoupler : MonoBehaviour
 {

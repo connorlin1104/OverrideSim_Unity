@@ -508,11 +508,25 @@ public static class Dr4bLiftSetup
         }
 
         // 2) Strip lift followers/markers/couplers; restore each host to a plain mesh.
+        // Couplers go FIRST, while the lift's own marker components are still present to identify
+        // them by. Only couplers sharing a host with lift wiring are this lift's: the lift stopped
+        // using JointCoupler when it moved to the transform followers below, but chains still use
+        // it, and wiping every coupler on the robot would silently unlink an intake chain whenever
+        // the lift is rebuilt.
+        foreach (JointCoupler jc in robot.GetComponentsInChildren<JointCoupler>(true))
+        {
+            if (jc == null) continue;
+            GameObject host = jc.gameObject;
+            bool ownedByLift = host.GetComponent<LiftCarriage>() != null
+                || host.GetComponent<Dr4bMoveFollower>() != null
+                || host.GetComponent<PivotRotateFollower>() != null
+                || host.GetComponent<LinkageBarFollower>() != null;
+            if (ownedByLift) DestroyComp(jc, useUndo);
+        }
         followers += StripFollowers<Dr4bMoveFollower>(robot, registry, mc, ref bodies, useUndo);
         followers += StripFollowers<PivotRotateFollower>(robot, registry, mc, ref bodies, useUndo);
         followers += StripFollowers<LinkageBarFollower>(robot, registry, mc, ref bodies, useUndo);
         foreach (LiftCarriage lc in robot.GetComponentsInChildren<LiftCarriage>(true)) DestroyComp(lc, useUndo);
-        foreach (JointCoupler jc in robot.GetComponentsInChildren<JointCoupler>(true)) DestroyComp(jc, useUndo);
 
         // 3) Remove lift mechanisms + any now-dangling mechanism, with their bindings.
         foreach (RobotMechanisms.Mechanism m in registry.mechanisms.ToArray())

@@ -8,8 +8,8 @@ using UnityEngine;
 // here as a legal parent — see IntakePull.NeedsReanchor.
 //
 // A DR4B is a CLOSED kinematic loop; ArticulationBody is a strict TREE and can't represent one, so the
-// linkage is faked with one powered revolute driver + JointCoupler Position followers (see JointCoupler
-// / Link Coupled Joints). This link is the highest coupled follower — where the tray sits. The
+// linkage is faked with one powered revolute driver + transform followers (see Dr4bMoveFollower /
+// PivotRotateFollower). This link is the highest coupled follower — where the tray sits. The
 // carriage never drives itself (the driver's MotorActuator + the JointCoupler do); this component holds
 // no control logic.
 //

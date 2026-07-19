@@ -202,7 +202,8 @@ public class RobotSetupOverviewWindow : EditorWindow
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField($"  {a.button} — {a.mode}", GUILayout.Width(220));
+                EditorGUILayout.LabelField($"  {a.button} — {ControllerMapSettings.ModeLabel(a.mode)}",
+                    GUILayout.Width(220));
                 if (GUILayout.Button("x", GUILayout.Width(24)) && Enum.TryParse(a.button, out ControllerButton btn))
                 {
                     // Saves to PlayerPrefs directly; the in-pass `mine` list is unaffected, so the
@@ -219,8 +220,8 @@ public class RobotSetupOverviewWindow : EditorWindow
             pb = (ControllerButton)EditorGUILayout.EnumPopup(pb, GUILayout.Width(72));
             pendingButton[m.id] = pb;
 
-            string pm = pendingMode.TryGetValue(m.id, out string vm) ? vm : DefaultMode(m);
-            pm = DrawModePopup(m, pm);
+            string pm = pendingMode.TryGetValue(m.id, out string vm) ? vm : DefaultMode(map, m);
+            pm = DrawModePopup(map, m, pm);
             pendingMode[m.id] = pm;
 
             if (GUILayout.Button("Add", GUILayout.Width(56)))
@@ -238,20 +239,33 @@ public class RobotSetupOverviewWindow : EditorWindow
         }
     }
 
-    private static string DrawModePopup(RobotMechanisms.Mechanism m, string current)
+    // Offers exactly the functions this mechanism's CONTROL STYLE exposes, so a binding added here
+    // can't contradict the style the player picked on the home screen (a one-button motor gets
+    // toggle rows, not forward/reverse). Style itself is edited there, not here.
+    private static string DrawModePopup(ButtonMap map, RobotMechanisms.Mechanism m, string current)
     {
-        if (m.type == RobotMechanisms.TypePneumatic)
+        string[] modes = ModesFor(map, m);
+        if (modes.Length == 1)
         {
-            EditorGUILayout.LabelField("toggle", EditorStyles.miniLabel, GUILayout.Width(90));
-            return ControllerMapSettings.ModeToggle;
+            EditorGUILayout.LabelField(ControllerMapSettings.ModeLabel(modes[0]),
+                EditorStyles.miniLabel, GUILayout.Width(90));
+            return modes[0];
         }
-        int idx = current == ControllerMapSettings.ModeReverse ? 1 : 0;
-        idx = EditorGUILayout.Popup(idx, new[] { "forward", "reverse" }, GUILayout.Width(90));
-        return idx == 1 ? ControllerMapSettings.ModeReverse : ControllerMapSettings.ModeForward;
+        var labels = new string[modes.Length];
+        int idx = 0;
+        for (int i = 0; i < modes.Length; i++)
+        {
+            labels[i] = ControllerMapSettings.ModeLabel(modes[i]);
+            if (modes[i] == current) idx = i;
+        }
+        idx = EditorGUILayout.Popup(idx, labels, GUILayout.Width(90));
+        return modes[idx];
     }
 
-    private static string DefaultMode(RobotMechanisms.Mechanism m) =>
-        m.type == RobotMechanisms.TypePneumatic ? ControllerMapSettings.ModeToggle : ControllerMapSettings.ModeForward;
+    private static string[] ModesFor(ButtonMap map, RobotMechanisms.Mechanism m) =>
+        ControllerMapSettings.ModesFor(m.type, ControllerMapSettings.GetStyle(map, m.id, m.type));
+
+    private static string DefaultMode(ButtonMap map, RobotMechanisms.Mechanism m) => ModesFor(map, m)[0];
 
     // Each mutation loads/saves the map on its own so the auto-assign path (which loads+saves
     // internally) never races a stale in-memory copy held across the frame.
@@ -278,7 +292,7 @@ public class RobotSetupOverviewWindow : EditorWindow
         EditorGUILayout.LabelField($"Chains ({couplers.Length})", EditorStyles.boldLabel);
         if (couplers.Length == 0)
         {
-            EditorGUILayout.LabelField("None. Use Link Coupled Joints to chain sprockets/linkages.",
+            EditorGUILayout.LabelField("None. Use Build Chain to chain sprockets together.",
                 EditorStyles.miniLabel);
             return;
         }

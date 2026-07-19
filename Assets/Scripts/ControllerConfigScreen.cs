@@ -11,6 +11,12 @@ using UnityEngine.UI;
 // per robot via ControllerMapSettings (PlayerPrefs JSON keyed by the catalog id); ButtonRouter
 // reads the same map in the field scene and sums every assignment per motor.
 //
+// The "Control Style" button reuses the same popup to switch a mechanism between one- and
+// two-button control (a motor between hold fwd/rev and a latching toggle; a piston between one
+// toggle and separate extend/retract buttons). Style lives in the same saved map, NOT in the robot
+// prefab, so it applies to every robot already built with no rebuild — and which functions the
+// assignment popup offers follows from it.
+//
 // The mechanism list comes from the catalog entry's metadata (written by the URDF
 // post-processor), so no field-scene loading is needed here. Robots without mechanisms — like
 // the built-in drivetrain — get an explanatory empty state; their buttons still open the popup
@@ -39,16 +45,23 @@ public class ControllerConfigScreen : MonoBehaviour
     [SerializeField] private Button assignmentRowTemplate;
     [SerializeField] private Button clearButton;
     [SerializeField] private Button cancelButton;
+    [Tooltip("Opens the same popup in control-style mode. Optional: a home scene built before " +
+             "control styles existed has no such button and simply keeps the per-type defaults.")]
+    [SerializeField] private Button controlStyleButton;
 
     [Header("Tints")]
     [SerializeField] private Color assignedTint = new Color(0.24f, 0.49f, 0.92f); // accent blue
     [SerializeField] private Color unassignedTint = new Color(0.23f, 0.25f, 0.30f); // neutral dark
+
+    // What the shared popup is currently showing.
+    private enum PopupMode { Assign, Style }
 
     private string robotId;
     private string robotDisplayName;
     private List<RobotModelCatalog.MechanismInfo> mechanisms = new List<RobotModelCatalog.MechanismInfo>();
     private ButtonMap map = new ButtonMap();
     private readonly List<GameObject> spawnedRows = new List<GameObject>();
+    private PopupMode popupMode = PopupMode.Assign;
     private int pendingButtonIndex = -1;
 
     void Awake()
@@ -61,6 +74,7 @@ public class ControllerConfigScreen : MonoBehaviour
             if (buttons[i] != null) buttons[i].onClick.AddListener(() => OnDiagramButtonPressed(index));
         }
         if (clearButton != null) clearButton.onClick.AddListener(OnClearPressed);
+        if (controlStyleButton != null) controlStyleButton.onClick.AddListener(OnControlStylePressed);
         if (cancelButton != null)
         {
             cancelButton.onClick.AddListener(CloseAssignmentPopup);
@@ -94,9 +108,11 @@ public class ControllerConfigScreen : MonoBehaviour
 
         if (headerLabel != null) headerLabel.text = $"Controller — {robotDisplayName}";
         if (emptyStateLabel != null) emptyStateLabel.SetActive(mechanisms.Count == 0);
+        // Style switching needs mechanisms to act on, so hide the entry point when there are none.
+        if (controlStyleButton != null) controlStyleButton.gameObject.SetActive(mechanisms.Count > 0);
         RefreshAllButtons();
 
-        if (assignmentPanel != null) assignmentPanel.SetActive(false);
+        CloseAssignmentPopup(); // a popup left open from a previous robot must not carry over
         if (panel != null) panel.SetActive(true);
     }
 
@@ -111,46 +127,82 @@ public class ControllerConfigScreen : MonoBehaviour
     private void OnDiagramButtonPressed(int index)
     {
         if (assignmentPanel == null || assignmentRowTemplate == null || assignmentListParent == null) return;
+        popupMode = PopupMode.Assign;
         pendingButtonIndex = index;
         if (assignmentHeader != null) assignmentHeader.text = $"Assign {(ControllerButton)index}";
-        PopulateAssignmentRows();
+        if (clearButton != null) clearButton.gameObject.SetActive(true);
+        PopulateRows();
         assignmentPanel.SetActive(true);
     }
 
-    // Rebuilds one toggle row per mechanism function for the pending button. Called on open and
-    // after every toggle/clear so the ✓ marks stay in sync; the popup stays open across taps.
-    private void PopulateAssignmentRows()
+    // Opens the same popup listing mechanisms instead of button functions. pendingButtonIndex is
+    // cleared because there IS no pending button here — OnClearPressed would otherwise wipe
+    // whichever button happened to be open last.
+    private void OnControlStylePressed()
+    {
+        if (assignmentPanel == null || assignmentRowTemplate == null || assignmentListParent == null) return;
+        popupMode = PopupMode.Style;
+        pendingButtonIndex = -1;
+        if (assignmentHeader != null) assignmentHeader.text = "Control Style";
+        if (clearButton != null) clearButton.gameObject.SetActive(false); // nothing to clear here
+        PopulateRows();
+        assignmentPanel.SetActive(true);
+    }
+
+    private void PopulateRows()
     {
         foreach (GameObject row in spawnedRows) Destroy(row);
         spawnedRows.Clear();
+        if (popupMode == PopupMode.Style) PopulateStyleRows();
+        else PopulateAssignmentRows();
+    }
+
+    // One toggle row per mechanism function for the pending button. Which functions a mechanism
+    // offers depends on its control style, so a motor switched to one-button shows Toggle rows
+    // rather than Forward/Reverse.
+    private void PopulateAssignmentRows()
+    {
         if (pendingButtonIndex < 0) return;
         ControllerButton button = (ControllerButton)pendingButtonIndex;
 
         foreach (RobotModelCatalog.MechanismInfo mechanism in mechanisms)
         {
             if (mechanism == null || string.IsNullOrEmpty(mechanism.id)) continue;
-            if (mechanism.type == RobotMechanisms.TypePneumatic)
+            string style = ControllerMapSettings.GetStyle(map, mechanism.id, mechanism.type);
+            foreach (string mode in ControllerMapSettings.ModesFor(mechanism.type, style))
             {
-                AddAssignmentRow(button, $"{mechanism.displayName} — Toggle", mechanism.id, ControllerMapSettings.ModeToggle);
-            }
-            else
-            {
-                AddAssignmentRow(button, $"{mechanism.displayName} — Forward", mechanism.id, ControllerMapSettings.ModeForward);
-                AddAssignmentRow(button, $"{mechanism.displayName} — Reverse", mechanism.id, ControllerMapSettings.ModeReverse);
+                AddRow($"{mechanism.displayName} — {FunctionLabel(mode)}",
+                    mechanism.id + "_" + mode,
+                    ControllerMapSettings.HasAssignment(map, button, mechanism.id, mode) ? "✓ " : "    ",
+                    () => OnAssignmentRowToggled(mechanism.id, mode));
             }
         }
     }
 
-    private void AddAssignmentRow(ControllerButton button, string label, string mechanismId, string mode)
+    // One row per mechanism showing how many buttons drive it; tapping switches to the other style
+    // and rewrites its existing bindings to match, so the change takes effect without a trip back
+    // to the diagram.
+    private void PopulateStyleRows()
     {
-        bool assigned = ControllerMapSettings.HasAssignment(map, button, mechanismId, mode);
+        foreach (RobotModelCatalog.MechanismInfo mechanism in mechanisms)
+        {
+            if (mechanism == null || string.IsNullOrEmpty(mechanism.id)) continue;
+            string style = ControllerMapSettings.GetStyle(map, mechanism.id, mechanism.type);
+            AddRow($"{mechanism.displayName} — {StyleLabel(mechanism.type, style)}",
+                mechanism.id + "_style", "⇄ ",
+                () => OnStyleRowToggled(mechanism.id, mechanism.type, style));
+        }
+    }
+
+    // Clones the row template. `prefix` is fixed-width so rows stay left-aligned whatever their mark.
+    private void AddRow(string label, string idSuffix, string prefix, UnityEngine.Events.UnityAction onClick)
+    {
         Button row = Instantiate(assignmentRowTemplate, assignmentListParent);
-        row.name = "Row_" + mechanismId + "_" + mode;
+        row.name = "Row_" + idSuffix;
         row.gameObject.SetActive(true); // template itself stays inactive
         TMP_Text text = row.GetComponentInChildren<TMP_Text>(true);
-        // Fixed-width prefix so checked/unchecked rows stay left-aligned.
-        if (text != null) text.text = (assigned ? "✓ " : "    ") + label;
-        row.onClick.AddListener(() => OnAssignmentRowToggled(mechanismId, mode));
+        if (text != null) text.text = prefix + label;
+        row.onClick.AddListener(onClick);
         spawnedRows.Add(row.gameObject);
     }
 
@@ -166,22 +218,60 @@ public class ControllerConfigScreen : MonoBehaviour
             ControllerMapSettings.AddAssignment(map, button, mechanismId, mode);
         ControllerMapSettings.Save(robotId, map);
         RefreshButton(pendingButtonIndex);
-        PopulateAssignmentRows();
+        PopulateRows();
+    }
+
+    // Flips the mechanism to the other style. Every diagram caption refreshes because the rewrite
+    // can move a function onto a newly-claimed button.
+    private void OnStyleRowToggled(string mechanismId, string mechanismType, string currentStyle)
+    {
+        string next = currentStyle == ControllerMapSettings.StyleOneButton
+            ? ControllerMapSettings.StyleTwoButton
+            : ControllerMapSettings.StyleOneButton;
+        ControllerMapSettings.SetStyle(map, mechanismId, mechanismType, next);
+        ControllerMapSettings.Save(robotId, map);
+        RefreshAllButtons();
+        PopulateRows();
     }
 
     private void OnClearPressed()
     {
-        if (pendingButtonIndex < 0) return;
+        if (popupMode != PopupMode.Assign || pendingButtonIndex < 0) return;
         ControllerMapSettings.ClearAssignment(map, (ControllerButton)pendingButtonIndex);
         ControllerMapSettings.Save(robotId, map);
         RefreshButton(pendingButtonIndex);
-        PopulateAssignmentRows(); // reflect the cleared state; keep the popup open
+        PopulateRows(); // reflect the cleared state; keep the popup open
     }
 
     private void CloseAssignmentPopup()
     {
+        popupMode = PopupMode.Assign;
         pendingButtonIndex = -1;
+        if (clearButton != null) clearButton.gameObject.SetActive(true);
         if (assignmentPanel != null) assignmentPanel.SetActive(false);
+    }
+
+    // Row copy. ModeLabel/ModeCaption stay lowercase for prose and captions; these are the
+    // title-case, player-facing names for the popup.
+    private static string FunctionLabel(string mode)
+    {
+        switch (mode)
+        {
+            case ControllerMapSettings.ModeReverse: return "Reverse (hold)";
+            case ControllerMapSettings.ModeToggle: return "Toggle";
+            case ControllerMapSettings.ModeToggleReverse: return "Toggle Reverse";
+            case ControllerMapSettings.ModeExtend: return "Extend";
+            case ControllerMapSettings.ModeRetract: return "Retract";
+            default: return "Forward (hold)";
+        }
+    }
+
+    private static string StyleLabel(string mechanismType, string style)
+    {
+        bool one = style == ControllerMapSettings.StyleOneButton;
+        if (mechanismType == RobotMechanisms.TypePneumatic)
+            return one ? "1 button (toggle)" : "2 buttons (extend / retract)";
+        return one ? "1 button (toggle on/off)" : "2 buttons (hold fwd / rev)";
     }
 
     // --- Refresh ---
@@ -211,9 +301,7 @@ public class ControllerConfigScreen : MonoBehaviour
         string caption = string.Empty;
         if (firstMechanism != null)
         {
-            string suffix = first.mode == ControllerMapSettings.ModeReverse ? "REV"
-                : first.mode == ControllerMapSettings.ModeToggle ? "TOG" : "FWD";
-            caption = $"{firstMechanism.displayName} {suffix}";
+            caption = $"{firstMechanism.displayName} {ControllerMapSettings.ModeCaption(first.mode)}";
             if (shown > 1) caption += $" +{shown - 1}";
         }
 
@@ -233,12 +321,14 @@ public class ControllerConfigScreen : MonoBehaviour
         return null;
     }
 
-    // Assignments to mechanisms the robot no longer has (re-import removed a joint) are dropped
-    // from the persisted map so they don't linger invisibly.
+    // Assignments and style choices for mechanisms the robot no longer has (re-import removed a
+    // joint) are dropped from the persisted map so they don't linger invisibly.
     private void PruneStaleAssignments()
     {
         if (map == null || map.assignments == null) return;
         int removed = map.assignments.RemoveAll(a => a == null || FindMechanism(a.mechanismId) == null);
+        if (map.styles != null)
+            removed += map.styles.RemoveAll(s => s == null || FindMechanism(s.mechanismId) == null);
         if (removed > 0) ControllerMapSettings.Save(robotId, map);
     }
 }

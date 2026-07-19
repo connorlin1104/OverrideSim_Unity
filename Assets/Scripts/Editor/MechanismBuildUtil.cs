@@ -67,6 +67,10 @@ internal static class MechanismBuildUtil
 
     // Drop every button binding a mechanism currently holds so re-assigning gives one clean pair
     // instead of stacking another each run (map.assignments is a public flat list keyed by id).
+    //
+    // Deliberately leaves the mechanism's CONTROL STYLE alone: this runs on every rebuild, and the
+    // style is the player's choice, not build output — AssignButtons re-assigns to match it. Styles
+    // for mechanisms that are genuinely gone are pruned by ControllerConfigScreen when it opens.
     public static void ClearMechanismBindings(string robotId, string mechanismId)
     {
         ButtonMap map = ControllerMapSettings.Load(robotId);

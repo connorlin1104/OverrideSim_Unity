@@ -151,21 +151,28 @@ public class BuildHomeScene
     // references all survived (an older scene missing the layout screen counts as invalid, so the
     // first run after adding it rebuilds once, then subsequent runs skip). Opens the scene to
     // inspect it — the caller has already offered to save the current one.
+    //
+    // Whenever a NEW serialized ref is added to a built panel, check it here too: the committed
+    // HomeScene.unity serializes it as {fileID: 0}, and without a check for it this method reports
+    // "valid", the rebuild is skipped, and the new control silently never appears.
     private static bool HomeSceneIsValid()
     {
         if (!File.Exists(HomeScenePath)) return false;
         Scene scene = EditorSceneManager.OpenScene(HomeScenePath, OpenSceneMode.Single);
         HomeScreenController controller = null;
+        ControllerConfigScreen configScreen = null;
         foreach (GameObject rootGo in scene.GetRootGameObjects())
         {
-            controller = rootGo.GetComponentInChildren<HomeScreenController>(true);
-            if (controller != null) break;
+            if (controller == null) controller = rootGo.GetComponentInChildren<HomeScreenController>(true);
+            if (configScreen == null) configScreen = rootGo.GetComponentInChildren<ControllerConfigScreen>(true);
         }
-        if (controller == null) return false;
+        if (controller == null || configScreen == null) return false;
         SerializedObject so = new SerializedObject(controller);
+        SerializedObject configSo = new SerializedObject(configScreen);
         return IsRefSet(so, "catalog") && IsRefSet(so, "controllerConfig") &&
                IsRefSet(so, "controlsLayout") && IsRefSet(so, "loadingOverlay") &&
-               IsRefSet(so, "automaticMatchloadToggle");
+               IsRefSet(so, "automaticMatchloadToggle") &&
+               IsRefSet(configSo, "controlStyleButton");
     }
 
     private static bool IsRefSet(SerializedObject so, string propertyName)
@@ -486,6 +493,7 @@ public class BuildHomeScene
         configSo.FindProperty("assignmentRowTemplate").objectReferenceValue = configParts.rowTemplate;
         configSo.FindProperty("clearButton").objectReferenceValue = configParts.clearButton;
         configSo.FindProperty("cancelButton").objectReferenceValue = configParts.cancelButton;
+        configSo.FindProperty("controlStyleButton").objectReferenceValue = configParts.controlStyleButton;
         configSo.ApplyModifiedPropertiesWithoutUndo();
 
         so.FindProperty("controllerConfig").objectReferenceValue = configScreen;
@@ -529,6 +537,7 @@ public class BuildHomeScene
         public Button rowTemplate;
         public Button clearButton;
         public Button cancelButton;
+        public Button controlStyleButton;
         public Button backButton;
     }
 
@@ -608,12 +617,24 @@ public class BuildHomeScene
         parts.buttons[11] = CreateConfigButton(diagram.transform, "CfgY", "Y",
             new Vector2(140f, 60f), roundSize, true, out parts.captions[11]);
 
+        // Bottom row: Back centered (where it has always been), Control Style offset to its right so
+        // the two don't overlap.
         parts.backButton = CreateButton("ConfigBackButton", panel.transform, "Back", 36f, AccentColor);
         RectTransform backRect = (RectTransform)parts.backButton.transform;
         backRect.anchorMin = backRect.anchorMax = new Vector2(0.5f, 0f);
         backRect.pivot = new Vector2(0.5f, 0f);
-        backRect.anchoredPosition = new Vector2(0f, 18f);
+        backRect.anchoredPosition = new Vector2(-180f, 18f);
         backRect.sizeDelta = new Vector2(240f, 64f);
+
+        // Switches a mechanism between one- and two-button control (ControllerConfigScreen reuses
+        // the assignment popup for it).
+        parts.controlStyleButton = CreateButton("ControlStyleButton", panel.transform,
+            "Control Style", 36f, NeutralColor);
+        RectTransform styleRect = (RectTransform)parts.controlStyleButton.transform;
+        styleRect.anchorMin = styleRect.anchorMax = new Vector2(0.5f, 0f);
+        styleRect.pivot = new Vector2(0.5f, 0f);
+        styleRect.anchoredPosition = new Vector2(180f, 18f);
+        styleRect.sizeDelta = new Vector2(300f, 64f);
 
         // Assignment popup: header + scrollable option list + Clear/Cancel. Scrolls because a
         // many-motor robot yields two rows per motor.
