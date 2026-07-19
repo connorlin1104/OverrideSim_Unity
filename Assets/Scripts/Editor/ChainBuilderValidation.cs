@@ -53,18 +53,115 @@ public static class ChainBuilderValidation
     private static string Run()
     {
         bool hadEntry = HasCatalogEntry(TestRobotId);
+        SimulationMode previousSimulation = Physics.simulationMode;
+        Vector3 previousGravity = Physics.gravity;
         try
         {
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            return BuildAndAssert();
+            string structure = BuildAndAssert();
+
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            string motion = SpinDirectionUnderPhysics();
+
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            string mirrored = MirroredChainsAgree();
+            return structure + "\n\n" + motion + "\n\n" + mirrored;
         }
         finally
         {
+            Physics.simulationMode = previousSimulation;
+            Physics.gravity = previousGravity;
             PlayerPrefs.DeleteKey(ControllerMapSettings.PrefKey(TestRobotId));
             PlayerPrefs.Save();
             if (!hadEntry) RemoveCatalogEntry(TestRobotId);
-            // The scratch scene is never saved, so the synthetic robot dies with it.
+            // The scratch scenes are never saved, so the synthetic robots die with them.
         }
+    }
+
+    // Actually turns the chain under physics and checks which way each part goes.
+    //
+    // The structural pass above can only prove the joint AXES agree. It cannot see a mismatch
+    // between what a joint is COMMANDED (SetDriveTargetVelocity) and what it REPORTS
+    // (jointVelocity) — and JointCoupler reads the driver's reported velocity and commands it onto
+    // the follower, so any sign difference between those two APIs makes a chain counter-rotate with
+    // perfectly agreeing axes. That is exactly the failure Connor hit on 654V's Active Toggle
+    // (ratio 1 counter-rotated, ratio -1 looked right), so it gets a physics test, not arithmetic.
+    private static string SpinDirectionUnderPhysics()
+    {
+        GameObject root = new GameObject("SpinTestBot");
+        RobotMechanisms registry = root.AddComponent<RobotMechanisms>();
+        registry.robotId = TestRobotId;
+        ArticulationBody chassis = root.AddComponent<ArticulationBody>();
+        chassis.immovable = true;
+        MakeBox(root.transform, "ChassisMesh", Vector3.zero, Quaternion.identity, new Vector3(6f, 1f, 6f));
+
+        // Two stations, axles identical and un-rotated: nothing here can make the axes disagree, so
+        // any counter-rotation is the coupling's doing and nothing else.
+        var stations = new System.Collections.Generic.List<ChainBuilder.Station>();
+        for (int i = 0; i < 2; i++)
+        {
+            float x = i * 4f;
+            GameObject spins = new GameObject(i == 0 ? "Driver" : "Follower");
+            spins.transform.SetParent(root.transform, false);
+            spins.transform.position = new Vector3(x, 2f, 0f);
+            MakeBox(spins.transform, $"Disc{i}", new Vector3(x, 2f, 0f), Quaternion.identity,
+                new Vector3(1.5f, 1.5f, 0.3f));
+            GameObject axle = MakeBox(root.transform, $"HS Axle {i}", new Vector3(x, 2f, 0f),
+                Quaternion.identity, new Vector3(0.2f, 0.2f, 5f));
+            stations.Add(new ChainBuilder.Station { spins = spins, axle = axle, ratio = 1f });
+        }
+
+        ChainBuilder.Apply(stations, new ChainBuilder.Options
+        {
+            mechanismName = "SpinTest",
+            reverseDirection = false,
+            autoAssignButton = false,
+        }, useUndo: false);
+
+        ArticulationBody driverBody = stations[0].spins.GetComponent<ArticulationBody>();
+        ArticulationBody followerBody = stations[1].spins.GetComponent<ArticulationBody>();
+        MotorActuator motor = stations[0].spins.GetComponent<MotorActuator>();
+        JointCoupler coupler = stations[1].spins.GetComponent<JointCoupler>();
+        Assert(motor != null && coupler != null, "the fixture should have produced a motor and a coupler");
+        if (motor.body == null) motor.body = driverBody; // Awake doesn't run at edit time
+
+        // Isolate the drive: gravity would swing these links about their own axes and muddy the read.
+        Physics.gravity = Vector3.zero;
+        Physics.simulationMode = SimulationMode.Script;
+
+        Vector3 axis = WorldSpinAxis(driverBody);
+        motor.SetInput(1f);   // full forward, applied immediately (that's why SetInput is not deferred)
+
+        // Accumulate per-step signed angles rather than comparing start to end: at 100 RPM these
+        // discs pass 180 degrees in well under a second and a single comparison would alias.
+        double driverTurn = 0d, followerTurn = 0d;
+        Vector3 driverRef = driverBody.transform.rotation * Vector3.up;
+        Vector3 followerRef = followerBody.transform.rotation * Vector3.up;
+        for (int step = 0; step < 120; step++)
+        {
+            coupler.ApplyStep(); // stands in for FixedUpdate, which doesn't run at edit time
+            Physics.Simulate(0.02f);
+
+            Vector3 d = driverBody.transform.rotation * Vector3.up;
+            Vector3 f = followerBody.transform.rotation * Vector3.up;
+            driverTurn += Vector3.SignedAngle(driverRef, d, axis);
+            followerTurn += Vector3.SignedAngle(followerRef, f, axis);
+            driverRef = d;
+            followerRef = f;
+        }
+
+        Assert(Mathf.Abs((float)driverTurn) > 30f,
+            $"the powered station barely moved ({driverTurn:F1} degrees) — the fixture never spun up");
+        Assert(Mathf.Abs((float)followerTurn) > 30f,
+            $"the chained station barely moved ({followerTurn:F1} degrees) while the driver turned " +
+            $"{driverTurn:F1} — the coupling isn't driving it");
+        Assert(Math.Sign(driverTurn) == Math.Sign(followerTurn),
+            $"a chain must turn one way: the powered station went {driverTurn:F0} degrees but the " +
+            $"chained one went {followerTurn:F0}. Ratio was 1, and their joint axes agree, so the " +
+            "coupling is inverting the direction.");
+
+        return $"Spin direction under physics: PASSED — powered {driverTurn:F0} degrees, chained " +
+               $"{followerTurn:F0} degrees, same way, ratio 1.";
     }
 
     private static string BuildAndAssert()
@@ -203,6 +300,73 @@ public static class ChainBuilderValidation
         return "Validate Build Chain: PASSED — 3 stations rigged, the 180-degree-flipped station was " +
                "corrected to spin with the others, axles folded in, self-collision guarded, buttons " +
                $"assigned.\n\nTool report was:\n{report}";
+    }
+
+    // Two mirrored copies of a mechanism — a left and a right side, as CAD produces them — must end
+    // up turning the SAME way in world for the same button press. Aligning each chain to its own
+    // powered station isn't enough for that: the two sides' axles point opposite ways, so each chain
+    // would agree with itself and disagree with its twin. This is the 654V Active Toggle case.
+    private static string MirroredChainsAgree()
+    {
+        GameObject root = new GameObject("MirrorTestBot");
+        RobotMechanisms registry = root.AddComponent<RobotMechanisms>();
+        registry.robotId = TestRobotId;
+        ArticulationBody chassis = root.AddComponent<ArticulationBody>();
+        chassis.immovable = true;
+        MakeBox(root.transform, "ChassisMesh", Vector3.zero, Quaternion.identity, new Vector3(6f, 1f, 12f));
+
+        // A drivetrain, so the robot has a lateral axis to agree on. Left/right wheels sit at -Z/+Z,
+        // making lateral +Z — the same direction these chains' shafts run.
+        RobotMotorController mc = root.AddComponent<RobotMotorController>();
+        mc.leftWheels = new[] { MakeWheel(root.transform, "WheelL", new Vector3(0f, 0f, -5f)) };
+        mc.rightWheels = new[] { MakeWheel(root.transform, "WheelR", new Vector3(0f, 0f, 5f)) };
+
+        // Two chains whose axles are mirrored relative to each other.
+        Vector3[] driverAxes = new Vector3[2];
+        for (int side = 0; side < 2; side++)
+        {
+            Quaternion mirror = side == 0 ? Quaternion.identity : Quaternion.Euler(0f, 180f, 0f);
+            var stations = new System.Collections.Generic.List<ChainBuilder.Station>();
+            for (int i = 0; i < 2; i++)
+            {
+                Vector3 at = new Vector3(i * 4f, 2f, side == 0 ? -3f : 3f);
+                GameObject spins = new GameObject($"Side{side}Station{i}");
+                spins.transform.SetParent(root.transform, false);
+                spins.transform.position = at;
+                MakeBox(spins.transform, $"Disc{side}{i}", at, mirror, new Vector3(1.5f, 1.5f, 0.3f));
+                GameObject axle = MakeBox(root.transform, $"HS Axle {side}{i}", at, mirror,
+                    new Vector3(0.2f, 0.2f, 5f));
+                stations.Add(new ChainBuilder.Station { spins = spins, axle = axle, ratio = 1f });
+            }
+
+            ChainBuilder.TryAxleWorldAxis(stations[0].axle, out Vector3 rawAxis, out _);
+            ChainBuilder.Apply(stations, new ChainBuilder.Options
+            {
+                mechanismName = side == 0 ? "Left Side" : "Right Side",
+                reverseDirection = false,
+                autoAssignButton = false,
+            }, useUndo: false);
+
+            driverAxes[side] = WorldSpinAxis(stations[0].spins.GetComponent<ArticulationBody>());
+            // Confirm the fixture really is mirrored, or this proves nothing.
+            if (side == 1)
+                Assert(Vector3.Dot(rawAxis, driverAxes[0]) < 0f,
+                    "the fixture is wrong: side 1's axle should read as mirrored before alignment");
+        }
+
+        float dot = Vector3.Dot(driverAxes[0], driverAxes[1]);
+        Assert(dot > 0.9f,
+            $"the two mirrored chains ended up turning opposite ways (axes {driverAxes[0]} vs " +
+            $"{driverAxes[1]}, dot {dot:F2}) — the same button press would counter-rotate them");
+
+        return "Mirrored chains: PASSED — a left and right copy built from mirrored CAD both align " +
+               "to the robot's lateral axis, so they turn the same way.";
+    }
+
+    private static ArticulationBody MakeWheel(Transform parent, string name, Vector3 position)
+    {
+        GameObject go = MakeBox(parent, name, position, Quaternion.identity, new Vector3(1f, 1f, 0.4f));
+        return go.AddComponent<ArticulationBody>();
     }
 
     // The joint's twist axis in world. ConfigureJointLink stores it as

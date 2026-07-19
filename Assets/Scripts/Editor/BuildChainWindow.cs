@@ -297,6 +297,12 @@ public static class ChainBuilder
     // non-parallel — chained sprockets run on parallel shafts, so it's flagged as a likely mistake.
     public const float MinAlignment = 0.3f;
 
+    // Above this |dot| against the drivetrain's lateral axis, a chain is treated as running on
+    // lateral shafts and is aligned to the robot rather than to its own powered station. Below it
+    // (a vertical or fore-aft chain) there's no robot-wide reference to agree on, so the powered
+    // station stands in.
+    private const float LateralAlignment = 0.5f;
+
     [Serializable]
     public class Station
     {
@@ -630,8 +636,20 @@ public static class ChainBuilder
             result.Add(new Resolved { worldAxis = worldAxis, worldCenter = worldCenter, fromAxle = fromAxle });
         }
 
-        // Agree on a direction: flip any station pointing the opposite way to the powered one.
+        // Agree on a direction. Aligning to the powered station alone makes each chain internally
+        // consistent but says nothing ACROSS chains: two mirrored copies of a mechanism (a left and
+        // right intake side) have mirrored axles, so each would align to its own and the two
+        // assemblies would counter-rotate in world for the same button press.
+        //
+        // So the reference is the ROBOT's lateral axis when the shafts run that way — which is the
+        // normal case, chains sit on lateral shafts like the wheels do. Every chain on the robot
+        // then resolves to the same reference, and "forward" means one world direction across all of
+        // them. Reverse Direction is there when a pair genuinely should counter-rotate.
         Vector3 reference = result[0].worldAxis;
+        Vector3 lateral = DrivetrainLateralWorld(list[0].spins);
+        if (lateral.sqrMagnitude > 1e-6f && Mathf.Abs(Vector3.Dot(reference, lateral)) > LateralAlignment)
+            reference = Vector3.Dot(reference, lateral) < 0f ? -reference : reference;
+
         for (int i = 0; i < result.Count; i++)
         {
             Resolved r = result[i];
@@ -696,6 +714,29 @@ public static class ChainBuilder
         Vector3 size = mf.sharedMesh.bounds.size;
         Vector3 scale = mf.transform.lossyScale;
         return new Vector3(size.x * Mathf.Abs(scale.x), size.y * Mathf.Abs(scale.y), size.z * Mathf.Abs(scale.z));
+    }
+
+    // The robot's left-to-right axis, taken from the drivetrain wheel centroids — the same reading
+    // Dr4bLiftBuilder and PneumaticBuilder use, and more reliable than the chassis transform's own
+    // right, which reflects however the CAD happened to be oriented on import.
+    private static Vector3 DrivetrainLateralWorld(GameObject part)
+    {
+        RobotMechanisms registry = part.GetComponentInParent<RobotMechanisms>();
+        if (registry == null) return Vector3.zero;
+        RobotMotorController mc = registry.GetComponentInChildren<RobotMotorController>(true);
+        if (mc == null) return registry.transform.right;
+        Vector3 lateral = Centroid(mc.rightWheels) - Centroid(mc.leftWheels);
+        return lateral.sqrMagnitude > 1e-6f ? lateral.normalized : registry.transform.right;
+    }
+
+    private static Vector3 Centroid(ArticulationBody[] bodies)
+    {
+        if (bodies == null) return Vector3.zero;
+        Vector3 sum = Vector3.zero;
+        int n = 0;
+        foreach (ArticulationBody b in bodies)
+            if (b != null) { sum += b.transform.position; n++; }
+        return n > 0 ? sum / n : Vector3.zero;
     }
 
     public static bool LooksLikeAxle(GameObject go)

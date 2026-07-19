@@ -168,6 +168,14 @@ public class RobotSetupOverviewWindow : EditorWindow
                     using (new EditorGUI.DisabledScope(host == null))
                         if (GUILayout.Button("Select", GUILayout.Width(56)) && host != null)
                             Selection.activeGameObject = host;
+                    if (GUILayout.Button(new GUIContent("Edit…",
+                        "Rename this mechanism or delete it — for fixing up one created by mistake. " +
+                        "Editor-only; players can't do either from Configure Controller."),
+                        GUILayout.Width(56)))
+                    {
+                        MechanismEditWindow.Open(registry, m.id);
+                        GUIUtility.ExitGUI();
+                    }
                 }
 
                 // Reverse: motors flip with MotorActuator.invert. Pneumatics reverse by swapping the
@@ -323,5 +331,210 @@ public class RobotSetupOverviewWindow : EditorWindow
         int n = 0;
         foreach (ArticulationBody b in arr) if (b != null) n++;
         return n;
+    }
+}
+
+// Fix up a mechanism after the fact: rename it, or delete one created by mistake (a mis-named group
+// that got rigged, a leftover from an earlier attempt).
+//
+// Deliberately editor-only. Renaming the part changes the mechanism's id and deleting destroys
+// joints — that's authoring, not a setting, so it has no business in the player's Configure
+// Controller screen, which can only choose buttons and control style.
+//
+// Opened from the Edit… button in Robot Setup Overview.
+public class MechanismEditWindow : EditorWindow
+{
+    private const string UndoName = "Edit Mechanism";
+
+    private RobotMechanisms registry;
+    private string mechanismId;
+    private string displayName = string.Empty;
+    private bool renamePart;
+    private string partName = string.Empty;
+    private string problem;
+
+    public static void Open(RobotMechanisms registry, string mechanismId)
+    {
+        RobotMechanisms.Mechanism m = registry != null ? registry.Find(mechanismId) : null;
+        if (m == null) return;
+
+        MechanismEditWindow window = GetWindow<MechanismEditWindow>(true, "Edit Mechanism", true);
+        window.registry = registry;
+        window.mechanismId = mechanismId;
+        window.displayName = string.IsNullOrEmpty(m.displayName) ? mechanismId : m.displayName;
+        GameObject host = HostOf(m);
+        window.partName = host != null ? host.name : string.Empty;
+        window.renamePart = false;
+        window.problem = null;
+        window.minSize = new Vector2(420f, 260f);
+        window.ShowUtility();
+    }
+
+    private void OnGUI()
+    {
+        RobotMechanisms.Mechanism m = registry != null ? registry.Find(mechanismId) : null;
+        if (m == null)
+        {
+            EditorGUILayout.HelpBox("This mechanism is gone.", MessageType.Info);
+            if (GUILayout.Button("Close")) Close();
+            return;
+        }
+        GameObject host = HostOf(m);
+
+        EditorGUILayout.LabelField($"id: {m.id}", EditorStyles.miniLabel);
+        displayName = EditorGUILayout.TextField(new GUIContent("Shows as",
+            "What Configure Controller calls this mechanism. Safe to change any time."), displayName);
+
+        EditorGUILayout.Space();
+        using (new EditorGUI.DisabledScope(host == null))
+        {
+            renamePart = EditorGUILayout.ToggleLeft(new GUIContent(
+                host != null ? $"Also rename the part '{host.name}'" : "Also rename the part (no part found)",
+                "The mechanism's id comes from the part's name, so renaming the part changes the id. " +
+                "Button bindings and control style are carried across."), renamePart);
+            if (renamePart)
+            {
+                EditorGUI.indentLevel++;
+                partName = EditorGUILayout.TextField("Part name", partName);
+                EditorGUILayout.LabelField($"new id: {UrdfPostProcessor.Slugify(partName)}",
+                    EditorStyles.miniLabel);
+                EditorGUI.indentLevel--;
+            }
+        }
+
+        if (!string.IsNullOrEmpty(problem)) EditorGUILayout.HelpBox(problem, MessageType.Error);
+
+        EditorGUILayout.Space();
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            if (GUILayout.Button("Apply", GUILayout.Height(24))) ApplyRename(m, host);
+            if (GUILayout.Button("Cancel", GUILayout.Height(24))) Close();
+        }
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Delete", EditorStyles.boldLabel);
+        EditorGUILayout.HelpBox(
+            "Unregister only — takes it off the controls list but leaves the joint moving (it can " +
+            "still be chained to something).\n" +
+            "Delete joint too — also strips the ArticulationBody and any coupling, turning the part " +
+            "back into plain geometry.\n\n" +
+            "Both clear its button bindings and control style.", MessageType.None);
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            if (GUILayout.Button("Unregister only")) DeleteMechanism(m, host, alsoJoint: false);
+            using (new EditorGUI.DisabledScope(host == null))
+                if (GUILayout.Button("Delete joint too")) DeleteMechanism(m, host, alsoJoint: true);
+        }
+    }
+
+    private void ApplyRename(RobotMechanisms.Mechanism m, GameObject host)
+    {
+        problem = null;
+        string newId = m.id;
+
+        if (renamePart && host != null && partName != host.name)
+        {
+            newId = UrdfPostProcessor.Slugify(partName);
+            if (string.IsNullOrEmpty(newId))
+            {
+                problem = "That part name has no usable characters for an id.";
+                return;
+            }
+            RobotMechanisms.Mechanism clash = registry.Find(newId);
+            if (clash != null && clash != m)
+            {
+                problem = $"Another mechanism already uses the id '{newId}'. Pick a different name.";
+                return;
+            }
+        }
+
+        Undo.IncrementCurrentGroup();
+        Undo.SetCurrentGroupName(UndoName);
+        int group = Undo.GetCurrentGroup();
+
+        Undo.RecordObject(registry, UndoName);
+        if (newId != m.id)
+        {
+            Undo.RecordObject(host, UndoName);
+            host.name = partName;
+            // Carry the bindings across BEFORE the id moves, or they'd point at an id nothing has.
+            MigrateBindings(registry.robotId, m.id, newId);
+            m.id = newId;
+            mechanismId = newId;
+        }
+        m.displayName = displayName;
+
+        EditorUtility.SetDirty(registry);
+        UrdfPostProcessor.RefreshCatalogMechanisms(registry.robotId, registry.gameObject.name, registry);
+        AssetDatabase.SaveAssets(); // flush the catalog so Configure Controller shows the new name
+        if (registry.gameObject.scene.IsValid()) EditorSceneManager.MarkSceneDirty(registry.gameObject.scene);
+        Undo.CollapseUndoOperations(group);
+        Close();
+    }
+
+    private void DeleteMechanism(RobotMechanisms.Mechanism m, GameObject host, bool alsoJoint)
+    {
+        string label = string.IsNullOrEmpty(m.displayName) ? m.id : m.displayName;
+        if (!EditorUtility.DisplayDialog("Delete Mechanism",
+            alsoJoint
+                ? $"Delete '{label}' and turn '{(host != null ? host.name : "the part")}' back into " +
+                  "plain geometry? Anything chained to it is unchained too."
+                : $"Take '{label}' off the controls list? Its joint keeps working.",
+            "Delete", "Cancel")) return;
+
+        Undo.IncrementCurrentGroup();
+        Undo.SetCurrentGroupName("Delete Mechanism");
+        int group = Undo.GetCurrentGroup();
+
+        // Bindings first: RemoveMechanism destroys the actuator, and after that the id is the only
+        // handle left on what this mechanism owned.
+        MechanismBuildUtil.ClearMechanismBindings(registry.robotId, m.id);
+        ButtonMap map = ControllerMapSettings.Load(registry.robotId);
+        ControllerMapSettings.RemoveStyle(map, m.id);
+        ControllerMapSettings.Save(registry.robotId, map);
+
+        UrdfPostProcessor.RemoveMechanism(registry, m.id, useUndo: true);
+
+        if (alsoJoint && host != null)
+        {
+            // Anything chained to this joint would be left following a destroyed body.
+            foreach (JointCoupler c in registry.GetComponentsInChildren<JointCoupler>(true))
+            {
+                if (c != null && c.driver != null && c.driver.gameObject == host)
+                    Undo.DestroyObjectImmediate(c);
+            }
+            MechanismBuildUtil.NeutralizeToPlainTransform(host, useUndo: true);
+        }
+
+        UrdfPostProcessor.RefreshCatalogMechanisms(registry.robotId, registry.gameObject.name, registry);
+        AssetDatabase.SaveAssets(); // flush the catalog so Configure Controller stops listing it
+        EditorUtility.SetDirty(registry);
+        if (registry.gameObject.scene.IsValid()) EditorSceneManager.MarkSceneDirty(registry.gameObject.scene);
+        Undo.CollapseUndoOperations(group);
+        Close();
+    }
+
+    // Moves a mechanism's saved buttons and control style onto its new id, so a rename doesn't
+    // silently unbind it.
+    private static void MigrateBindings(string robotId, string oldId, string newId)
+    {
+        ButtonMap map = ControllerMapSettings.Load(robotId);
+        bool changed = false;
+        foreach (ButtonAssignment a in map.assignments)
+            if (a != null && a.mechanismId == oldId) { a.mechanismId = newId; changed = true; }
+        if (map.styles != null)
+        {
+            foreach (MechanismStyle s in map.styles)
+                if (s != null && s.mechanismId == oldId) { s.mechanismId = newId; changed = true; }
+        }
+        if (changed) ControllerMapSettings.Save(robotId, map);
+    }
+
+    private static GameObject HostOf(RobotMechanisms.Mechanism m)
+    {
+        if (m == null) return null;
+        if (m.motor != null) return m.motor.gameObject;
+        if (m.pneumatic != null) return m.pneumatic.gameObject;
+        return null;
     }
 }
