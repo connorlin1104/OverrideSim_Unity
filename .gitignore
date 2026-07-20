@@ -108,3 +108,7 @@ InitTestScene*.unity*
 # macOS Finder metadata
 .DS_Store
 **/.DS_Store
+
+# Unity crash-recovery scene copies. The editor dumps a full scene here after an
+# unclean shutdown — 7 MB apiece, local debris, not part of the project.
+/[Aa]ssets/_[Rr]ecovery/
