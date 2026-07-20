@@ -222,12 +222,14 @@ public class ClawBuilderWindow : EditorWindow
                 holdPoint = (Transform)EditorGUILayout.ObjectField(new GUIContent("Hold point",
                     "WHERE a grabbed piece is carried. Empty = the build creates a ClawHoldPoint in " +
                     "the middle of the jaws; drag it (the Scene view gives it a handle) to move where " +
-                    "pieces sit, and its UP axis is which way they stand."),
+                    "pieces sit. Only its POSITION matters — which way pieces stand is measured off " +
+                    "the robot, not off this marker's own rotation."),
                     holdPoint, typeof(Transform), true);
                 grabAutoUpright = EditorGUILayout.Toggle(new GUIContent("Stand pieces up",
-                    "Align each grabbed piece's long axis with the hold point's up, measured per " +
-                    "piece. Without this a pin lying on its side is carried lying on its side, so the " +
-                    "same grab looks right on an upright piece and sideways on a match-loaded one."),
+                    "Stand each grabbed piece along the ROBOT's up, measuring the piece's long axis " +
+                    "per piece. Without this a pin lying on its side is carried lying on its side, so " +
+                    "the same grab looks right on an upright piece and sideways on a match-loaded one. " +
+                    "The claw's flip still turns a held stack over."),
                     grabAutoUpright);
                 grabPassThrough = EditorGUILayout.Toggle(new GUIContent("Held piece passes through",
                     "A grabbed piece stops colliding with anything until it's dropped, and eases into " +
@@ -386,8 +388,13 @@ public class ClawBuilderWindow : EditorWindow
 
     // The hold point is a bare empty, so it can't be clicked in the Scene view and is easy to miss in
     // the hierarchy — yet it's the one marker whose PLACEMENT the player feels directly, since it's
-    // where a grabbed piece ends up and its up axis is which way that piece stands. So the tool draws
-    // it and hands over a drag handle, the same deal as the pivots.
+    // where a grabbed piece ends up. So the tool draws it and hands over a drag handle, the same deal
+    // as the pivots.
+    //
+    // The arrow is which way pieces STAND, and it deliberately does not read the marker's own up: that
+    // is inherited from the claw's CAD and points wherever the modeller left it, which is what carried
+    // every grabbed pin lying on its side. ClawGrab is asked for the answer rather than the formula
+    // being written out twice.
     private void DrawHoldPoint(RobotMechanisms registry)
     {
         if (!enableGrab) return;
@@ -397,9 +404,21 @@ public class ClawBuilderWindow : EditorWindow
         float handle = HandleUtility.GetHandleSize(hold.position);
         Handles.color = new Color(0.2f, 1f, 0.5f);
         Handles.SphereHandleCap(0, hold.position, Quaternion.identity, handle * 0.22f, EventType.Repaint);
-        // Its UP is not decoration: Stand pieces up aligns each piece's long axis to this arrow.
-        Handles.ArrowHandleCap(0, hold.position, Quaternion.LookRotation(hold.up), handle, EventType.Repaint);
-        Handles.Label(hold.position + hold.up * handle * 1.1f, "Hold point (pieces stand along this)");
+
+        // Before the first build there is no ClawGrab to ask, so fall back to the same robot up it
+        // would measure — what the arrow promises is what the next build will do.
+        ClawGrab grab = registry.GetComponentInChildren<ClawGrab>(true);
+        Vector3 up = grab != null ? grab.UprightWorldDir() : registry.transform.up;
+        if (grabAutoUpright && up.sqrMagnitude > 1e-6f)
+        {
+            Handles.ArrowHandleCap(0, hold.position, Quaternion.LookRotation(up), handle, EventType.Repaint);
+            Handles.Label(hold.position + up * handle * 1.1f, "Hold point (pieces stand along this)");
+        }
+        else
+        {
+            Handles.Label(hold.position + Vector3.up * handle * 0.4f,
+                "Hold point (pieces keep the angle they were caught at)");
+        }
 
         EditorGUI.BeginChangeCheck();
         Vector3 moved = Handles.PositionHandle(hold.position, hold.rotation);
@@ -1873,7 +1892,12 @@ public static class ClawSetup
         string grabLine = grabWired
             ? "• GRAB: closing the claw locks whatever is in the ClawMouth trigger to the claw — it " +
               "survives driving and the flip, and drops when you open. Shrink ClawMouth onto the " +
-              "opening in the Scene view.\n"
+              "opening in the Scene view.\n" +
+              (o.grabAutoUpright
+                  ? "• Each piece is stood up along the ROBOT's up as it comes in, so a pin lying " +
+                    "flat is carried the same way round as an upright one — and the flip still turns " +
+                    "a held stack over.\n"
+                  : "")
             : "• GRAB: off — the jaws are solid but won't retain a piece.\n";
 
         return $"Built the claw '{o.displayName}'.\n\n" + flipLine + clampLine + grabLine +

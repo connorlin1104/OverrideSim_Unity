@@ -27,6 +27,13 @@ using UnityEngine;
 // attitudes — so carrying them at the pose they were caught in means an identical grab looks right
 // half the time and sideways the other half. Same fix, same reason, as IntakePull's Auto Upright.
 //
+// UP, for that, is the ROBOT's up — not the hold point's own +Y. The intake's hold point sits on the
+// chassis, so its +Y happens to be up; a claw's hangs off the flip link, whose CAD is rotated however
+// the modeller drew it, and reading up off THAT carried every piece lying on its side. So it's
+// measured against the robot instead, and measured ONCE, into the hold point's frame: taken live it
+// would always come back "up" and a 180° flip would leave the stack the same way round, which is
+// exactly what a flip is for.
+//
 // While held, a piece stops colliding with everything (passThroughWhileHeld) — the same ghosting
 // IntakePull uses, and for the same reason: nothing good comes of a kinematic body being shoved
 // through the world by a claw that outweighs it 700:1. Turning it off falls back to muting only the
@@ -72,6 +79,11 @@ public class ClawGrab : MonoBehaviour
     [Tooltip("Override the axis measured as 'along the piece', in MESH local space. Leave zero to " +
              "take the longest side of the mesh bounds, which is right for cups and pins.")]
     public Vector3 uprightMeshAxis = Vector3.zero;
+    [Tooltip("Override which direction counts as UP, in the HOLD POINT's local space. Leave zero to " +
+             "measure it off the robot at startup — a claw's CAD is rotated arbitrarily, so the hold " +
+             "point's own +Y is almost never the way a pin should stand. Set this only to carry " +
+             "pieces at a deliberate angle.")]
+    public Vector3 uprightHoldAxis = Vector3.zero;
 
     [Tooltip("Seconds a just-dropped piece keeps ignoring THE CLAW (only) after release. It is solid " +
              "to the field and everything else immediately — this exists because a piece let go while " +
@@ -132,7 +144,44 @@ public class ClawGrab : MonoBehaviour
     private readonly List<Releasing> releasingScratch = new List<Releasing>();
     private bool wasGrabbing;
 
+    // Which way is up, in the hold point's own frame. Frozen at Awake — see UprightWorldDir.
+    private Vector3 holdUpLocal = Vector3.up;
+    private bool holdUpFrozen;
+
     private Transform HoldTf => holdPoint != null ? holdPoint : transform;
+
+    // Which direction counts as UP for a carried piece, expressed in the HOLD POINT's own frame.
+    // Public and pure so the claw builder's Scene-view arrow — and the validation harness — ask the
+    // shipped code rather than re-deriving the formula, which is how the hold point's arbitrary CAD
+    // rotation went unnoticed until every grabbed pin was carried lying down.
+    public Vector3 MeasureUprightHoldAxis()
+    {
+        if (uprightHoldAxis.sqrMagnitude > 1e-6f) return uprightHoldAxis.normalized;
+
+        // The ROBOT's up rather than the world's. It's a RELATIVE measurement — the hold point and the
+        // robot root turn together — so it survives the spawner dropping the robot onto the field at
+        // any angle, and it means the same thing as the claw builder's "robot up/down" axis picker.
+        RobotMechanisms robot = GetComponentInParent<RobotMechanisms>();
+        Vector3 worldUp = robot != null ? robot.transform.up : Vector3.up;
+        // Quaternion math, not InverseTransformDirection: the world is 10x scale and a claw part can
+        // sit under a non-uniform scale, which would skew the direction.
+        Vector3 local = Quaternion.Inverse(HoldTf.rotation) * worldUp;
+        return local.sqrMagnitude > 1e-6f ? local.normalized : Vector3.up;
+    }
+
+    // Take that measurement and keep it. Once, at Awake: the answer has to stay put through the claw's
+    // OWN travel, and re-measuring after a flip would just report "up" again and leave a flipped stack
+    // the same way round.
+    public void FreezeUprightAxis()
+    {
+        holdUpLocal = MeasureUprightHoldAxis();
+        holdUpFrozen = true;
+    }
+
+    // The world direction a carried piece is stood along. Unfrozen (in the editor, where Awake never
+    // runs) it measures fresh each call, so the builder's arrow tracks a hold point being dragged.
+    public Vector3 UprightWorldDir()
+        => (HoldTf.rotation * (holdUpFrozen ? holdUpLocal : MeasureUprightHoldAxis())).normalized;
 
     void Awake()
     {
@@ -147,6 +196,8 @@ public class ClawGrab : MonoBehaviour
         if (clampPneumatic == null)
             Debug.LogWarning("ClawGrab: no clamp piston assigned — the claw will never grab.", this);
 
+        // Before anything has moved, so the claw is in the pose its CAD was drawn in.
+        FreezeUprightAxis();
         CacheClawColliders();
     }
 
@@ -266,18 +317,18 @@ public class ClawGrab : MonoBehaviour
     private bool IsGrabbing()
         => clampPneumatic != null && clampPneumatic.IsExtended != grabWhenRetracted;
 
-    // How the carried stack is held. Auto Upright stands the first piece along the hold point's own up
-    // axis — measured per piece, so a pin scooped off the floor on its side and one taken standing are
-    // carried identically. Because the hold point is a child of the flipping link, "up" turns over
-    // with the claw and a flipped stack lands the other way round, which is the whole point of a flip.
-    // Falls back to the attitude the piece was caught in when Auto Upright is off, or when the piece
-    // has no mesh to measure.
+    // How the carried stack is held. Auto Upright stands the first piece along UprightWorldDir —
+    // measured per piece, so a pin scooped off the floor on its side and one taken standing are
+    // carried identically. Because that direction is frozen in the hold point's frame and the hold
+    // point is a child of the flipping link, "up" turns over with the claw and a flipped stack lands
+    // the other way round, which is the whole point of a flip. Falls back to the attitude the piece
+    // was caught in when Auto Upright is off, or when the piece has no mesh to measure.
     private Quaternion PrimaryRotation(Transform hold)
     {
         Held first = held.Count > 0 ? held[0] : null;
         if (first == null) return hold.rotation;
         return autoUpright && first.localUpAxis.sqrMagnitude > 1e-6f
-            ? Quaternion.FromToRotation(first.localUpAxis, hold.up)
+            ? Quaternion.FromToRotation(first.localUpAxis, UprightWorldDir())
             : hold.rotation * first.holdRot;
     }
 
