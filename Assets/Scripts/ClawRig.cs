@@ -106,6 +106,10 @@ public class ClawRig : MonoBehaviour
     public Transform flipPivot;
     public HingeAxis flipAxisPreset = HingeAxis.Auto;
     public Vector3 flipCustomAxis = Vector3.right;
+    [Tooltip("Seconds the flip takes end to end. A pneumatic snaps, and half a turn that snaps is over " +
+             "before the eye catches it — on a claw that's roughly symmetric it reads as nothing " +
+             "happening at all. 0 restores the instant snap.")]
+    public float flipTravelSeconds = 0.35f;
     [Tooltip("Start the match already flipped.")]
     public bool flipStartExtended;
     [Tooltip("Position spring gain of the flip joint. Lower it if a 180° flip slams too hard.")]

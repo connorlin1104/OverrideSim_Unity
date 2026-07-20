@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Rendering;   // CompareFunction, for drawing the hold point through the CAD
 
 // Role-assignment builder for a CLAW — the mechanism most designs in this game share. You drop your
 // CAD parts into named buckets and it rigs the whole thing; nothing here needs hand-jointing.
@@ -52,6 +53,7 @@ public class ClawBuilderWindow : EditorWindow
     [SerializeField] private Transform flipPivot;
     [SerializeField] private ClawRig.HingeAxis flipAxisPreset = ClawRig.HingeAxis.Auto;
     [SerializeField] private Vector3 flipCustomAxis = Vector3.right;
+    [SerializeField] private float flipTravelSeconds = 0.35f;
     [SerializeField] private bool flipStartExtended;
     [SerializeField] private float flipStiffness = 20000f;
     [SerializeField] private float flipDamping = 500f;
@@ -154,6 +156,10 @@ public class ClawBuilderWindow : EditorWindow
         {
             flipAngleDeg = EditorGUILayout.FloatField(new GUIContent("Flip angle (deg)",
                 "How far the claw turns when the cylinder fires. 180 puts a stack upside down."), flipAngleDeg);
+            flipTravelSeconds = Mathf.Max(0f, EditorGUILayout.FloatField(new GUIContent("Flip time (s)",
+                "How long the turn takes. A pneumatic snaps, and half a turn that snaps is over before " +
+                "the eye catches it — on a claw that's roughly symmetric about its pivot that reads as " +
+                "nothing having happened. 0 restores the instant snap."), flipTravelSeconds));
             flipPivot = (Transform)EditorGUILayout.ObjectField(new GUIContent("Flip pivot",
                 "The POINT the claw turns about — usually the shaft it hangs from. Empty = the build " +
                 "creates a ClawFlipPivot marker to drag. Which WAY it turns is the setting below."),
@@ -219,12 +225,34 @@ public class ClawBuilderWindow : EditorWindow
                 "so squeezing alone never grips)."), enableGrab);
             if (enableGrab)
             {
-                holdPoint = (Transform)EditorGUILayout.ObjectField(new GUIContent("Hold point",
-                    "WHERE a grabbed piece is carried. Empty = the build creates a ClawHoldPoint in " +
-                    "the middle of the jaws; drag it (the Scene view gives it a handle) to move where " +
-                    "pieces sit. Only its POSITION matters — which way pieces stand is measured off " +
-                    "the robot, not off this marker's own rotation."),
-                    holdPoint, typeof(Transform), true);
+                // The hold point is an empty with no mesh, so there is nothing in the Scene view to
+                // click and nothing to pick it out in a hierarchy of hundreds of CAD parts. Selecting
+                // it from here hands it to Unity's own move tool, which beats competing with the pivot
+                // markers' drag handles for the same few pixels.
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    holdPoint = (Transform)EditorGUILayout.ObjectField(new GUIContent("Hold point",
+                        "WHERE a grabbed piece is carried. Empty = the build creates a ClawHoldPoint " +
+                        "in the middle of the jaws. Only its POSITION matters — which way pieces " +
+                        "stand is measured off the robot, not off this marker's own rotation."),
+                        holdPoint, typeof(Transform), true);
+
+                    RobotMechanisms reg = ResolveRegistry();
+                    Transform existingHold = holdPoint != null ? holdPoint
+                        : (reg != null ? FindHoldPoint(reg) : null);
+                    using (new EditorGUI.DisabledScope(existingHold == null))
+                    {
+                        if (GUILayout.Button(new GUIContent("Select",
+                                "Select the hold point so the normal move tool (W) can drag it, and " +
+                                "frame the Scene view on it."), GUILayout.Width(56f)))
+                        {
+                            Selection.activeTransform = existingHold;
+                            EditorGUIUtility.PingObject(existingHold);
+                            if (SceneView.lastActiveSceneView != null)
+                                SceneView.lastActiveSceneView.FrameSelected();
+                        }
+                    }
+                }
                 grabAutoUpright = EditorGUILayout.Toggle(new GUIContent("Stand pieces up",
                     "Stand each grabbed piece along the ROBOT's up, measuring the piece's long axis " +
                     "per piece. Without this a pin lying on its side is carried lying on its side, so " +
@@ -363,14 +391,17 @@ public class ClawBuilderWindow : EditorWindow
         RobotMechanisms registry = ResolveRegistry();
         if (registry == null) return;
 
+        // Drawn FIRST so its drag handle wins ties: the hold point is seeded at the middle of the jaws
+        // and the flip pivot at the middle of the assembly, which on a compact claw is nearly the same
+        // few pixels — and a handle you can't reliably grab reads as a handle that isn't there.
+        DrawHoldPoint(registry);
+
         GameObject flipRoot = ClawSetup.FirstNonNull(flippingParts);
         if (flipRoot != null)
             DrawHinge(flipRoot, flipPivot, ClawSetup.PreviewFlipPivotName,
                 ClawSetup.FlipPivotSeed(flippingParts, clampSections, clampCylinderBody, clampCylinderRod),
                 flipAxisPreset, flipCustomAxis, true, flipAngleDeg, "Flip",
                 new Color(0.35f, 0.7f, 1f));
-
-        DrawHoldPoint(registry);
 
         GameObject towardRef = flipRoot != null ? flipRoot : registry.gameObject;
         for (int i = 0; i < clampSections.Count; i++)
@@ -403,6 +434,10 @@ public class ClawBuilderWindow : EditorWindow
 
         float handle = HandleUtility.GetHandleSize(hold.position);
         Handles.color = new Color(0.2f, 1f, 0.5f);
+        // Drawn through the CAD: the hold point sits between the jaws, so depth-tested it spends most
+        // of its life buried inside the plastic it's meant to be positioned against.
+        CompareFunction wasZTest = Handles.zTest;
+        Handles.zTest = CompareFunction.Always;
         Handles.SphereHandleCap(0, hold.position, Quaternion.identity, handle * 0.22f, EventType.Repaint);
 
         // Before the first build there is no ClawGrab to ask, so fall back to the same robot up it
@@ -427,6 +462,7 @@ public class ClawBuilderWindow : EditorWindow
             Undo.RecordObject(hold, "Move claw hold point");
             hold.position = moved;
         }
+        Handles.zTest = wasZTest;
     }
 
     private static Transform FindHoldPoint(RobotMechanisms registry)
@@ -649,6 +685,7 @@ public class ClawBuilderWindow : EditorWindow
         flipPivot = flipPivot,
         flipAxisPreset = flipAxisPreset,
         flipCustomAxis = flipCustomAxis,
+        flipTravelSeconds = flipTravelSeconds,
         flipStartExtended = flipStartExtended,
         flipStiffness = flipStiffness,
         flipDamping = flipDamping,
@@ -683,6 +720,7 @@ public class ClawBuilderWindow : EditorWindow
         flipPivot = rig.flipPivot;
         flipAxisPreset = rig.flipAxisPreset;
         flipCustomAxis = rig.flipCustomAxis;
+        flipTravelSeconds = rig.flipTravelSeconds;
         flipStartExtended = rig.flipStartExtended;
         flipStiffness = rig.flipStiffness;
         flipDamping = rig.flipDamping;
@@ -737,6 +775,7 @@ public class ClawBuilderWindow : EditorWindow
         flippingParts = new List<GameObject>();
         flipAngleDeg = 180f; flipPivot = null;
         flipAxisPreset = ClawRig.HingeAxis.Auto; flipCustomAxis = Vector3.right;
+        flipTravelSeconds = 0.35f;
         flipStartExtended = false; flipStiffness = 20000f; flipDamping = 500f;
         flipCylinderBody = null; flipCylinderRod = null;
         flipStrokeMm = 90f; flipRecoil = 0.5f; flipCylinderReverse = false;
@@ -876,6 +915,7 @@ public static class ClawSetup
         public ClawRig.HingeAxis flipAxisPreset;
         public Vector3 flipCustomAxis;
         public bool flipStartExtended;
+        public float flipTravelSeconds;
         public float flipStiffness, flipDamping;
         public GameObject flipCylinderBody, flipCylinderRod;
         public float flipStrokeMm, flipRecoil;
@@ -1017,7 +1057,7 @@ public static class ClawSetup
             flipBody = flipLink.GetComponent<ArticulationBody>();
             flipId = UrdfPostProcessor.Slugify(flipLink.name);
             TunePneumatic(registry, flipId, $"{o.displayName} Flip", o.flipStartExtended,
-                o.flipStiffness, o.flipDamping, useUndo);
+                o.flipStiffness, o.flipDamping, o.flipTravelSeconds, useUndo);
             MechanismBuildUtil.AddOrGet<IgnoreRobotSelfCollision>(flipLink, useUndo);
             EnsurePivotChildOf(pivot, flipLink, useUndo);
         }
@@ -1072,7 +1112,7 @@ public static class ClawSetup
                 driverSigned = signed;
                 driverStart = start;
                 TunePneumatic(registry, clampId, $"{o.displayName} Clamp", StartsExtended(o),
-                    o.clampStiffness, o.clampDamping, useUndo);
+                    o.clampStiffness, o.clampDamping, 0f, useUndo);
             }
             else
             {
@@ -1207,6 +1247,7 @@ public static class ClawSetup
         rig.flipAxisPreset = o.flipAxisPreset;
         rig.flipCustomAxis = o.flipCustomAxis;
         rig.flipStartExtended = o.flipStartExtended;
+        rig.flipTravelSeconds = o.flipTravelSeconds;
         rig.flipStiffness = o.flipStiffness;
         rig.flipDamping = o.flipDamping;
         rig.flipCylinderBody = o.flipCylinderBody;
@@ -1340,7 +1381,7 @@ public static class ClawSetup
     // both the component fields (what Awake re-bakes from at play time) and the live drive (what
     // edit-mode Physics.Simulate reads).
     private static void TunePneumatic(RobotMechanisms registry, string id, string displayName,
-        bool startExtended, float stiffness, float damping, bool useUndo)
+        bool startExtended, float stiffness, float damping, float travelSeconds, bool useUndo)
     {
         RobotMechanisms.Mechanism mech = registry.Find(id);
         if (mech == null || mech.pneumatic == null) return;
@@ -1350,6 +1391,9 @@ public static class ClawSetup
         act.startExtended = startExtended;
         act.stiffness = stiffness;
         act.damping = damping;
+        // The jaws keep the honest pneumatic snap; only the flip is paced, and only because half a
+        // turn is otherwise invisible.
+        act.travelSeconds = travelSeconds;
         mech.displayName = displayName;
 
         ArticulationBody body = act.body != null ? act.body : act.GetComponent<ArticulationBody>();

@@ -27,6 +27,10 @@ public class PneumaticActuator : MonoBehaviour
     public float stiffness = 20000f;
     [Tooltip("Velocity damping. Enough to kill ringing at the endpoints without feeling sluggish.")]
     public float damping = 500f;
+    [Tooltip("Seconds the piston takes to travel end to end. 0 = snap, which is how a real VEX " +
+             "cylinder behaves and is right for a jaw. Raise it for a big motion like a 180 degree " +
+             "claw flip, which is over before the eye catches it and reads as 'nothing happened'.")]
+    public float travelSeconds;
     [Tooltip("Start the match with the piston extended instead of retracted.")]
     public bool startExtended;
 
@@ -56,6 +60,27 @@ public class PneumaticActuator : MonoBehaviour
         d.target = startExtended ? extendedTarget : retractedTarget;
         body.xDrive = d;
         IsExtended = startExtended;
+        goalTarget = d.target;
+    }
+
+    // Where the drive is being walked TO. Only differs from the live target while a timed travel is
+    // running: the joint itself stays as stiff as ever, it's the goal that's moved gradually, so the
+    // piston sweeps under full authority instead of going soft and sagging under load.
+    private float goalTarget;
+
+    void FixedUpdate()
+    {
+        if (body == null || travelSeconds <= 0f) return;
+
+        ArticulationDrive d = body.xDrive;
+        if (Mathf.Approximately(d.target, goalTarget)) return;
+
+        // Paced over the FULL stroke, so a half-stroke move takes half the time rather than every
+        // move taking the same wall-clock however far it goes.
+        float span = Mathf.Abs(extendedTarget - retractedTarget);
+        float step = span > 0f ? span / travelSeconds * Time.fixedDeltaTime : float.MaxValue;
+        d.target = Mathf.MoveTowards(d.target, goalTarget, step);
+        body.xDrive = d;
     }
 
     void OnEnable()
@@ -93,10 +118,19 @@ public class PneumaticActuator : MonoBehaviour
     {
         if (body == null) return;
 
+        goalTarget = target;
+        // IsExtended is INTENT, flipped the moment the button is pressed even when the travel is
+        // timed — everything downstream (the grab, the cosmetic cylinder) keys off what was asked
+        // for, and a claw that only counts as closed once the jaws arrive would drop what it caught.
+        IsExtended = extended;
+
+        // A timed travel is walked to the goal in FixedUpdate; writing it here as well would jump
+        // the joint straight there and there would be nothing left to animate.
+        if (travelSeconds > 0f) return;
+
         // xDrive is a struct: copy, modify, assign back or the change silently does nothing.
         ArticulationDrive d = body.xDrive;
         d.target = target;
         body.xDrive = d;
-        IsExtended = extended;
     }
 }

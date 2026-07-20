@@ -25,6 +25,7 @@ public static class ClawBuilderValidation
     private const string CatalogPath = "Assets/Settings/RobotModelCatalog.asset";
     private const float CloseAngle = 35f;
     private const float FlipAngle = 180f;
+    private const float FlipSeconds = 0.35f;
     private const float ClampStrokeMm = 50f;
 
     [MenuItem("Tools/RoboSim/Testing/Validate Build Claw", false, 12)]
@@ -118,6 +119,17 @@ public static class ClawBuilderValidation
                 "1-button/2-button choice for free");
             Assert(mech.pneumatic != null, $"the {what} needs a PneumaticActuator");
         }
+
+        // --- The flip is PACED, the jaws are not ---------------------------------------------------
+        // A pneumatic snaps, and a snapped half-turn is over inside one frame — on a claw that is
+        // roughly symmetric about its pivot the end pose looks like the start pose, so the flip reads
+        // as having done nothing. A jaw keeps the honest snap; there is nothing subtle to see there.
+        PneumaticActuator flipAct = f.registry.Find(flipId).pneumatic;
+        PneumaticActuator clampAct = f.registry.Find(clampId).pneumatic;
+        AssertApprox(flipAct.travelSeconds, FlipSeconds, 0.001f,
+            "the flip should travel over the time the form asked for");
+        Assert(clampAct.travelSeconds <= 0f,
+            "the jaws must keep the instant pneumatic snap — only the flip is paced");
 
         ArticulationBody flipBody = f.flip.GetComponent<ArticulationBody>();
         Assert(flipBody != null && flipBody.jointType == ArticulationJointType.RevoluteJoint,
@@ -445,12 +457,12 @@ public static class ClawBuilderValidation
             $"the claw stands pieces {offRobotUp:F0} degrees off the robot's up — the hold point " +
             "inherits the claw's CAD rotation, so reading its own +Y carries every piece lying down");
 
-        // Where the carry math puts it: stand the long axis along that, then place the PIVOT so the
-        // piece's CENTER lands on the hold point.
+        // Where the carry math puts it — asked of ClawGrab, not restated: stand the long axis up, then
+        // place the PIVOT so the piece's CENTER lands on the hold point.
         Vector3 localCom = rb.centerOfMass;
         Vector3 longAxisWorld = pin.transform.right;            // the mesh's longest side, right now
         Vector3 localUpAxis = (Quaternion.Inverse(rb.rotation) * longAxisWorld).normalized;
-        Quaternion carried = Quaternion.FromToRotation(localUpAxis, up);
+        Quaternion carried = grab.StandUpRotation(rb.rotation, localUpAxis);
         Vector3 placed = grab.holdPoint.position - carried * localCom;
 
         // 1. The MESH lands on the hold point, not the pivot.
@@ -461,27 +473,56 @@ public static class ClawBuilderValidation
             "the piece's pivot, so an off-pivot piece appears to teleport away when grabbed");
 
         // 2. And it ends up STANDING, however it was lying when grabbed.
-        Vector3 standing = carried * localUpAxis;
-        float tilt = Vector3.Angle(standing, f.registry.transform.up);
+        float tilt = Vector3.Angle(carried * localUpAxis, f.registry.transform.up);
         Assert(tilt < 1f,
             $"a piece grabbed lying down stayed {tilt:F0} degrees off the robot's up — pins from the " +
             "match loader would be carried sideways while upright ones look fine");
 
-        // 3. But "up" is FROZEN IN THE HOLD POINT'S FRAME, not recomputed live — otherwise the flip
-        // would carry its stack the same way round and there would be no reason to flip at all.
-        grab.FreezeUprightAxis();
+        // 3. Every piece is stood up the SHORT way round, from wherever it was caught.
+        //
+        // Which END of the mesh the measured axis points at is whatever the modeller drew, so it can't
+        // be taken on trust — doing so turned anything drawn the other way end-for-end, and a stack
+        // grabbed pin-on-top, cup-below came into the claw cup-on-top, pin-below. Nor may the caught
+        // attitude simply be discarded and re-picked: a piece already close to vertical should barely
+        // move. The 180 and 150 rows are the ones that fail if the sign is trusted.
+        Quaternion upright = Quaternion.FromToRotation(localUpAxis, f.registry.transform.up);
+        foreach ((float caughtLean, float expectedSwing, string what) in new[]
+                 {
+                     (0f,   0f,  "already standing"),
+                     (180f, 0f,  "standing, but with its mesh axis drawn the other way up"),
+                     (30f,  30f, "leaning 30 degrees"),
+                     (150f, 30f, "caught 150 degrees over — 30 from vertical the other way"),
+                 })
+        {
+            Quaternion caught = Quaternion.AngleAxis(caughtLean, f.registry.transform.forward) * upright;
+            float swung = Quaternion.Angle(caught, grab.StandUpRotation(caught, localUpAxis));
+            AssertApprox(swung, expectedSwing, 1f,
+                $"a piece {what} was turned {swung:F0} degrees to stand it up rather than " +
+                $"{expectedSwing:F0} — either the long axis's sign is being trusted, which lands a " +
+                "grabbed stack upside down, or the attitude it was caught in is being thrown away");
+        }
+
+        // 4. The carried attitude is stored in the HOLD POINT's frame, which is what makes a held piece
+        // rigid to the claw: turn the claw and the piece turns WITH it, same axis, same amount. Solved
+        // live instead, the shortest-arc answer moves as the claw does and pieces spin about whatever
+        // axis it lands on — while the jaws they are supposedly clamped in go somewhere else.
+        Quaternion holdLocal = grab.CarriedHoldLocalRotation(rb.rotation, localUpAxis);
         Transform flipTf = grab.holdPoint.parent != null ? grab.holdPoint.parent : grab.holdPoint;
         Quaternion beforeFlip = flipTf.rotation;
-        flipTf.rotation = Quaternion.AngleAxis(180f, f.registry.transform.forward) * beforeFlip;
-        float flipped = Vector3.Angle(grab.UprightWorldDir(), -f.registry.transform.up);
+        Quaternion halfTurn = Quaternion.AngleAxis(180f, f.registry.transform.forward);
+        flipTf.rotation = halfTurn * beforeFlip;
+        Quaternion afterFlip = grab.holdPoint.rotation * holdLocal;    // what the carry replays
         flipTf.rotation = beforeFlip;
-        Assert(flipped < 1f,
-            $"turning the claw over left its carry direction {flipped:F0} degrees from upside down — " +
-            "'up' is being re-measured live, so a 180 flip would hand the stack back the same way up");
+        float rides = Quaternion.Angle(afterFlip, halfTurn * carried);
+        Assert(rides < 1f,
+            $"turning the claw over moved the held piece {rides:F0} degrees away from turning over " +
+            "with it — a clamped piece has to ride the jaws rigidly, not be re-solved each step");
 
         return $"Carried pieces: PASSED — on a claw rotated 90 degrees off the robot, a piece whose " +
                $"centre is {comOffset:F1} units off its pivot lands within {miss:F3} of the hold " +
-               $"point, stands within {tilt:F1} degrees of the robot's up, and turns over with the flip.";
+               $"point and stands within {tilt:F1} degrees of the robot's up; pieces are stood up the " +
+               "short way round whichever end their mesh axis points at, and a held one turns over " +
+               "with the jaws.";
     }
 
     // --- Axes: the explicit pickers must override the guess -----------------------------------------
@@ -695,6 +736,7 @@ public static class ClawBuilderValidation
             flipCustomAxis = Vector3.right,
             flipStiffness = 20000f,
             flipDamping = 500f,
+            flipTravelSeconds = FlipSeconds,   // ditto: unset, a plain struct reads 0 = instant snap
             flipCylinderBody = flipBody,
             flipCylinderRod = flipRod,
             flipStrokeMm = 90f,
