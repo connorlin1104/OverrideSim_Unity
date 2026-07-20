@@ -518,11 +518,40 @@ public static class ClawBuilderValidation
             $"turning the claw over moved the held piece {rides:F0} degrees away from turning over " +
             "with it — a clamped piece has to ride the jaws rigidly, not be re-solved each step");
 
+        // 5. A STACK straddles the hold point instead of hanging off one side of it.
+        //
+        // Which piece the claw catches first is arbitrary, and the rest are arranged around it. Put
+        // THAT piece on the hold point and the stack is lopsided about the point the flip turns it
+        // around, so the far piece swings through the stack's whole height — grab the bottom of a
+        // cup-on-pin and the top went into the floor. The flip sweeps a piece through twice its
+        // distance from the hold point, so balancing the pair halves the excursion.
+        const float StackHeight = 6f;
+        var evenOffsets = new List<Vector3> { Vector3.zero, new Vector3(0f, StackHeight, 0f) };
+        Vector3 middle = ClawGrab.StackCenterLocal(new List<float> { 1f, 1f }, evenOffsets);
+        float worst = Mathf.Max((evenOffsets[0] - middle).magnitude, (evenOffsets[1] - middle).magnitude);
+        AssertApprox(worst, StackHeight * 0.5f, 0.01f,
+            $"the far piece of a {StackHeight}-unit stack sits {worst:F1} units from the hold point, so " +
+            $"a flip swings it {worst * 2f:F0} — the stack is being hung off one piece rather than " +
+            "balanced about its combined centre of mass");
+
+        // And it is genuinely mass-weighted, so a heavy piece pulls the balance toward itself rather
+        // than the pair simply being split down the middle.
+        Vector3 heavy = ClawGrab.StackCenterLocal(new List<float> { 3f, 1f }, evenOffsets);
+        AssertApprox(heavy.y, StackHeight * 0.25f, 0.01f,
+            "a piece three times the mass of its neighbour should pull the balance point three " +
+            "quarters of the way toward itself");
+
+        // A lone piece must still land exactly on the hold point — the single-piece case is the one
+        // that was already right, and balancing must not have shifted it.
+        Vector3 alone = ClawGrab.StackCenterLocal(new List<float> { 1f }, new List<Vector3> { Vector3.zero });
+        Assert(alone.magnitude < 0.001f, "one piece on its own belongs on the hold point, unshifted");
+
         return $"Carried pieces: PASSED — on a claw rotated 90 degrees off the robot, a piece whose " +
                $"centre is {comOffset:F1} units off its pivot lands within {miss:F3} of the hold " +
                $"point and stands within {tilt:F1} degrees of the robot's up; pieces are stood up the " +
-               "short way round whichever end their mesh axis points at, and a held one turns over " +
-               "with the jaws.";
+               "short way round whichever end their mesh axis points at, a held one turns over with " +
+               $"the jaws, and a {StackHeight}-unit stack balances {worst:F1} either side of the hold " +
+               "point instead of hanging off one end.";
     }
 
     // --- Axes: the explicit pickers must override the guess -----------------------------------------

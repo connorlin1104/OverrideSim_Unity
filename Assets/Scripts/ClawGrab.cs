@@ -11,10 +11,16 @@ using UnityEngine;
 // A grabbed piece EASES to the hold point rather than freezing where it was caught: a real grab is
 // rarely square on, and pinning a piece at the pose it happened to be in — half inside a jaw, or
 // mid-topple with a corner through the floor — leaves the physics engine to resolve an overlap it
-// can't, which is what sent robots skidding and cartwheeling. The first piece glides to the hold
-// point; anything grabbed after it keeps its arrangement RELATIVE to the first, so a cup sitting on a
-// pin still lands pin-on-top through a 180° flip. Because the hold point is a child of the flipping
-// link, the flip carries them with zero extra bookkeeping.
+// can't, which is what sent robots skidding and cartwheeling. Anything grabbed after the first keeps
+// its arrangement RELATIVE to it, so a cup sitting on a pin still lands pin-on-top through a 180°
+// flip. Because the hold point is a child of the flipping link, the flip carries them with zero extra
+// bookkeeping.
+//
+// What sits ON the hold point is the stack's COMBINED centre of mass, not the first piece's. Which
+// piece the claw catches first is arbitrary, and hanging the others off it left the stack lopsided
+// about the point it turns around: grab the bottom of a cup-on-pin and the flip swung the top piece
+// through the full height of the stack, into the floor. Balanced, the stack turns about its own
+// middle, each piece travels half as far, and it looks the same whichever end was caught first.
 //
 // On the way OUT, the piece goes solid to the world at once but keeps ignoring the claw for a beat
 // (releaseGrace). Letting go of something still between the jaws hands the solver an overlap it can
@@ -128,6 +134,9 @@ public class ClawGrab : MonoBehaviour
     private readonly HashSet<Rigidbody> inMouth = new HashSet<Rigidbody>();
     private readonly List<Rigidbody> mouthScratch = new List<Rigidbody>();
     private readonly List<Collider> clawColliders = new List<Collider>();
+    // Refilled each step rather than rebuilt, so balancing the stack costs no allocation.
+    private readonly List<float> stackMass = new List<float>();
+    private readonly List<Vector3> stackOffset = new List<Vector3>();
 
     // A piece that has just been let go: solid to the world again, but still ignoring the CLAW for a
     // moment. Dropping a piece that is physically inside the jaws otherwise leaves the solver an
@@ -277,7 +286,12 @@ public class ClawGrab : MonoBehaviour
                 Transform hold = HoldTf;
                 float dt = Time.fixedDeltaTime;
                 Quaternion primary = PrimaryRotation(hold);
-                Vector3 primaryCenter = hold.position;
+                // Offset so the STACK's combined centre of mass lands on the hold point, rather than
+                // the centre of whichever piece happened to be captured first. Hanging the rest off
+                // one piece means the flip swings the far one through the whole height of the stack —
+                // grab the bottom of a cup-on-pin and the top went through the floor. Balanced, the
+                // stack turns about its own middle and each piece travels half as far.
+                Vector3 primaryCenter = hold.position - primary * StackCenterLocal();
 
                 foreach (Held h in held)
                 {
@@ -319,6 +333,37 @@ public class ClawGrab : MonoBehaviour
 
     private bool IsGrabbing()
         => clampPneumatic != null && clampPneumatic.IsExtended != grabWhenRetracted;
+
+    // The stack's combined centre of mass, in the PRIMARY piece's frame — the frame the arrangement is
+    // recorded in, so the primary itself sits at its origin and contributes a zero offset.
+    private Vector3 StackCenterLocal()
+    {
+        stackMass.Clear();
+        stackOffset.Clear();
+        foreach (Held h in held)
+        {
+            if (h.rb == null) continue;
+            stackMass.Add(h.rb.mass);
+            stackOffset.Add(ReferenceEquals(h, held[0]) ? Vector3.zero : h.relPos);
+        }
+        return StackCenterLocal(stackMass, stackOffset);
+    }
+
+    // The mass-weighted middle of a set of carried pieces, given each one's mass and where its centre
+    // sits. Pure and static so it can be checked without a live grab.
+    public static Vector3 StackCenterLocal(IReadOnlyList<float> masses, IReadOnlyList<Vector3> offsets)
+    {
+        float total = 0f;
+        Vector3 sum = Vector3.zero;
+        int n = Mathf.Min(masses.Count, offsets.Count);
+        for (int i = 0; i < n; i++)
+        {
+            float m = Mathf.Max(masses[i], 1e-4f);
+            sum += m * offsets[i];
+            total += m;
+        }
+        return total > 1e-4f ? sum / total : Vector3.zero;
+    }
 
     // How the carried stack is held: the attitude settled at capture, kept in the hold point's frame
     // and replayed from it. Because the hold point is a child of the flipping link, a held stack turns
