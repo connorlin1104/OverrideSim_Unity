@@ -52,6 +52,10 @@ public class ControllerConfigScreen : MonoBehaviour
     [Header("Tints")]
     [SerializeField] private Color assignedTint = new Color(0.24f, 0.49f, 0.92f); // accent blue
     [SerializeField] private Color unassignedTint = new Color(0.23f, 0.25f, 0.30f); // neutral dark
+    [Tooltip("Popup rows already on the pending button are filled with this, so what's picked reads " +
+             "at a glance.")]
+    [SerializeField] private Color selectedRowTint = new Color(0.20f, 0.62f, 0.35f); // green
+    [SerializeField] private Color rowTint = new Color(0.23f, 0.25f, 0.30f);         // neutral dark
 
     // What the shared popup is currently showing.
     private enum PopupMode { Assign, Style }
@@ -173,7 +177,7 @@ public class ControllerConfigScreen : MonoBehaviour
             {
                 AddRow($"{mechanism.displayName} — {FunctionLabel(mode)}",
                     mechanism.id + "_" + mode,
-                    ControllerMapSettings.HasAssignment(map, button, mechanism.id, mode) ? "✓ " : "    ",
+                    ControllerMapSettings.HasAssignment(map, button, mechanism.id, mode),
                     () => OnAssignmentRowToggled(mechanism.id, mode));
             }
         }
@@ -188,20 +192,26 @@ public class ControllerConfigScreen : MonoBehaviour
         {
             if (mechanism == null || string.IsNullOrEmpty(mechanism.id)) continue;
             string style = ControllerMapSettings.GetStyle(map, mechanism.id, mechanism.type);
+            // A style row is a "tap to switch" action, not a selected state, so it never tints.
             AddRow($"{mechanism.displayName} — {StyleLabel(mechanism.type, style)}",
-                mechanism.id + "_style", "⇄ ",
+                mechanism.id + "_style", false,
                 () => OnStyleRowToggled(mechanism.id, mechanism.type, style));
         }
     }
 
-    // Clones the row template. `prefix` is fixed-width so rows stay left-aligned whatever their mark.
-    private void AddRow(string label, string idSuffix, string prefix, UnityEngine.Events.UnityAction onClick)
+    // Clones the row template, filling it green when this function is already on the pending button.
+    //
+    // The mark used to be a "✓ " prefix on the label — but the project font (LiberationSans SDF, 250
+    // glyphs) has no U+2713 and TMP Settings defines no fallback, so it rendered as the missing-glyph
+    // box: the "white box next to it". Tinting the row is both unambiguous and font-proof.
+    private void AddRow(string label, string idSuffix, bool selected, UnityEngine.Events.UnityAction onClick)
     {
         Button row = Instantiate(assignmentRowTemplate, assignmentListParent);
         row.name = "Row_" + idSuffix;
         row.gameObject.SetActive(true); // template itself stays inactive
         TMP_Text text = row.GetComponentInChildren<TMP_Text>(true);
-        if (text != null) text.text = prefix + label;
+        if (text != null) text.text = label;
+        if (row.image != null) row.image.color = selected ? selectedRowTint : rowTint;
         row.onClick.AddListener(onClick);
         spawnedRows.Add(row.gameObject);
     }
@@ -281,34 +291,33 @@ public class ControllerConfigScreen : MonoBehaviour
         for (int i = 0; i < ControllerMapSettings.ButtonCount; i++) RefreshButton(i);
     }
 
-    // Assigned buttons show "<Mechanism> FWD/REV/TOG" under the button and tint accent. When a
-    // button drives several mechanisms it shows the first plus a "+N" count (e.g. "DR4B REV +1").
+    // Assigned buttons tint accent and list EVERY function they drive under the diagram, one per
+    // line ("DR4B REV" / "Claw Clamp TOG") — a button can legitimately drive several mechanisms, and
+    // showing only the first left the rest invisible. The caption rect is top-anchored and three
+    // lines tall (BuildHomeScene.CreateConfigButton), so past that they fold into a "+N" tail rather
+    // than running into the row below.
+    private const int MaxCaptionLines = 3;
+
     private void RefreshButton(int index)
     {
         List<ButtonAssignment> assignments = ControllerMapSettings.FindAll(map, (ControllerButton)index);
 
-        ButtonAssignment first = null;
-        RobotModelCatalog.MechanismInfo firstMechanism = null;
+        var lines = new List<string>();
         int shown = 0;
         foreach (ButtonAssignment assignment in assignments)
         {
             RobotModelCatalog.MechanismInfo mechanism = FindMechanism(assignment.mechanismId);
             if (mechanism == null) continue; // stale (mechanism gone); PruneStaleAssignments clears it
-            if (first == null) { first = assignment; firstMechanism = mechanism; }
             shown++;
+            if (lines.Count < MaxCaptionLines)
+                lines.Add($"{mechanism.displayName} {ControllerMapSettings.ModeCaption(assignment.mode)}");
         }
-
-        string caption = string.Empty;
-        if (firstMechanism != null)
-        {
-            caption = $"{firstMechanism.displayName} {ControllerMapSettings.ModeCaption(first.mode)}";
-            if (shown > 1) caption += $" +{shown - 1}";
-        }
+        if (shown > lines.Count && lines.Count > 0) lines[lines.Count - 1] += $" +{shown - lines.Count}";
 
         if (index < assignmentLabels.Length && assignmentLabels[index] != null)
-            assignmentLabels[index].text = caption;
+            assignmentLabels[index].text = string.Join("\n", lines);
         if (index < buttons.Length && buttons[index] != null && buttons[index].image != null)
-            buttons[index].image.color = firstMechanism != null ? assignedTint : unassignedTint;
+            buttons[index].image.color = shown > 0 ? assignedTint : unassignedTint;
     }
 
     private RobotModelCatalog.MechanismInfo FindMechanism(string id)

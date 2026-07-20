@@ -1,12 +1,25 @@
 using UnityEngine;
 
-// Instantiates the robot the player picked on the home screen into the field scene.
+// Instantiates the robot the player picked on the home screen into the field scene, and keeps it
+// on the field.
 //
 // The field scene no longer holds a robot directly — this spawner drops in the prefab named by
 // RobotModelCatalog.SelectedModel (persisted in PlayerPrefs) at a fixed spawn pose. Every robot
 // prefab is self-contained: its wheels/mechanisms are internal references and its input comes
 // from the shared RobotControls.inputactions asset, so a spawned instance needs no post-spawn
 // wiring. It is tagged "Player", which is all the match loaders and camera rely on.
+//
+// FALL RECOVERY: a robot that gets flipped over a field wall falls forever, and the only way out
+// was quitting Unity. So once the robot is spawned it is watched every fixed step and put back at
+// its spawn pose if it drops past the fall line (see fallDepth).
+//
+// That recovery deliberately does NOT go through the on-screen Reset button, which reloads the
+// scene: firing a scene reload automatically would wipe the whole field's game pieces every time
+// the bot tipped into a hole, and — worse — a robot that came back below the line would reload
+// forever, which is the very hang this exists to prevent. Instead ResetRobot restores the pose the
+// spawn placement already computed, stops all motion, and hands back anything the robot was
+// carrying. It is public, so a "put my robot back" button can call it rather than growing a second
+// way to do this; the Reset button stays the heavier "restart the whole match" reset.
 //
 // Build the prefabs and drop this component into SampleScene with the
 // Tools > RoboSim > Robot > Build Robot Prefabs & Spawner tool.
@@ -32,6 +45,59 @@ public class RobotSpawner : MonoBehaviour
     [Tooltip("How far above the floor the robot's lowest point starts before it settles.")]
     [SerializeField] private float dropClearance = 0.05f;
 
+    [Header("Fall recovery")]
+
+    [Tooltip("Put the robot back at its spawn pose if it drops off the field. Turn off only to debug " +
+             "a fall — with it off, a bot that goes over a wall falls forever.")]
+    [SerializeField] private bool autoResetOnFall = true;
+
+    [Tooltip("How far BELOW its spawn height (world units, 1 unit = 100 mm) the robot must drop to " +
+             "count as off the field. Measured down from the spawn pose rather than from an absolute " +
+             "Y so it tracks the field floor and any robot pivot. Keep it well over the height of the " +
+             "tallest robot: the check reads the root's Y, and tipping a bot over drops that by up to " +
+             "its own height, which must NOT read as a fall. 20 units = 2 m, ~4x a VEX bot.")]
+    [SerializeField] private float fallDepth = 20f;
+
+    [Tooltip("Seconds before another auto-reset may fire. Stops a robot that lands right on the fall " +
+             "line from resetting every single fixed step.")]
+    [SerializeField] private float resetCooldown = 1f;
+
+    // Auto-resets this many times in a row without recovering and the watchdog gives up (see
+    // CheckFallAndReset). Resetting forever would just trade one unplayable state for another.
+    private const int MaxConsecutiveResets = 4;
+
+    // Two resets closer together than resetCooldown * this count as consecutive — long enough that
+    // a bot which resets, drives around and falls again later starts the count over.
+    private const float ConsecutiveWindowFactor = 5f;
+
+    private GameObject spawnedRobot;
+    private ArticulationBody spawnedRoot;
+    private ArticulationBody[] spawnedBodies;
+
+    // The pose the spawn placement worked out, captured so a fall reset can restore exactly it
+    // instead of re-deriving one from a robot that is currently upside down in the void — the
+    // footprint a re-derivation would measure describes the tipped-over robot, not the upright one.
+    private Vector3 restorePosition;
+    private Quaternion restoreRotation = Quaternion.identity;
+
+    // Below this world Y the robot counts as fallen. Negative infinity until a robot is placed, so
+    // the watchdog can never fire before there is something to put back.
+    private float fallThresholdY = float.NegativeInfinity;
+
+    private float nextResetAllowed;
+    private float consecutiveDeadline;
+    private int consecutiveResets;
+    private bool gaveUp;
+
+    // World Y under which the robot is treated as having fallen off the field.
+    public float FallThresholdY => fallThresholdY;
+
+    // The pose a reset puts the robot back at — what the spawn placement worked out.
+    public Vector3 RestorePosition => restorePosition;
+
+    // The instance this spawner created and is watching, or null if nothing spawned.
+    public GameObject SpawnedRobot => spawnedRobot;
+
     void Awake()
     {
         if (catalog == null)
@@ -56,7 +122,161 @@ public class RobotSpawner : MonoBehaviour
         }
 
         GameObject robot = Instantiate(entry.prefab, spawnPosition, Quaternion.Euler(spawnEuler));
-        RecenterFootprint(robot);
+        PlaceAndWatch(robot);
+    }
+
+    // Places `robot` at the geometry-derived spawn pose and starts watching it for falls. Awake
+    // calls this on the instance it just made; the headless validator calls it on one it
+    // instantiated itself, because edit-mode simulation never runs Awake.
+    //
+    // Expects `robot` to already carry the spawn rotation (Instantiate applies it) — the footprint
+    // is measured in the robot's current orientation, so the pose this captures only describes an
+    // upright robot if it was upright when measured.
+    public void PlaceAndWatch(GameObject robot)
+    {
+        if (robot == null) return;
+
+        spawnedRobot = robot;
+        spawnedRoot = robot.GetComponent<ArticulationBody>();
+        spawnedBodies = robot.GetComponentsInChildren<ArticulationBody>(true);
+
+        // Where the robot sits if its footprint can't be measured: the pose Instantiate applied,
+        // which is what RecenterFootprint leaves it at when it bails out.
+        restorePosition = spawnPosition;
+        restoreRotation = Quaternion.Euler(spawnEuler);
+
+        RecenterFootprint(robot); // overwrites the restore pose with the geometry-derived one
+
+        // The fall line hangs below the pose we just placed, not below an absolute Y: that pose is
+        // already derived from the field floor (floorY + dropClearance) AND from where this robot's
+        // FBX pivot sits relative to its geometry, so the same margin means the same thing for a bot
+        // whose pivot is on its footprint and one whose pivot is metres away in CAD space. It also
+        // makes a start-up reset loop structurally impossible — the robot begins exactly fallDepth
+        // above its own trigger line, whatever the field looks like.
+        fallThresholdY = restorePosition.y - fallDepth;
+
+        nextResetAllowed = 0f;
+        consecutiveDeadline = 0f;
+        consecutiveResets = 0;
+        gaveUp = false;
+    }
+
+    void FixedUpdate()
+    {
+        CheckFallAndReset(Time.time);
+    }
+
+    // The guarded per-step check: resets the robot and returns true if it has fallen off the field,
+    // is off cooldown, and the watchdog hasn't given up. `now` is a parameter rather than read from
+    // Time.time inside so the headless validator can drive the cooldown with a synthetic clock —
+    // edit-mode simulation steps physics but never advances Time.
+    public bool CheckFallAndReset(float now)
+    {
+        if (!ShouldReset(now)) return false;
+
+        // Consecutive means "fell again before it had a chance to look recovered", which is the
+        // signature of a robot being put back somewhere it can't survive.
+        consecutiveResets = now < consecutiveDeadline ? consecutiveResets + 1 : 1;
+        nextResetAllowed = now + resetCooldown;
+        consecutiveDeadline = now + resetCooldown * ConsecutiveWindowFactor;
+
+        ResetRobot($"auto-reset #{consecutiveResets}: fell to Y {spawnedRobot.transform.position.y:F2}, " +
+                   $"past the {fallThresholdY:F2} fall line ({fallDepth:F0} units below its spawn height)");
+
+        if (consecutiveResets >= MaxConsecutiveResets)
+        {
+            gaveUp = true;
+            Debug.LogError(
+                $"RobotSpawner: auto-reset gave up after {consecutiveResets} resets in a row — '{spawnedRobot.name}' " +
+                "keeps falling off the field straight after being put back. Something is wrong with the spawn point " +
+                "or the field floor, and resetting forever would only hide it. Use the Reset button to reload.", this);
+        }
+        return true;
+    }
+
+    // Whether the watchdog would fire right now. Cheap enough for every fixed step: a few flag
+    // tests and one float compare.
+    public bool ShouldReset(float now)
+    {
+        if (!autoResetOnFall || gaveUp || spawnedRobot == null) return false;
+        // A NaN Y fails this compare and so counts as fallen, which is the right call — a robot
+        // whose pose has gone non-finite is every bit as stuck as one that went over the wall, and
+        // the reset writes finite values back over it.
+        if (spawnedRobot.transform.position.y >= fallThresholdY) return false;
+        return now >= nextResetAllowed;
+    }
+
+    // Puts the robot back at the pose the spawn placement computed, at rest and carrying nothing.
+    // Ignores the cooldown — rate-limiting is CheckFallAndReset's job — so this is also the method
+    // to call for a deliberate "put my robot back" that doesn't reload the scene.
+    public void ResetRobot(string reason)
+    {
+        if (spawnedRobot == null) return;
+
+        // Logged before the move so the pose that triggered it is still readable, and as a warning
+        // so an auto-reset stands out in the console as itself rather than as a physics glitch.
+        Debug.LogWarning($"RobotSpawner: robot reset — {reason}. Returning '{spawnedRobot.name}' to " +
+                         $"{restorePosition} with all motion stopped.", this);
+
+        ReleaseHeldPieces(spawnedRobot);
+
+        // Moving the articulation ROOT needs TeleportRoot; a transform write is silently dropped
+        // (the same trap RecenterFootprint documents). Rotation goes back too — the robot is
+        // usually upside down by the time it has fallen this far.
+        if (spawnedRoot != null) spawnedRoot.TeleportRoot(restorePosition, restoreRotation);
+        else spawnedRobot.transform.SetPositionAndRotation(restorePosition, restoreRotation);
+
+        StopAllMotion();
+    }
+
+    // Zeroes the articulation's whole motion state. TeleportRoot moves the bodies but KEEPS their
+    // velocities, so without this the robot arrives carrying however fast it was falling and simply
+    // launches itself off the field again.
+    //
+    // An articulation's motion lives in two separate stores: the root's world-space velocity, and
+    // each joint's reduced-space velocity. Both have to go. The child links' world velocities are
+    // derived from those two, not stored, which is why only the root's are written here.
+    private void StopAllMotion()
+    {
+        if (spawnedRoot != null)
+        {
+            spawnedRoot.linearVelocity = Vector3.zero;
+            spawnedRoot.angularVelocity = Vector3.zero;
+        }
+
+        if (spawnedBodies == null) return;
+        foreach (ArticulationBody body in spawnedBodies)
+        {
+            if (body == null) continue;
+            ArticulationReducedSpace joint = body.jointVelocity;
+            if (joint.dofCount == 0) continue; // fixed links and the root itself
+            for (int i = 0; i < joint.dofCount; i++) joint[i] = 0f;
+            body.jointVelocity = joint;
+        }
+    }
+
+    // Hands back every game piece the robot is carrying, through the holder's OWN release path.
+    //
+    // The claw and the intake hold a piece by making it kinematic and muting its collisions, and
+    // both already undo all of that in OnDisable ("never leave a piece kinematic or half-muted").
+    // Cycling `enabled` therefore runs exactly the release the holder wrote for this case and then
+    // re-arms it. Freeing the pieces from here instead would restore isKinematic but not the muted
+    // collision pairs — only the holder knows which ones it muted — and would leave its bookkeeping
+    // pointing at bodies it no longer controls.
+    private static void ReleaseHeldPieces(GameObject robot)
+    {
+        foreach (ClawGrab claw in robot.GetComponentsInChildren<ClawGrab>()) CycleEnabled(claw);
+        foreach (IntakePull intake in robot.GetComponentsInChildren<IntakePull>()) CycleEnabled(intake);
+    }
+
+    private static void CycleEnabled(MonoBehaviour holder)
+    {
+        // Only cycle a holder that is actually running: flipping `enabled` on a disabled one would
+        // switch it ON, and a mechanism that is off must stay off. A disabled holder has already
+        // released everything anyway — that is what its OnDisable did on the way down.
+        if (holder == null || !holder.isActiveAndEnabled) return;
+        holder.enabled = false; // OnDisable -> releases and un-mutes everything it holds
+        holder.enabled = true;
     }
 
     // Instantiate places the prefab's ROOT at the spawn point, but a prefab's root origin is its
@@ -105,6 +325,12 @@ public class RobotSpawner : MonoBehaviour
         //    us back to the transform write that PhysX ignores). Fall back to the transform only when
         //    there's no body at all (a hypothetical non-articulated robot).
         Vector3 newPos = robot.transform.position + delta + push;
+
+        // Remember what we placed, so a fall reset restores this exact pose rather than re-running
+        // the derivation against a robot that is by then tumbling somewhere under the field.
+        restorePosition = newPos;
+        restoreRotation = robot.transform.rotation;
+
         ArticulationBody rootBody = robot.GetComponent<ArticulationBody>();
         if (rootBody != null)
             rootBody.TeleportRoot(newPos, robot.transform.rotation);

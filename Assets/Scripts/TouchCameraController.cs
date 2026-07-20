@@ -1,18 +1,19 @@
-using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.EnhancedTouch;
 using Touch = UnityEngine.InputSystem.EnhancedTouch.Touch;
 
-// Touch camera for inspecting the field. The camera orbits a focus point that sits on the ground:
+// Free-look touch camera for inspecting the field. The camera orbits a focus point that sits on
+// the ground:
 //   1 finger  drag  -> orbit/pivot around that point
 //   2 fingers pinch -> zoom (dolly the camera in/out along its view)
 //   2 fingers drag  -> pan the focus point laterally across the field
-// A drag that STARTS on a UI element (the on-screen drive joysticks) belongs to that element for
-// its whole life, so the camera never steals it — a joystick drag normally travels well outside
-// the stick's own graphic, and only testing where the pointer is right now would hand the drag to
-// the camera partway through. A mouse fallback (left-drag orbit / right- or middle-drag pan /
-// scroll zoom) lets you test in the plain Game view without the Device Simulator.
+// CameraDragArbiter decides which fingers are the camera's: a drag that STARTS on a UI element
+// (the on-screen drive joysticks) belongs to that element for its whole life, so the camera never
+// steals it. A mouse fallback (left-drag orbit / right- or middle-drag pan / scroll zoom) lets you
+// test in the plain Game view without the Device Simulator.
+//
+// This is the DEFAULT of the field scene's two views; RobotChaseCamera is the robot-follow one and
+// CameraViewToggle switches between them.
 [RequireComponent(typeof(Camera))]
 public class TouchCameraController : MonoBehaviour
 {
@@ -43,23 +44,17 @@ public class TouchCameraController : MonoBehaviour
     private float yaw;       // rotation around world Y
     private float pitch;     // tilt down from horizontal
 
-    // Reused each frame for the UI hit-test so we don't allocate.
-    private readonly List<RaycastResult> uiHits = new List<RaycastResult>();
-    private PointerEventData pointerData;
+    private readonly CameraDragArbiter drag = new CameraDragArbiter();
 
-    // A drag is claimed by the UI at the moment it STARTS, and stays claimed until it ends.
-    // Testing "is the pointer over UI right now" each frame is not enough: a joystick drag
-    // routinely travels outside the stick's own graphic, and the camera would grab it midway.
-    private readonly HashSet<int> uiTouchIds = new HashSet<int>();
-    private bool mouseDragStartedOverUI;
-
-    void Awake() => cam = GetComponent<Camera>();
-
-    void OnEnable() => EnhancedTouchSupport.Enable();
-    void OnDisable() => EnhancedTouchSupport.Disable();
-
-    void Start()
+    // The authored view is decomposed in AWAKE, not Start, because this component is disabled for as
+    // long as the player is in the follow view. Unity runs Awake even on a disabled behaviour but
+    // withholds Start until it is first enabled — reading the transform in Start would therefore
+    // sample whatever pose RobotChaseCamera had left the camera in, and the free view would come
+    // back somewhere other than where the player left it.
+    void Awake()
     {
+        cam = GetComponent<Camera>();
+
         // Pivot around the point the camera is currently looking at on the ground, so nothing jumps
         // when play starts — we just decompose the existing transform into orbit angles + distance.
         Vector3 fwd = transform.forward;
@@ -72,6 +67,18 @@ public class TouchCameraController : MonoBehaviour
         pitch = Mathf.Clamp(NormalizePitch(e.x), minPitch, maxPitch);
         ApplyTransform();
     }
+
+    void OnEnable()
+    {
+        EnhancedTouchSupport.Enable();
+        drag.BeginSession();
+
+        // Restore the view the player left, which the follow camera has since moved the transform
+        // away from. focus/distance/yaw/pitch survive being disabled, so this is exact.
+        ApplyTransform();
+    }
+
+    void OnDisable() => EnhancedTouchSupport.Disable();
 
     void LateUpdate()
     {
@@ -86,39 +93,8 @@ public class TouchCameraController : MonoBehaviour
     private bool HandleTouch()
     {
         // Only fingers that didn't START on a joystick / UI element control the camera.
-        var active = Touch.activeTouches;
-        if (active.Count == 0)
-        {
-            uiTouchIds.Clear();
-            return false;
-        }
-
-        int usable = 0;
-        Touch a = default, b = default;
-        foreach (var touch in active)
-        {
-            UnityEngine.InputSystem.TouchPhase phase = touch.phase;
-
-            // Claim the finger for the UI on the frame it lands. It stays claimed for its whole
-            // lifetime, so dragging a joystick beyond its graphic never leaks into the camera.
-            if (phase == UnityEngine.InputSystem.TouchPhase.Began && IsOverUI(touch.screenPosition))
-                uiTouchIds.Add(touch.touchId);
-
-            // A lifted finger is still listed for this one frame: release its id and ignore it.
-            if (phase == UnityEngine.InputSystem.TouchPhase.Ended ||
-                phase == UnityEngine.InputSystem.TouchPhase.Canceled)
-            {
-                uiTouchIds.Remove(touch.touchId);
-                continue;
-            }
-
-            if (uiTouchIds.Contains(touch.touchId)) continue;
-
-            if (usable == 0) a = touch;
-            else if (usable == 1) b = touch;
-            usable++;
-        }
-
+        int usable = drag.CollectTouches(out bool anyTouches, out Touch a, out Touch b);
+        if (!anyTouches) return false;
         if (usable == 0) return true; // fingers exist but all on UI: eat them, no camera move
 
         if (usable == 1)
@@ -142,30 +118,15 @@ public class TouchCameraController : MonoBehaviour
 
     private void HandleMouse()
     {
-        var mouse = UnityEngine.InputSystem.Mouse.current;
-        if (mouse == null) return;
-
-        bool held = mouse.leftButton.isPressed || mouse.rightButton.isPressed || mouse.middleButton.isPressed;
-        bool pressedNow = mouse.leftButton.wasPressedThisFrame || mouse.rightButton.wasPressedThisFrame ||
-                          mouse.middleButton.wasPressedThisFrame;
-
-        // Decide once, when the button goes down. Dragging a joystick sweeps the cursor off the
-        // stick's graphic almost immediately, so a per-frame test would hand the drag to the
-        // camera halfway through — the "joysticks also move the camera" bug.
-        if (pressedNow) mouseDragStartedOverUI = IsOverUI(mouse.position.ReadValue());
-        if (!held) mouseDragStartedOverUI = false;
-
-        if (held && !mouseDragStartedOverUI)
+        // Left-drag orbits, right/middle-drag pans.
+        if (drag.TryGetMouseDrag(out Vector2 delta, out bool leftButton))
         {
-            Vector2 delta = mouse.delta.ReadValue();
-            if (mouse.leftButton.isPressed) Orbit(delta);
+            if (leftButton) Orbit(delta);
             else Pan(delta);
         }
 
-        // Scrolling has no press/release, so it just checks where the cursor is right now.
-        float scroll = mouse.scroll.ReadValue().y;
-        if (Mathf.Abs(scroll) > 0.01f && !IsOverUI(mouse.position.ReadValue()))
-            Zoom(scroll * scrollZoomSpeed * distance / 120f);
+        float scroll = drag.GetScroll();
+        if (scroll != 0f) Zoom(scroll * scrollZoomSpeed * distance / 120f);
     }
 
 
@@ -197,17 +158,6 @@ public class TouchCameraController : MonoBehaviour
     {
         Quaternion rot = Quaternion.Euler(pitch, yaw, 0f);
         transform.SetPositionAndRotation(focus + rot * new Vector3(0f, 0f, -distance), rot);
-    }
-
-    // True if this screen position is over any UI element (e.g. an on-screen drive joystick).
-    private bool IsOverUI(Vector2 screenPos)
-    {
-        if (EventSystem.current == null) return false;
-        pointerData ??= new PointerEventData(EventSystem.current);
-        pointerData.position = screenPos;
-        uiHits.Clear();
-        EventSystem.current.RaycastAll(pointerData, uiHits);
-        return uiHits.Count > 0;
     }
 
     // Euler X comes back as 0..360; fold it to -180..180 so clamping against min/max pitch works.

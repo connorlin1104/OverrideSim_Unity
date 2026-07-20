@@ -43,3 +43,9 @@ MonoBehaviour:
     - id: rightsidetoggle
       displayName: RightSideToggle
       type: motor
+    - id: rotating-claw-mount-1
+      displayName: PlasticClaw Flip
+      type: pneumatic
+    - id: claw-polycarb-left-side-claw-v1-1
+      displayName: PlasticClaw Clamp
+      type: pneumatic

@@ -345,6 +345,15 @@ public class BuildHomeScene
         viewportRect.anchorMax = Vector2.one;
         viewportRect.offsetMin = new Vector2(12f, 12f);
         viewportRect.offsetMax = new Vector2(-12f, -12f);
+        // Scroll-catcher. UGUI routes a wheel event by raycasting the pointer and bubbling UP from
+        // whatever graphic it hit, so with no raycast target here the only scrollable spots are the
+        // rows that happen to have their own graphic — the layout padding, the gaps between rows and
+        // any space past the end of the list are all dead, which reads as "I have to put my cursor on
+        // a button to scroll". The panel's own image can't stand in: it's this object's PARENT, and
+        // bubbling never travels back down. Transparent, so the panel fill still shows through.
+        Image viewportCatcher = viewport.AddComponent<Image>();
+        viewportCatcher.color = Color.clear;
+        viewportCatcher.raycastTarget = true;
         viewport.AddComponent<RectMask2D>();
         ScrollRect settingsScroll = viewport.AddComponent<ScrollRect>();
         settingsScroll.horizontal = false;
@@ -654,6 +663,7 @@ public class BuildHomeScene
         scroll.AddComponent<RectMask2D>();
         ScrollRect scrollRect = scroll.AddComponent<ScrollRect>();
         scrollRect.horizontal = false;
+        scrollRect.scrollSensitivity = 28f; // the default 1 crawls; match the settings list
         LayoutElement scrollElement = scroll.AddComponent<LayoutElement>();
         scrollElement.flexibleHeight = 1f; // the list absorbs the leftover popup height
 
@@ -722,14 +732,22 @@ public class BuildHomeScene
         textRect.offsetMin = Vector2.zero;
         textRect.offsetMax = Vector2.zero;
 
+        // A button can drive several mechanisms at once, and the caption lists them one per line — so
+        // it's anchored by its TOP edge and given room for three lines. Growing downward rather than
+        // wider is deliberate: the 220 width was tuned so the two inner diamond captions (CfgRight at
+        // x=-140 and CfgY at x=+140) don't collide, and widening would put them back on top of each
+        // other. Anything past three lines folds into a "+N" tail (see ControllerConfigScreen).
+        const float captionLine = 26f;
+        const float captionLines = 3f;
         caption = CreateText(name + "_Assign", parent, string.Empty, 20f);
         caption.color = AccentColor;
         caption.raycastTarget = false;
+        caption.verticalAlignment = VerticalAlignmentOptions.Top;
         RectTransform captionRect = caption.rectTransform;
         captionRect.anchorMin = captionRect.anchorMax = new Vector2(0.5f, 0.5f);
-        captionRect.pivot = new Vector2(0.5f, 0.5f);
-        captionRect.anchoredPosition = new Vector2(position.x, position.y - size.y * 0.5f - 22f);
-        captionRect.sizeDelta = new Vector2(220f, 26f);
+        captionRect.pivot = new Vector2(0.5f, 1f); // top-anchored: extra lines hang downward
+        captionRect.anchoredPosition = new Vector2(position.x, position.y - size.y * 0.5f - 9f);
+        captionRect.sizeDelta = new Vector2(220f, captionLine * captionLines);
         return button;
     }
 

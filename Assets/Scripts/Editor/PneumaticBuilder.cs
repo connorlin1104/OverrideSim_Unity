@@ -636,21 +636,7 @@ public static class PneumaticSetup
 
     // Never strip the drivetrain or another mechanism's body out from under it.
     private static bool IsProtected(ArticulationBody body, RobotMechanisms registry)
-    {
-        RobotMotorController mc = registry.GetComponent<RobotMotorController>();
-        if (mc != null)
-        {
-            if (mc.leftWheels != null && Array.IndexOf(mc.leftWheels, body) >= 0) return true;
-            if (mc.rightWheels != null && Array.IndexOf(mc.rightWheels, body) >= 0) return true;
-        }
-        foreach (RobotMechanisms.Mechanism m in registry.mechanisms)
-        {
-            if (m == null) continue;
-            if (m.motor != null && m.motor.gameObject == body.gameObject) return true;
-            if (m.pneumatic != null && m.pneumatic.gameObject == body.gameObject) return true;
-        }
-        return false;
-    }
+        => MechanismBuildUtil.IsProtected(body, registry);
 
     private static void ResolveAxisAnchor(Options o, bool linear, out Vector3 axis, out Vector3 anchor)
     {
@@ -700,47 +686,15 @@ public static class PneumaticSetup
     // The robot's lateral (left↔right) axis in the LINK's local frame — the doinker/DR4B hinge axis,
     // read from the drivetrain wheels so it's correct whatever the CAD orientation. False if no drivetrain.
     private static bool TryDrivetrainLateralLocal(GameObject link, out Vector3 axisLocal)
-    {
-        axisLocal = Vector3.right;
-        RobotMechanisms reg = link.GetComponentInParent<RobotMechanisms>();
-        RobotMotorController mc = reg != null ? reg.GetComponentInChildren<RobotMotorController>(true) : null;
-        if (mc == null) return false;
-        Vector3 lat = Centroid(mc.rightWheels) - Centroid(mc.leftWheels);
-        if (lat.sqrMagnitude < 1e-6f) return false;
-        axisLocal = link.transform.InverseTransformDirection(lat.normalized).normalized;
-        return axisLocal.sqrMagnitude > 1e-8f;
-    }
-
-    private static Vector3 Centroid(ArticulationBody[] arr)
-    {
-        if (arr == null) return Vector3.zero;
-        Vector3 s = Vector3.zero; int n = 0;
-        foreach (ArticulationBody a in arr) if (a != null) { s += a.transform.position; n++; }
-        return n > 0 ? s / n : Vector3.zero;
-    }
+        => MechanismBuildUtil.TryDrivetrainLateralLocal(link, out axisLocal);
 
     private static bool TryBoundsCenter(GameObject go, out Vector3 center)
-    {
-        center = Vector3.zero;
-        if (!TryBounds(go, out Bounds b)) return false;
-        center = b.center;
-        return true;
-    }
-
-    private static bool TryBounds(GameObject go, out Bounds b)
-    {
-        b = default;
-        Renderer[] renderers = go.GetComponentsInChildren<Renderer>(true);
-        if (renderers.Length == 0) return false;
-        b = renderers[0].bounds;
-        for (int i = 1; i < renderers.Length; i++) b.Encapsulate(renderers[i].bounds);
-        return true;
-    }
+        => MechanismBuildUtil.TryBoundsCenter(go, out center);
 
     // The point on go's mesh bounds nearest `point` (falls back to its transform origin). Used to place
     // the cosmetic cylinder's mount + arm-connection helper empties on the actual geometry.
     private static Vector3 ClosestOnBounds(GameObject go, Vector3 point)
-        => TryBounds(go, out Bounds b) ? b.ClosestPoint(point) : go.transform.position;
+        => MechanismBuildUtil.ClosestOnBounds(go, point);
 
     // A cosmetic cylinder part must be a separate chassis mesh, never the moving metal (or its child).
     private static void ValidateCosmetic(GameObject part, GameObject metal, string role)
@@ -852,40 +806,16 @@ public static class PneumaticSetup
         if (useUndo) Undo.DestroyObjectImmediate(follower);
         else UnityEngine.Object.DestroyImmediate(follower);
 
-        foreach (Collider c in part.GetComponentsInChildren<Collider>(true))
-        {
-            if (c == null || c.enabled) continue;
-            if (useUndo) Undo.RecordObject(c, UndoName);
-            c.enabled = true;
-        }
+        MechanismBuildUtil.EnableColliders(part, useUndo);
     }
 
-    private static void DestroyGo(Transform t, bool useUndo)
-    {
-        if (t == null) return;
-        if (useUndo) Undo.DestroyObjectImmediate(t.gameObject);
-        else UnityEngine.Object.DestroyImmediate(t.gameObject);
-    }
+    private static void DestroyGo(Transform t, bool useUndo) => MechanismBuildUtil.DestroyGo(t, useUndo);
 
-    private static Vector3 BoundsCenterOrOrigin(GameObject go)
-    {
-        if (go == null) return Vector3.zero;
-        return TryBoundsCenter(go, out Vector3 c) ? c : go.transform.position;
-    }
+    private static Vector3 BoundsCenterOrOrigin(GameObject go) => MechanismBuildUtil.BoundsCenterOrOrigin(go);
 
     // The far end of `go` ALONG THE CYLINDER AXIS (the ray from `from` through the mesh's visual center),
     // i.e. a point on the rod's centerline, not an axis-aligned bounding-box corner. Keeping the connection
     // on the centerline makes the rod slide straight out of the body instead of skewing toward a corner.
-    // Bounds are renderer-based (the visual), so a mesh whose transform origin isn't at its visual center
-    // still resolves correctly — the reason the rod looked detached from the body.
     private static Vector3 AxisFarPoint(GameObject go, Vector3 from)
-    {
-        if (!TryBounds(go, out Bounds b)) return go.transform.position;
-        Vector3 dir = b.center - from;
-        if (dir.sqrMagnitude < 1e-8f) return b.center;
-        dir.Normalize();
-        // Distance from the center to the AABB surface in the direction `dir` (support width of the box).
-        float ext = Mathf.Abs(dir.x) * b.extents.x + Mathf.Abs(dir.y) * b.extents.y + Mathf.Abs(dir.z) * b.extents.z;
-        return b.center + dir * ext;
-    }
+        => MechanismBuildUtil.AxisFarPoint(go, from);
 }

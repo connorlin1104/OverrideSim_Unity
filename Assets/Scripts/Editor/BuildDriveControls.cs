@@ -8,7 +8,7 @@ using UnityEditor.SceneManagement;
 using Scene = UnityEngine.SceneManagement.Scene;
 
 // One-click builder for the field scene's on-screen controller: the full VEX V5 button set
-// laid out around the two existing joysticks, plus the Home/Reset pair at the top center.
+// laid out around the two existing joysticks, plus the Reset / Home / Camera row at the top center.
 //
 //   - L1/L2 stacked at the top-left, R1/R2 at the top-right (shoulder/trigger positions)
 //   - two four-button diamonds between the joysticks along the bottom center:
@@ -16,6 +16,8 @@ using Scene = UnityEngine.SceneManagement.Scene;
 //     X top, B right, A bottom, Y left)
 //   - Home (relocated from the top-left corner, which the shoulders now occupy) and a new
 //     Reset button that reloads the scene.
+//   - a camera button under them that switches between the two views, plus the ChaseCamera
+//     object (the robot follow view) those views switch between.
 //
 // Every button is an OnScreenButton writing a synthetic <Gamepad> control (leftShoulder,
 // buttonNorth, dpad/up, ...), the same mechanism the OnScreenSticks already use. The button
@@ -35,6 +37,32 @@ public static class BuildDriveControls
     private const string ShoulderRightName = "ShoulderButtonsRight";
     private const string PadLeftName = "ButtonPadLeft";
     private const string PadRightName = "ButtonPadRight";
+
+    private const string ChaseCameraName = "ChaseCamera";
+
+    // Authored framing for the chase camera, WRITTEN ON EVERY RUN.
+    //
+    // These live as serialized values on the camera object, so editing the field defaults in
+    // RobotChaseCamera.cs reaches a fresh camera and nothing else — a scene that already has one keeps
+    // whatever was serialized the day it was created. That is why two rounds of framing changes
+    // appeared to do nothing. Setting them here makes re-running this tool the way to apply a change,
+    // which is what every other number in this file already does.
+    //
+    // The trade: hand-tuning distance or start yaw in the Inspector is overwritten by a re-run. Tune
+    // them here instead. The feel knobs the tool doesn't author (pitch, zoom range, smoothing) are
+    // left alone.
+    private const float ChaseCameraDistance = 10f;   // ~1 m back, about three robot-widths
+    private const float ChaseCameraStartYaw = -90f;  // quarter turn round, looking at the claw end
+
+    // The three top-of-screen buttons — Reset | Home | Camera View — laid out as one evenly spaced
+    // row centred on the top edge. Each is anchored AND pivoted at top-centre and offset by a whole
+    // pitch, so the row stays centred and evenly gapped at any canvas width; the earlier layout
+    // pivoted the pair against the centre line and hung the camera button off the end, which read as
+    // two buttons plus an afterthought.
+    private const float TopButtonY = -24f;
+    private const float TopButtonGap = 12f;
+    private static readonly Vector2 TopButtonSize = new Vector2(180f, 64f);
+    private static readonly float TopButtonPitch = TopButtonSize.x + TopButtonGap;
 
     private static readonly Vector2 ShoulderButtonSize = new Vector2(180f, 72f);
     private static readonly Vector2 PadButtonSize = new Vector2(90f, 90f);
@@ -70,6 +98,8 @@ public static class BuildDriveControls
 
         EnsureTopBarButtons(canvasGo);
         EnsureMatchLoadButton(canvasGo);
+        Camera chaseCamera = EnsureChaseCamera(scene, out Camera freeCamera);
+        EnsureCameraViewButton(canvasGo, freeCamera, chaseCamera);
         BuildShoulderClusters(canvasGo);
         BuildDiamondPads(canvasGo);
         string appearanceStatus = EnsureControlsAppearance(scene, out _);
@@ -78,25 +108,22 @@ public static class BuildDriveControls
         if (!EditorSceneManager.SaveScene(scene))
             throw new System.InvalidOperationException($"Build Drive Controls: failed to save {ScenePath}.");
 
-        Debug.Log("Build Drive Controls: Home/Reset at top center, L1/L2 + R1/R2 shoulders, " +
-                  $"arrow + XBAY diamonds updated in place in {ScenePath}; controls appearance {appearanceStatus}. Scene saved.");
+        Debug.Log("Build Drive Controls: Reset | Home | Camera row at top center, L1/L2 + R1/R2 shoulders, " +
+                  $"arrow + XBAY diamonds updated in place in {ScenePath}; controls appearance {appearanceStatus}; " +
+                  $"{ChaseCameraName} + camera view button wired. Scene saved.");
     }
 
     // --- Home + Reset -------------------------------------------------------------------------
 
-    // Both nav buttons live as a pair at the top center. Home is created by Build Home Screen;
-    // Reset is created here. Both are reused in place — never destroyed — so re-running keeps
-    // their wiring and identities.
+    // Home sits in the MIDDLE of the top row with Reset to its left and the camera toggle to its
+    // right. Home is created by Build Home Screen; Reset is created here. Both are reused in place —
+    // never destroyed — so re-running keeps their wiring and identities.
     private static void EnsureTopBarButtons(GameObject canvasGo)
     {
         Transform home = canvasGo.transform.Find("HomeButton");
         if (home != null)
         {
-            RectTransform rect = (RectTransform)home;
-            rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 1f);
-            rect.pivot = new Vector2(1f, 1f);
-            rect.anchoredPosition = new Vector2(-12f, -24f);
-            rect.sizeDelta = new Vector2(160f, 64f);
+            PlaceInTopRow((RectTransform)home, 0f);
             EnsurePressFeedback(home.gameObject);
         }
         else
@@ -107,11 +134,7 @@ public static class BuildDriveControls
 
         bool created = canvasGo.transform.Find("ResetButton") == null;
         Button resetButton = EnsureButton(canvasGo.transform, "ResetButton", "Reset", 32f, BuildHomeScene.AccentColor);
-        RectTransform resetRect = (RectTransform)resetButton.transform;
-        resetRect.anchorMin = resetRect.anchorMax = new Vector2(0.5f, 1f);
-        resetRect.pivot = new Vector2(0f, 1f);
-        resetRect.anchoredPosition = new Vector2(12f, -24f);
-        resetRect.sizeDelta = new Vector2(160f, 64f);
+        PlaceInTopRow((RectTransform)resetButton.transform, -TopButtonPitch);
 
         // Reloading the active scene IS the reset. Wire the nav listener only when the button is
         // first created, so re-runs don't stack duplicate persistent listeners.
@@ -122,7 +145,16 @@ public static class BuildDriveControls
             UnityEventTools.AddPersistentListener(resetButton.onClick, nav.Load);
     }
 
-    // Manual match-load trigger, centered directly under the Home/Reset pair. MatchLoadButton
+    // Slot one button into the top row, `slot` pitches either side of the centre line.
+    private static void PlaceInTopRow(RectTransform rect, float slotOffsetX)
+    {
+        rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 1f);
+        rect.pivot = new Vector2(0.5f, 1f);
+        rect.anchoredPosition = new Vector2(slotOffsetX, TopButtonY);
+        rect.sizeDelta = TopButtonSize;
+    }
+
+    // Manual match-load trigger, centered directly under the top row. MatchLoadButton
     // hides it at runtime while Automatic Matchloading (Settings) is on, wires its own onClick,
     // and enables it only while a loader can actually spawn — nothing to wire here.
     private static void EnsureMatchLoadButton(GameObject canvasGo)
@@ -134,6 +166,98 @@ public static class BuildDriveControls
         rect.anchoredPosition = new Vector2(0f, -96f);
         rect.sizeDelta = new Vector2(200f, 64f);
         EnsureComponent<MatchLoadButton>(button.gameObject);
+    }
+
+    // --- Camera views -----------------------------------------------------------------------
+
+    // The robot follow view is a SECOND camera rather than another mode bolted onto the main one,
+    // so each view keeps its own pose and lens: switching back to the free camera returns you
+    // exactly where you left it, with no state to reconstruct.
+    //
+    // It deliberately gets NO AudioListener — a scene may only have one, and the main camera keeps
+    // it — and no UniversalAdditionalCameraData, which URP adds itself, with base-camera defaults,
+    // the first time it renders a camera that lacks one.
+    //
+    // Reused in place like everything else here, so re-running never duplicates the camera and
+    // never resets settings tuned by hand in the Inspector.
+    private static Camera EnsureChaseCamera(Scene scene, out Camera freeCamera)
+    {
+        freeCamera = FindFreeCamera(scene);
+        if (freeCamera == null)
+            Debug.LogWarning($"Build Drive Controls: no camera with a TouchCameraController in {ScenePath} — " +
+                             "the camera view button will be created but left unwired.");
+
+        GameObject go = FindRootObject(scene, ChaseCameraName);
+        bool created = go == null;
+        if (created) go = new GameObject(ChaseCameraName); // OpenScene(Single) made this the active scene
+
+        Camera cam = EnsureComponent<Camera>(go);
+        RobotChaseCamera chase = EnsureComponent<RobotChaseCamera>(go);
+
+        // Re-apply the authored framing every run — see ChaseCameraDistance for why the field
+        // defaults alone can't reach a camera that already exists.
+        SerializedObject chaseSo = new SerializedObject(chase);
+        chaseSo.FindProperty("distance").floatValue = ChaseCameraDistance;
+        chaseSo.FindProperty("startYawOffset").floatValue = ChaseCameraStartYaw;
+        chaseSo.ApplyModifiedPropertiesWithoutUndo();
+
+        // Tagged MainCamera so Camera.main keeps resolving while the free camera is switched off.
+        // Only ever one of the two is enabled, so the shared tag is never ambiguous.
+        go.tag = "MainCamera";
+
+        // Only on creation: match the main camera's lens and start from its pose, so the very first
+        // frame — before the follow camera anchors onto the robot — looks like the scene the user
+        // already knows. Re-runs leave both alone.
+        if (created && freeCamera != null)
+        {
+            cam.fieldOfView = freeCamera.fieldOfView;
+            cam.nearClipPlane = freeCamera.nearClipPlane;
+            cam.farClipPlane = freeCamera.farClipPlane;
+            cam.clearFlags = freeCamera.clearFlags;
+            cam.backgroundColor = freeCamera.backgroundColor;
+            cam.cullingMask = freeCamera.cullingMask;
+            go.transform.SetPositionAndRotation(freeCamera.transform.position, freeCamera.transform.rotation);
+        }
+
+        // The scene is always SAVED in the free view; CameraViewToggle applies the player's saved
+        // choice in Awake, before the first frame renders.
+        cam.enabled = false;
+        return cam;
+    }
+
+    // Camera view switch — the right-hand slot of the top row, opposite Reset.
+    private static void EnsureCameraViewButton(GameObject canvasGo, Camera freeCamera, Camera chaseCamera)
+    {
+        Button button = EnsureButton(canvasGo.transform, "CameraViewButton", "Free Cam", 28f,
+            BuildHomeScene.AccentColor);
+        PlaceInTopRow((RectTransform)button.transform, TopButtonPitch);
+
+        CameraViewToggle toggle = EnsureComponent<CameraViewToggle>(button.gameObject);
+        SerializedObject so = new SerializedObject(toggle);
+        so.FindProperty("freeCamera").objectReferenceValue = freeCamera;
+        so.FindProperty("chaseCamera").objectReferenceValue = chaseCamera;
+        so.ApplyModifiedPropertiesWithoutUndo();
+    }
+
+    // The free-look camera is whichever camera carries the TouchCameraController — that component
+    // defines the view, so this keeps working if the object is ever renamed.
+    private static Camera FindFreeCamera(Scene scene)
+    {
+        foreach (GameObject root in scene.GetRootGameObjects())
+        {
+            TouchCameraController controller = root.GetComponentInChildren<TouchCameraController>(true);
+            if (controller != null) return controller.GetComponent<Camera>();
+        }
+        return null;
+    }
+
+    private static GameObject FindRootObject(Scene scene, string name)
+    {
+        foreach (GameObject root in scene.GetRootGameObjects())
+        {
+            if (root.name == name) return root;
+        }
+        return null;
     }
 
     // --- Shoulder buttons ---------------------------------------------------------------------
