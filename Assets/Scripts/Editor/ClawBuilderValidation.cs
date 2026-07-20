@@ -205,6 +205,11 @@ public static class ClawBuilderValidation
         Assert(grab.snapSpeed > 0f,
             "a grabbed piece has to EASE to the hold point; pinning it where it was caught is what " +
             "wedges it through the CAD");
+        // Only the default is checkable here — the grace itself is a FixedUpdate behaviour, and
+        // MonoBehaviours don't run at edit time. Pinned so a future edit can't quietly zero it.
+        Assert(grab.releaseGrace > 0f,
+            "a dropped piece needs a moment still ignoring the claw, or the jaws it was sitting " +
+            "inside kick it away as it goes solid");
 
         ClawSetup.Options solidOptions = f.Options();
         solidOptions.grabPassThrough = false;

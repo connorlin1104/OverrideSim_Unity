@@ -16,6 +16,11 @@ using UnityEngine;
 // pin still lands pin-on-top through a 180° flip. Because the hold point is a child of the flipping
 // link, the flip carries them with zero extra bookkeeping.
 //
+// On the way OUT, the piece goes solid to the world at once but keeps ignoring the claw for a beat
+// (releaseGrace). Letting go of something still between the jaws hands the solver an overlap it can
+// only resolve by shoving, and it shoves the light thing — so the piece squirts out as if kicked.
+// Muting those pairs alone lets it fall out under gravity, hitting the field normally the whole time.
+//
 // It also STANDS EACH PIECE UP as it comes in (autoUpright), measured per piece from its own mesh.
 // The field's pins share one mesh but every instance carries a different child rotation — a pin lying
 // flat where the match loader dropped it and one standing in a goal are the same asset at different
@@ -68,6 +73,12 @@ public class ClawGrab : MonoBehaviour
              "take the longest side of the mesh bounds, which is right for cups and pins.")]
     public Vector3 uprightMeshAxis = Vector3.zero;
 
+    [Tooltip("Seconds a just-dropped piece keeps ignoring THE CLAW (only) after release. It is solid " +
+             "to the field and everything else immediately — this exists because a piece let go while " +
+             "still between the jaws is an overlap the solver resolves by kicking it. Cleared early " +
+             "the moment the piece is clear of the claw anyway.")]
+    public float releaseGrace = 0.25f;
+
     [Header("Diagnostics")]
     public bool logEvents = true;
 
@@ -103,6 +114,22 @@ public class ClawGrab : MonoBehaviour
     private readonly HashSet<Rigidbody> inMouth = new HashSet<Rigidbody>();
     private readonly List<Rigidbody> mouthScratch = new List<Rigidbody>();
     private readonly List<Collider> clawColliders = new List<Collider>();
+
+    // A piece that has just been let go: solid to the world again, but still ignoring the CLAW for a
+    // moment. Dropping a piece that is physically inside the jaws otherwise leaves the solver an
+    // overlap it can only resolve by shoving — and it shoves the light thing, so the piece squirts out
+    // as if kicked. Muting just those pairs for a beat lets it fall out naturally instead, without
+    // making it ghostly to the field the way pass-through does.
+    private class Releasing
+    {
+        public Rigidbody rb;
+        public float until;
+        public List<Collider> mutedPiece;
+        public List<Collider> mutedClaw;
+    }
+
+    private readonly List<Releasing> releasing = new List<Releasing>();
+    private readonly List<Releasing> releasingScratch = new List<Releasing>();
     private bool wasGrabbing;
 
     private Transform HoldTf => holdPoint != null ? holdPoint : transform;
@@ -125,8 +152,11 @@ public class ClawGrab : MonoBehaviour
 
     void OnDisable()
     {
-        // Never leave a piece kinematic or half-muted because the robot despawned mid-grab.
+        // Never leave a piece kinematic or half-muted because the robot despawned mid-grab. The grace
+        // is ended outright rather than left pending: a disabled component gets no FixedUpdate, so a
+        // piece would keep ignoring the claw forever.
         ReleaseAll();
+        EndAllReleases();
     }
 
     private void CacheClawColliders()
@@ -186,7 +216,7 @@ public class ClawGrab : MonoBehaviour
             heldScratch.Clear();
             heldScratch.AddRange(held);
             foreach (Held h in heldScratch)
-                if (h.rb == null) { Unmute(h); held.Remove(h); }
+                if (h.rb == null) { Unmute(h.mutedPiece, h.mutedClaw); held.Remove(h); }
 
             if (held.Count > 0)
             {
@@ -225,6 +255,9 @@ public class ClawGrab : MonoBehaviour
             ReleaseAll();
         }
 
+        // Runs whether or not anything is held: a piece released last step is still in its grace.
+        TickReleasing();
+
         if (logEvents && grabbing != wasGrabbing)
             Debug.Log($"ClawGrab: claw {(grabbing ? "closed" : "opened")} — holding {held.Count}.", this);
         wasGrabbing = grabbing;
@@ -256,6 +289,10 @@ public class ClawGrab : MonoBehaviour
         // A piece seated on a goal by GoalStackMagnet must leave that stack the moment the claw takes
         // it, or the magnet keeps counting (and re-seating) a piece the claw is carrying away.
         GoalStackMagnet.ReleaseIfSeated(rb);
+
+        // Snatching back something dropped a moment ago: end its grace cleanly, so the capture below
+        // starts from normal collision rather than inheriting a half-expired set of muted pairs.
+        EndRelease(rb);
 
         Transform hold = HoldTf;
         Held h = new Held
@@ -297,21 +334,8 @@ public class ClawGrab : MonoBehaviour
         else
         {
             // Mute ONLY piece-vs-claw contacts, leaving the piece solid to the field, goals and other
-            // pieces. Physics.IgnoreCollision errors on a collider that's disabled or on an inactive
-            // object, so both sides are filtered — and the exact pairs are remembered, because a
-            // collider's state can change while the piece is held and re-deriving the list at release
-            // would miss (or invent) pairs.
-            foreach (Collider pieceCol in rb.GetComponentsInChildren<Collider>(true))
-            {
-                if (!Usable(pieceCol) || pieceCol.isTrigger) continue;
-                h.mutedPiece.Add(pieceCol);
-            }
-            foreach (Collider clawCol in clawColliders)
-            {
-                if (!Usable(clawCol)) continue;
-                foreach (Collider pieceCol in h.mutedPiece) Physics.IgnoreCollision(pieceCol, clawCol, true);
-                h.mutedClaw.Add(clawCol);
-            }
+            // pieces.
+            MutePairs(rb, h.mutedPiece, h.mutedClaw);
         }
 
         // Deliberately NOT removed from inMouth here: with pass-through OFF the piece never leaves the
@@ -339,12 +363,18 @@ public class ClawGrab : MonoBehaviour
         heldScratch.AddRange(held);
         foreach (Held h in heldScratch)
         {
-            Unmute(h);
-            if (h.rb == null) continue;
+            if (h.rb == null) { Unmute(h.mutedPiece, h.mutedClaw); continue; }
 
+            // Solid to the world again FIRST, so the pair mute below is applied to colliders in their
+            // normal state...
             h.rb.detectCollisions = h.wasDetectCollisions;
             h.rb.isKinematic = h.wasKinematic;
             h.rb.interpolation = h.wasInterpolation;
+
+            // ...and the claw alone stays muted for a beat. Pass-through never established these
+            // pairs (it took the whole body out of collision instead), so they're built here; the
+            // targeted path already has them and keeps them.
+            if (h.mutedPiece.Count == 0) MutePairs(h.rb, h.mutedPiece, h.mutedClaw);
 
             // Drop it, don't throw it. MovePosition gives a kinematic body a velocity, and the glide
             // runs at snapSpeed — so a piece let go mid-approach would inherit that and rocket off.
@@ -354,28 +384,111 @@ public class ClawGrab : MonoBehaviour
                 h.rb.linearVelocity = Vector3.zero;
                 h.rb.angularVelocity = Vector3.zero;
             }
-            if (logEvents) Debug.Log($"ClawGrab: released '{h.rb.name}'.", this);
+
+            releasing.Add(new Releasing
+            {
+                rb = h.rb,
+                until = Time.fixedTime + Mathf.Max(0f, releaseGrace),
+                mutedPiece = h.mutedPiece,
+                mutedClaw = h.mutedClaw,
+            });
+            if (logEvents)
+                Debug.Log($"ClawGrab: released '{h.rb.name}' — solid again, ignoring the claw for up " +
+                          $"to {releaseGrace:0.##}s so the jaws can't kick it out.", this);
         }
         held.Clear();
+    }
+
+    // Give each just-dropped piece back its collision with the claw, as soon as it is clear of the
+    // claw or the grace runs out — whichever comes first. Nothing here holds a piece up: it has been
+    // falling under gravity and hitting the field the whole time.
+    private void TickReleasing()
+    {
+        if (releasing.Count == 0) return;
+
+        bool haveClaw = TryClawBounds(out Bounds claw);
+        releasingScratch.Clear();
+        releasingScratch.AddRange(releasing);
+        foreach (Releasing r in releasingScratch)
+        {
+            bool clear = haveClaw && r.rb != null && !claw.Contains(r.rb.worldCenterOfMass);
+            if (r.rb != null && Time.fixedTime < r.until && !clear) continue;
+
+            Unmute(r.mutedPiece, r.mutedClaw);
+            releasing.Remove(r);
+            if (logEvents && r.rb != null)
+                Debug.Log($"ClawGrab: '{r.rb.name}' collides with the claw again " +
+                          $"({(clear ? "it is clear of the jaws" : "grace expired")}).", this);
+        }
+    }
+
+    // End one piece's grace early — it's being re-grabbed, or the claw is going away.
+    private void EndRelease(Rigidbody rb)
+    {
+        for (int i = releasing.Count - 1; i >= 0; i--)
+        {
+            if (releasing[i].rb != rb) continue;
+            Unmute(releasing[i].mutedPiece, releasing[i].mutedClaw);
+            releasing.RemoveAt(i);
+        }
+    }
+
+    private void EndAllReleases()
+    {
+        foreach (Releasing r in releasing) Unmute(r.mutedPiece, r.mutedClaw);
+        releasing.Clear();
+    }
+
+    // The claw's own world extent, used to tell whether a dropped piece has cleared the jaws.
+    private bool TryClawBounds(out Bounds bounds)
+    {
+        bounds = default;
+        bool has = false;
+        foreach (Collider c in clawColliders)
+        {
+            if (!Usable(c)) continue;
+            if (!has) { bounds = c.bounds; has = true; }
+            else bounds.Encapsulate(c.bounds);
+        }
+        return has;
+    }
+
+    // Mute every piece-vs-claw pair, remembering exactly which ones. Physics.IgnoreCollision errors on
+    // a collider that's disabled or on an inactive object, so both sides are filtered — and the pairs
+    // are remembered rather than re-derived later, because a collider's state can change in between
+    // and re-deriving would miss (or invent) pairs.
+    private void MutePairs(Rigidbody rb, List<Collider> pieceOut, List<Collider> clawOut)
+    {
+        foreach (Collider pieceCol in rb.GetComponentsInChildren<Collider>(true))
+        {
+            if (!Usable(pieceCol) || pieceCol.isTrigger) continue;
+            pieceOut.Add(pieceCol);
+        }
+        foreach (Collider clawCol in clawColliders)
+        {
+            if (!Usable(clawCol)) continue;
+            foreach (Collider pieceCol in pieceOut) Physics.IgnoreCollision(pieceCol, clawCol, true);
+            clawOut.Add(clawCol);
+        }
     }
 
     // Restore exactly the piece-vs-claw pairs this grab muted. A pair whose collider has since been
     // destroyed, disabled or deactivated is skipped — IgnoreCollision would error on it, and PhysX
     // already forgot the pair when the collider went away.
-    private void Unmute(Held h)
+    private void Unmute(List<Collider> mutedPiece, List<Collider> mutedClaw)
     {
-        if (h == null) return;
-        foreach (Collider pieceCol in h.mutedPiece)
+        if (mutedPiece == null || mutedClaw == null) return;
+        foreach (Collider pieceCol in mutedPiece)
         {
             if (!Usable(pieceCol)) continue;
-            foreach (Collider clawCol in h.mutedClaw)
+            foreach (Collider clawCol in mutedClaw)
             {
                 if (!Usable(clawCol)) continue;
                 Physics.IgnoreCollision(pieceCol, clawCol, false);
             }
         }
-        h.mutedPiece.Clear();
-        h.mutedClaw.Clear();
+        mutedPiece.Clear();
+        mutedClaw.Clear();
     }
 
     // Physics.IgnoreCollision requires both colliders live, enabled and on active objects.
