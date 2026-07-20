@@ -75,6 +75,8 @@ public class ClawBuilderWindow : EditorWindow
 
     [SerializeField] private bool enableGrab = true;
     [SerializeField] private bool grabPassThrough = true;
+    [SerializeField] private bool grabAutoUpright = true;
+    [SerializeField] private Transform holdPoint;
     [SerializeField] private bool autoAssignButtons = true;
 
     [SerializeField] private bool showAdvanced;
@@ -216,12 +218,24 @@ public class ClawBuilderWindow : EditorWindow
                 "flip. Off = the jaws are solid but can't retain anything (pieces are minimum-friction, " +
                 "so squeezing alone never grips)."), enableGrab);
             if (enableGrab)
+            {
+                holdPoint = (Transform)EditorGUILayout.ObjectField(new GUIContent("Hold point",
+                    "WHERE a grabbed piece is carried. Empty = the build creates a ClawHoldPoint in " +
+                    "the middle of the jaws; drag it (the Scene view gives it a handle) to move where " +
+                    "pieces sit, and its UP axis is which way they stand."),
+                    holdPoint, typeof(Transform), true);
+                grabAutoUpright = EditorGUILayout.Toggle(new GUIContent("Stand pieces up",
+                    "Align each grabbed piece's long axis with the hold point's up, measured per " +
+                    "piece. Without this a pin lying on its side is carried lying on its side, so the " +
+                    "same grab looks right on an upright piece and sideways on a match-loaded one."),
+                    grabAutoUpright);
                 grabPassThrough = EditorGUILayout.Toggle(new GUIContent("Held piece passes through",
                     "A grabbed piece stops colliding with anything until it's dropped, and eases into " +
                     "the hold point rather than freezing where it was caught. Keeps a piece snatched " +
                     "at a bad angle — half through a jaw, or mid-topple on the floor — from wedging " +
                     "itself and throwing the robot. Off = it only ignores the claw and stays solid to " +
                     "the field."), grabPassThrough);
+            }
         }
 
         // --- Options ----------------------------------------------------------------------------
@@ -354,6 +368,8 @@ public class ClawBuilderWindow : EditorWindow
                 flipAxisPreset, flipCustomAxis, true, flipAngleDeg, "Flip",
                 new Color(0.35f, 0.7f, 1f));
 
+        DrawHoldPoint(registry);
+
         GameObject towardRef = flipRoot != null ? flipRoot : registry.gameObject;
         for (int i = 0; i < clampSections.Count; i++)
         {
@@ -366,6 +382,41 @@ public class ClawBuilderWindow : EditorWindow
                 s.axisPreset, s.customAxis, false, signed, $"Half {i + 1}",
                 i == 0 ? new Color(0.4f, 1f, 0.5f) : new Color(1f, 0.8f, 0.3f));
         }
+    }
+
+    // The hold point is a bare empty, so it can't be clicked in the Scene view and is easy to miss in
+    // the hierarchy — yet it's the one marker whose PLACEMENT the player feels directly, since it's
+    // where a grabbed piece ends up and its up axis is which way that piece stands. So the tool draws
+    // it and hands over a drag handle, the same deal as the pivots.
+    private void DrawHoldPoint(RobotMechanisms registry)
+    {
+        if (!enableGrab) return;
+        Transform hold = holdPoint != null ? holdPoint : FindHoldPoint(registry);
+        if (hold == null) return;
+
+        float handle = HandleUtility.GetHandleSize(hold.position);
+        Handles.color = new Color(0.2f, 1f, 0.5f);
+        Handles.SphereHandleCap(0, hold.position, Quaternion.identity, handle * 0.22f, EventType.Repaint);
+        // Its UP is not decoration: Stand pieces up aligns each piece's long axis to this arrow.
+        Handles.ArrowHandleCap(0, hold.position, Quaternion.LookRotation(hold.up), handle, EventType.Repaint);
+        Handles.Label(hold.position + hold.up * handle * 1.1f, "Hold point (pieces stand along this)");
+
+        EditorGUI.BeginChangeCheck();
+        Vector3 moved = Handles.PositionHandle(hold.position, hold.rotation);
+        if (EditorGUI.EndChangeCheck())
+        {
+            Undo.RecordObject(hold, "Move claw hold point");
+            hold.position = moved;
+        }
+    }
+
+    private static Transform FindHoldPoint(RobotMechanisms registry)
+    {
+        ClawGrab grab = registry.GetComponentInChildren<ClawGrab>(true);
+        if (grab != null && grab.holdPoint != null) return grab.holdPoint;
+        foreach (Transform t in registry.GetComponentsInChildren<Transform>(true))
+            if (t.name == ClawSetup.PreviewHoldName) return t;
+        return null;
     }
 
     private void DrawHinge(GameObject link, Transform assigned, string markerName, Vector3 seedPoint,
@@ -600,6 +651,8 @@ public class ClawBuilderWindow : EditorWindow
         clampCylinderReverse = clampCylinderReverse,
         enableGrab = enableGrab,
         grabPassThrough = grabPassThrough,
+        grabAutoUpright = grabAutoUpright,
+        holdPoint = holdPoint,
         autoAssignButtons = autoAssignButtons,
     };
 
@@ -632,6 +685,8 @@ public class ClawBuilderWindow : EditorWindow
         clampCylinderReverse = rig.clampCylinderReverse;
         enableGrab = rig.enableGrab;
         grabPassThrough = rig.grabPassThrough;
+        grabAutoUpright = rig.grabAutoUpright;
+        holdPoint = rig.holdPoint;
         autoAssignButtons = rig.autoAssignButtons;
     }
 
@@ -671,7 +726,8 @@ public class ClawBuilderWindow : EditorWindow
         clampStiffness = 20000f; clampDamping = 500f;
         clampCylinderBody = null; clampCylinderRod = null;
         clampStrokeMm = 50f; clampRecoil = 0.5f; clampCylinderReverse = false;
-        enableGrab = true; grabPassThrough = true; autoAssignButtons = true;
+        enableGrab = true; grabPassThrough = true; grabAutoUpright = true;
+        holdPoint = null; autoAssignButtons = true;
     }
 
     // Best-guess role assignment from part names, so a well-named CAD import is one click from built.
@@ -815,8 +871,13 @@ public static class ClawSetup
         public float clampStrokeMm, clampRecoil;
         public bool clampCylinderReverse;
 
+        // NOTE: a plain struct, so every bool here reads FALSE unless the caller sets it — which is
+        // the opposite of several shipped defaults. The window fills all of them; anything else that
+        // builds an Options must too, or it quietly turns features off.
         public bool enableGrab;
         public bool grabPassThrough;
+        public bool grabAutoUpright;
+        public Transform holdPoint;
         public bool autoAssignButtons;
     }
 
@@ -1071,7 +1132,7 @@ public static class ClawSetup
             // what the MOUTH is measured from, so the trigger and the hold point land in the opening
             // between the jaws rather than at the centroid of the whole claw, mount and all.
             WireGrab(registry, clawParent, clawParts, jawParts, clampActuator, GrabsOnRetract(o),
-                o.grabPassThrough, useUndo, out mouth, out hold);
+                o.grabPassThrough, o.grabAutoUpright, o.holdPoint, useUndo, out mouth, out hold);
         }
         else
         {
@@ -1149,6 +1210,7 @@ public static class ClawSetup
         rig.clampCylinderReverse = o.clampCylinderReverse;
         rig.enableGrab = o.enableGrab;
         rig.grabPassThrough = o.grabPassThrough;
+        rig.grabAutoUpright = o.grabAutoUpright;
         rig.grabWhenRetracted = GrabsOnRetract(o);
         rig.clawMouth = mouth;
         rig.holdPoint = hold;
@@ -1385,6 +1447,7 @@ public static class ClawSetup
 
     internal const string PreviewFlipPivotName = FlipPivotName;
     internal const string PreviewClampPivotPrefix = ClampPivotPrefix;
+    internal const string PreviewHoldName = HoldName;
 
     // A direction named against the ROBOT (its own up / right / forward), converted into `link`'s local
     // frame — which is the frame an ArticulationBody joint axis is measured in. This is what lets the
@@ -1579,7 +1642,8 @@ public static class ClawSetup
     // opening by hand. Re-runnable: an existing mouth/hold point is re-homed rather than duplicated.
     private static void WireGrab(RobotMechanisms registry, Transform parent, List<GameObject> clawParts,
         List<GameObject> jawParts, PneumaticActuator clampActuator, bool grabWhenRetracted,
-        bool passThrough, bool useUndo, out GameObject mouth, out Transform hold)
+        bool passThrough, bool autoUpright, Transform assignedHold, bool useUndo,
+        out GameObject mouth, out Transform hold)
     {
         Bounds jaws = default;
         bool haveBounds = false;
@@ -1607,14 +1671,18 @@ public static class ClawSetup
             box.size = new Vector3(size.x / Nz(lossy.x), size.y / Nz(lossy.y), size.z / Nz(lossy.z));
         }
 
-        GameObject holdGo = EnsureHelper(registry, parent, HoldName, jaws.center, useUndo);
-        hold = holdGo.transform;
+        // An explicitly assigned hold point wins — that's how you put the carry position on a part
+        // of your own CAD rather than on a generated empty.
+        hold = assignedHold != null
+            ? assignedHold
+            : EnsureHelper(registry, parent, HoldName, jaws.center, useUndo).transform;
 
         ClawGrab grab = MechanismBuildUtil.AddOrGet<ClawGrab>(mouth, useUndo);
         if (useUndo) Undo.RecordObject(grab, UndoName);
         grab.clampPneumatic = clampActuator;
         grab.grabWhenRetracted = grabWhenRetracted;
         grab.passThroughWhileHeld = passThrough;
+        grab.autoUpright = autoUpright;
         grab.holdPoint = hold;
         grab.clawParts = clawParts.ToArray();
         EditorUtility.SetDirty(grab);

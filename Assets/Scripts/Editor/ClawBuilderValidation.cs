@@ -77,12 +77,15 @@ public static class ClawBuilderValidation
             string flip = FlipTurnsInPlace();
 
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            string carry = CarriedPiecesLandRight();
+
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             string axes = ExplicitAxesMeanWhatTheySay();
 
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             string rejects = RejectionsHold();
-            return structure + "\n\n" + motion + "\n\n" + trim + "\n\n" + flip + "\n\n" + axes
-                   + "\n\n" + rejects;
+            return structure + "\n\n" + motion + "\n\n" + trim + "\n\n" + flip + "\n\n" + carry
+                   + "\n\n" + axes + "\n\n" + rejects;
         }
         finally
         {
@@ -385,6 +388,69 @@ public static class ClawBuilderValidation
         return null;
     }
 
+    // --- Carrying a piece: it has to land where you're looking, standing the right way up ----------
+    // Two failures the claw shipped with, both invisible to a structural check:
+    //   * the field's pieces keep the CAD origin as their pivot, 9-15 units off their mesh, so aiming
+    //     the PIVOT at the claw teleported the visible piece across the field;
+    //   * the pins share one mesh at a different child rotation per instance, so a pin lying where the
+    //     match loader dropped it was carried lying down while an upright one was carried upright.
+    // Both are pure geometry, so they can be exercised without Play — which is just as well, since
+    // ClawGrab's FixedUpdate never runs at edit time.
+    private static string CarriedPiecesLandRight()
+    {
+        Fixture f = MakeFixture("CarryBot");
+        ClawSetup.Build(f.Options(), useUndo: false);
+        ClawGrab grab = f.registry.GetComponentInChildren<ClawGrab>(true);
+        Assert(grab != null && grab.holdPoint != null, "the build should have wired a grab and hold point");
+        Assert(grab.autoUpright,
+            "the built claw should carry the Stand-pieces-up the form asked for — without it a pin " +
+            "from the match loader is carried lying down while an upright one looks fine");
+
+        // A pin whose mesh hangs well off its pivot, lying on its side like a match-loaded one.
+        GameObject pin = MakeBox(null, "PinPiece", new Vector3(40f, 5f, 0f), Vector3.one);
+        pin.transform.localScale = new Vector3(4f, 0.5f, 0.5f);   // long axis is local X
+        GameObject pivotRoot = new GameObject("PinPivot");
+        pivotRoot.transform.position = new Vector3(28f, 5f, 0f);  // pivot 12 units off the mesh
+        pin.transform.SetParent(pivotRoot.transform, worldPositionStays: true);
+        Rigidbody rb = pivotRoot.AddComponent<Rigidbody>();
+        rb.useGravity = false;
+
+        // Physics has to have stepped once for the auto-computed center of mass to be readable.
+        Physics.simulationMode = SimulationMode.Script;
+        Physics.gravity = Vector3.zero;
+        Physics.Simulate(0.02f);
+
+        float comOffset = rb.centerOfMass.magnitude;
+        Assert(comOffset > 1f,
+            $"this fixture can't detect the pivot bug: its piece's center sits only {comOffset:F2} " +
+            "units off the pivot, so aiming either would look the same");
+
+        // Where the carry math puts it. Mirrors ClawGrab: stand the long axis along the hold point's
+        // up, then place the PIVOT so the piece's CENTER lands on the hold point.
+        Vector3 localCom = rb.centerOfMass;
+        Vector3 longAxisWorld = pin.transform.right;            // the mesh's longest side, right now
+        Vector3 localUpAxis = (Quaternion.Inverse(rb.rotation) * longAxisWorld).normalized;
+        Quaternion carried = Quaternion.FromToRotation(localUpAxis, grab.holdPoint.up);
+        Vector3 placed = grab.holdPoint.position - carried * localCom;
+
+        // 1. The MESH lands on the hold point, not the pivot.
+        Vector3 centerAfter = placed + carried * localCom;
+        float miss = Vector3.Distance(centerAfter, grab.holdPoint.position);
+        Assert(miss < 0.01f,
+            $"the carried piece's centre missed the hold point by {miss:F2} units — the claw is aiming " +
+            "the piece's pivot, so an off-pivot piece appears to teleport away when grabbed");
+
+        // 2. And it ends up STANDING, however it was lying when grabbed.
+        Vector3 standing = carried * localUpAxis;
+        float tilt = Vector3.Angle(standing, grab.holdPoint.up);
+        Assert(tilt < 1f,
+            $"a piece grabbed lying down stayed {tilt:F0} degrees off the hold point's up — pins from " +
+            "the match loader would be carried sideways while upright ones look fine");
+
+        return $"Carried pieces: PASSED — a piece whose centre is {comOffset:F1} units off its pivot " +
+               $"lands within {miss:F3} of the hold point and stands within {tilt:F1} degrees of its up.";
+    }
+
     // --- Axes: the explicit pickers must override the guess -----------------------------------------
     // Auto has now been wrong twice on real robots, in both directions, because how a claw is mounted
     // is not inferable from its geometry. What makes that survivable is being able to point at a
@@ -612,7 +678,8 @@ public static class ClawBuilderValidation
             clampStrokeMm = ClampStrokeMm,
             clampRecoil = 0.5f,
             enableGrab = true,
-            grabPassThrough = true,        // the window's default
+            grabPassThrough = true,        // these two mirror the window's defaults; Options is a
+            grabAutoUpright = true,        // plain struct, so anything unset here silently reads false
             clampModelled = ClawRig.JawRest.ModelledOpen,
             clampStartClosed = false,
             autoAssignButtons = true,
@@ -668,7 +735,7 @@ public static class ClawBuilderValidation
     {
         GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
         go.name = name;
-        go.transform.SetParent(parent, false);
+        if (parent != null) go.transform.SetParent(parent, false);
         go.transform.position = position;
         go.transform.localScale = size;
         return go;

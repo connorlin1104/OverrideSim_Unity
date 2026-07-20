@@ -157,6 +157,9 @@ public class ClawRig : MonoBehaviour
              "it at an awkward angle can't wedge it through the CAD or shove the robot. Off = it only " +
              "ignores the claw itself and stays solid to the field.")]
     public bool grabPassThrough = true;
+    [Tooltip("Stand each grabbed piece along the hold point's up, measured per piece from its mesh — " +
+             "so a pin lying flat and one standing upright are carried the same way round.")]
+    public bool grabAutoUpright = true;
     [Tooltip("Set at build: the trigger zone between the jaws.")]
     public GameObject clawMouth;
     [Tooltip("Set at build: where a grabbed piece is held. A child of the flip link, so it rides the flip.")]

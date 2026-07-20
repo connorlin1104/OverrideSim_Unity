@@ -16,6 +16,12 @@ using UnityEngine;
 // pin still lands pin-on-top through a 180° flip. Because the hold point is a child of the flipping
 // link, the flip carries them with zero extra bookkeeping.
 //
+// It also STANDS EACH PIECE UP as it comes in (autoUpright), measured per piece from its own mesh.
+// The field's pins share one mesh but every instance carries a different child rotation — a pin lying
+// flat where the match loader dropped it and one standing in a goal are the same asset at different
+// attitudes — so carrying them at the pose they were caught in means an identical grab looks right
+// half the time and sideways the other half. Same fix, same reason, as IntakePull's Auto Upright.
+//
 // While held, a piece stops colliding with everything (passThroughWhileHeld) — the same ghosting
 // IntakePull uses, and for the same reason: nothing good comes of a kinematic body being shoved
 // through the world by a claw that outweighs it 700:1. Turning it off falls back to muting only the
@@ -53,23 +59,29 @@ public class ClawGrab : MonoBehaviour
     [Tooltip("How fast a grabbed piece turns to face the hold point, in degrees per second.")]
     public float snapTurnSpeed = 540f;
 
+    [Tooltip("RECOMMENDED. Stand each grabbed piece up in the claw by aligning its longest mesh axis " +
+             "with the hold point's up — measured PER PIECE, so a pin lying on its side and one " +
+             "standing upright are both carried the same way round. Off = the piece keeps whatever " +
+             "attitude it happened to be caught in.")]
+    public bool autoUpright = true;
+    [Tooltip("Override the axis measured as 'along the piece', in MESH local space. Leave zero to " +
+             "take the longest side of the mesh bounds, which is right for cups and pins.")]
+    public Vector3 uprightMeshAxis = Vector3.zero;
+
     [Header("Diagnostics")]
-    [Tooltip("Show a marker at the hold point in Play, so you can see where the claw carries things.")]
-    public bool showRuntimeMarkers = true;
-    public float markerSize = 0.5f;
     public bool logEvents = true;
 
-    // One captured piece, riding in the hold point's frame: `local*` is where it is now, `target*`
-    // where it's heading. The two start apart (it was caught wherever it was caught) and the glide
-    // closes the gap.
+    // One captured piece and everything needed to carry it: where its visible middle is relative to
+    // its pivot, which way is "along" it, and — for anything grabbed after the first — the
+    // arrangement it was caught in relative to that first piece.
     private class Held
     {
         public Rigidbody rb;
-        public Vector3 localPos;         // CENTER pose relative to the hold point, now
-        public Quaternion localRot;
-        public Vector3 targetPos;        // where in that frame it settles
-        public Quaternion targetRot;
         public Vector3 localCom;         // pivot -> center offset, in the piece's own frame
+        public Vector3 localUpAxis;      // the piece's long axis, in its own frame (zero = unmeasurable)
+        public Quaternion holdRot;       // attitude when caught, relative to the hold point
+        public Vector3 relPos;           // for pieces after the first: pose relative to that piece,
+        public Quaternion relRot;        //   so a cup sitting on a pin stays sitting on it
         public bool wasKinematic;
         public bool wasDetectCollisions;
         public RigidbodyInterpolation wasInterpolation;
@@ -91,7 +103,6 @@ public class ClawGrab : MonoBehaviour
     private readonly HashSet<Rigidbody> inMouth = new HashSet<Rigidbody>();
     private readonly List<Rigidbody> mouthScratch = new List<Rigidbody>();
     private readonly List<Collider> clawColliders = new List<Collider>();
-    private GameObject marker;
     private bool wasGrabbing;
 
     private Transform HoldTf => holdPoint != null ? holdPoint : transform;
@@ -112,16 +123,10 @@ public class ClawGrab : MonoBehaviour
         CacheClawColliders();
     }
 
-    void OnEnable()
-    {
-        if (showRuntimeMarkers) EnsureMarker();
-    }
-
     void OnDisable()
     {
         // Never leave a piece kinematic or half-muted because the robot despawned mid-grab.
         ReleaseAll();
-        if (marker != null) { Destroy(marker); marker = null; }
     }
 
     private void CacheClawColliders()
@@ -174,29 +179,45 @@ public class ClawGrab : MonoBehaviour
                 }
             }
 
-            // Ease each held piece toward its slot and put it there. Doing this every step (rather
-            // than parenting) means the piece tracks the claw through the flip and while driving.
+            // Ease each held piece toward where it should ride and put it there. Doing this every
+            // step (rather than parenting) means the piece tracks the claw through the flip and while
+            // driving; recomputing the target from the LIVE hold point each step is what lets the
+            // glide converge even while the robot is moving.
             heldScratch.Clear();
             heldScratch.AddRange(held);
-            Transform hold = HoldTf;
-            float dt = Time.fixedDeltaTime;
             foreach (Held h in heldScratch)
+                if (h.rb == null) { Unmute(h); held.Remove(h); }
+
+            if (held.Count > 0)
             {
-                if (h.rb == null) { Unmute(h); held.Remove(h); continue; }
+                Transform hold = HoldTf;
+                float dt = Time.fixedDeltaTime;
+                Quaternion primary = PrimaryRotation(hold);
+                Vector3 primaryCenter = hold.position;
 
-                // Glide in the hold point's LOCAL frame, so the approach isn't fighting the claw's own
-                // motion — a piece grabbed while the robot is driving still converges.
-                if (snapSpeed > 0f)
-                    h.localPos = Vector3.MoveTowards(h.localPos, h.targetPos, snapSpeed * dt);
-                if (snapTurnSpeed > 0f)
-                    h.localRot = Quaternion.RotateTowards(h.localRot, h.targetRot, snapTurnSpeed * dt);
+                foreach (Held h in held)
+                {
+                    // The first piece defines the attitude; the rest keep the arrangement they were
+                    // caught in relative to it, so uprighting a pin carries its cup round with it
+                    // instead of leaving the two intersecting.
+                    bool isPrimary = ReferenceEquals(h, held[0]);
+                    Quaternion wantRot = isPrimary ? primary : primary * h.relRot;
+                    Vector3 wantCenter = isPrimary ? primaryCenter : primaryCenter + primary * h.relPos;
 
-                // Place the pivot so the piece's CENTER lands on the carried pose, using the same
-                // rotation we're about to apply — so turning the piece can't swing its mesh off, even
-                // though the pivot may sit well outside it.
-                Quaternion worldRot = hold.rotation * h.localRot;
-                h.rb.MovePosition(h.PositionFor(hold.TransformPoint(h.localPos), worldRot));
-                h.rb.MoveRotation(worldRot);
+                    Quaternion nextRot = snapTurnSpeed > 0f
+                        ? Quaternion.RotateTowards(h.rb.rotation, wantRot, snapTurnSpeed * dt)
+                        : wantRot;
+                    Vector3 curCenter = h.CenterOf(h.rb.position, h.rb.rotation);
+                    Vector3 nextCenter = snapSpeed > 0f
+                        ? Vector3.MoveTowards(curCenter, wantCenter, snapSpeed * dt)
+                        : wantCenter;
+
+                    // Place the pivot so the piece's CENTER lands on the carried pose, using the same
+                    // rotation we're about to apply — so turning the piece can't swing its mesh off,
+                    // even though the pivot may sit well outside it.
+                    h.rb.MovePosition(h.PositionFor(nextCenter, nextRot));
+                    h.rb.MoveRotation(nextRot);
+                }
             }
         }
         else if (held.Count > 0)
@@ -209,13 +230,23 @@ public class ClawGrab : MonoBehaviour
         wasGrabbing = grabbing;
     }
 
-    void LateUpdate()
-    {
-        if (marker != null) marker.transform.position = HoldTf.position;
-    }
-
     private bool IsGrabbing()
         => clampPneumatic != null && clampPneumatic.IsExtended != grabWhenRetracted;
+
+    // How the carried stack is held. Auto Upright stands the first piece along the hold point's own up
+    // axis — measured per piece, so a pin scooped off the floor on its side and one taken standing are
+    // carried identically. Because the hold point is a child of the flipping link, "up" turns over
+    // with the claw and a flipped stack lands the other way round, which is the whole point of a flip.
+    // Falls back to the attitude the piece was caught in when Auto Upright is off, or when the piece
+    // has no mesh to measure.
+    private Quaternion PrimaryRotation(Transform hold)
+    {
+        Held first = held.Count > 0 ? held[0] : null;
+        if (first == null) return hold.rotation;
+        return autoUpright && first.localUpAxis.sqrMagnitude > 1e-6f
+            ? Quaternion.FromToRotation(first.localUpAxis, hold.up)
+            : hold.rotation * first.holdRot;
+    }
 
     // Lock one piece to the claw at its current pose.
     private void Capture(Rigidbody rb)
@@ -234,27 +265,23 @@ public class ClawGrab : MonoBehaviour
             // pieces it IS the pivot->center offset, and PhysX recomputes it back to the pivot the
             // moment a piece's colliders stop counting — which would throw the offset away.
             localCom = rb.centerOfMass,
-            localRot = Quaternion.Inverse(hold.rotation) * rb.rotation,
+            localUpAxis = autoUpright ? ComputeUpAxis(rb) : Vector3.zero,
+            holdRot = Quaternion.Inverse(hold.rotation) * rb.rotation,
             wasKinematic = rb.isKinematic,
             wasDetectCollisions = rb.detectCollisions,
             wasInterpolation = rb.interpolation,
         };
-        h.localPos = hold.InverseTransformPoint(h.CenterOf(rb.position, rb.rotation));
 
-        // Where it settles. The first piece goes to the hold point itself; later ones keep the
-        // arrangement they were caught in RELATIVE to the first, which is what preserves a
-        // cup-stacked-on-a-pin instead of collapsing both into the same spot.
-        if (held.Count == 0)
-        {
-            h.targetPos = Vector3.zero;
-            h.targetRot = Quaternion.identity;
-        }
-        else
+        // Anything grabbed after the first records the arrangement it was caught in, measured against
+        // that piece — the cup-sitting-on-a-pin case, which has to survive being stood up and flipped.
+        if (held.Count > 0)
         {
             Held first = held[0];
-            Quaternion firstInv = Quaternion.Inverse(first.localRot);
-            h.targetPos = firstInv * (h.localPos - first.localPos);
-            h.targetRot = firstInv * h.localRot;
+            Quaternion firstInv = Quaternion.Inverse(first.rb != null ? first.rb.rotation : hold.rotation);
+            Vector3 firstCenter = first.rb != null
+                ? first.CenterOf(first.rb.position, first.rb.rotation) : hold.position;
+            h.relRot = firstInv * rb.rotation;
+            h.relPos = firstInv * (h.CenterOf(rb.position, rb.rotation) - firstCenter);
         }
 
         rb.isKinematic = true;
@@ -295,7 +322,14 @@ public class ClawGrab : MonoBehaviour
         // prevents double capture either way; inMouth stays pure trigger occupancy.
         held.Add(h);
         if (logEvents)
-            Debug.Log($"ClawGrab: grabbed '{rb.name}' ({held.Count}/{maxHeld}) — it now rides the claw.", this);
+            Debug.Log($"ClawGrab: grabbed '{rb.name}' ({held.Count}/{maxHeld}) — it now rides the claw, " +
+                      $"gliding its centre (pivot->centre offset {h.localCom.magnitude:0.#}u) to the hold point." +
+                      (autoUpright
+                          ? (h.localUpAxis.sqrMagnitude > 1e-6f
+                              ? " Auto-upright ON."
+                              : " Auto-upright ON but NO MESH found to measure — this piece keeps the " +
+                                "attitude it was caught in.")
+                          : ""), this);
     }
 
     private void ReleaseAll()
@@ -353,16 +387,28 @@ public class ClawGrab : MonoBehaviour
         return false;
     }
 
-    // A plain unlit sphere at the hold point, so "where does the claw carry things" is visible in Play
-    // without opening the inspector — same diagnostic the intake grew for the same reason.
-    private void EnsureMarker()
+    // The axis that runs ALONG this piece, in its own local frame. Measured from the longest side of
+    // the mesh bounds through the MESH's rotation, not the body's: the field's pins share one mesh but
+    // each instance sits at a different child rotation, which is exactly why one lying flat and one
+    // standing up otherwise get carried differently. Zero when there's no mesh to measure.
+    private Vector3 ComputeUpAxis(Rigidbody rb)
     {
-        if (marker != null) return;
-        marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        marker.name = "ClawHoldMarker";
-        Destroy(marker.GetComponent<Collider>());
-        marker.transform.localScale = Vector3.one * markerSize;
-        Renderer r = marker.GetComponent<Renderer>();
-        if (r != null) r.material.color = new Color(0.2f, 1f, 0.5f, 1f);
+        MeshFilter mf = rb.GetComponentInChildren<MeshFilter>();
+        Transform meshTf = mf != null ? mf.transform : null;
+        Mesh mesh = mf != null ? mf.sharedMesh : null;
+        if (meshTf == null) return Vector3.zero;
+
+        Vector3 axisMeshLocal;
+        if (uprightMeshAxis.sqrMagnitude > 1e-6f)
+            axisMeshLocal = uprightMeshAxis.normalized;
+        else if (mesh != null)
+        {
+            Vector3 size = mesh.bounds.size;
+            axisMeshLocal = (size.x >= size.y && size.x >= size.z) ? Vector3.right
+                          : (size.y >= size.z) ? Vector3.up : Vector3.forward;
+        }
+        else return Vector3.zero;
+
+        return (Quaternion.Inverse(rb.rotation) * (meshTf.rotation * axisMeshLocal)).normalized;
     }
 }
