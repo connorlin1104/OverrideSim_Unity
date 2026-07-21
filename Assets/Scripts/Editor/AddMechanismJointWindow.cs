@@ -24,9 +24,37 @@ public class AddMechanismJointWindow : EditorWindow
     private const string Title = "Add or Fix Mechanism Joint";
     private const float MetersPerUnit = 0.1f; // this project's world: 1 scaled unit = 0.1 m
 
-    // Auto is last so this enum's stored integer values stay stable for X/Y/Z/Custom across the
-    // upgrade (an open window's serialized selection would otherwise shift by one).
-    private enum AxisPreset { X, Y, Z, Custom, Auto }
+    // Auto WAS last so the stored integers for X/Y/Z/Custom stayed stable across an earlier upgrade;
+    // the robot/scene options are APPENDED after it for the same reason (an open window's serialized
+    // selection must not shift). Display order is decoupled from this via AxisOrder below.
+    private enum AxisPreset { X, Y, Z, Custom, Auto, RobotUp, RobotSide, RobotFwd, WorldX, WorldY, WorldZ, FromAxle }
+
+    // Display order + labels for the dropdown, kept separate from the enum's serialization order. Same
+    // idea as the claw builder's picker: a joint axis lives in the link's local frame, and an imported
+    // CAD frame is arbitrary — its "Y" is only up by luck. So the friendly options resolve against a
+    // dropped-in SHAFT, the ROBOT (mean the same on every model), or the SCENE gizmo arrows (checkable
+    // by eye); part-local X/Y/Z sinks to the bottom as the URDF-fix escape hatch.
+    private static readonly AxisPreset[] AxisOrder =
+    {
+        AxisPreset.Auto, AxisPreset.FromAxle, AxisPreset.RobotSide, AxisPreset.RobotUp, AxisPreset.RobotFwd,
+        AxisPreset.WorldX, AxisPreset.WorldY, AxisPreset.WorldZ,
+        AxisPreset.X, AxisPreset.Y, AxisPreset.Z, AxisPreset.Custom,
+    };
+    private static readonly string[] AxisLabels =
+    {
+        "Auto — guess from the part's shape",
+        "Axle / shaft — read the axis from a part",
+        "Robot left/right — an arm swinging front↔back",
+        "Robot up/down — a turret spinning flat",
+        "Robot front/back — a wrist rolling over",
+        "Scene X — the RED gizmo arrow",
+        "Scene Y — the GREEN gizmo arrow",
+        "Scene Z — the BLUE gizmo arrow",
+        "Part-local X (URDF axis fix)",
+        "Part-local Y (URDF axis fix)",
+        "Part-local Z (URDF axis fix)",
+        "Custom vector (link-local)",
+    };
 
     // User-facing mechanism intent — pick what the part DOES, and the tool maps it to a joint DOF +
     // actuation. Replaces the raw "Joint Type" + "Piston Toggle" jargon.
@@ -69,6 +97,12 @@ public class AddMechanismJointWindow : EditorWindow
     [SerializeField] private bool autoAssignButton = true;
     [SerializeField] private List<GameObject> alsoMove = new List<GameObject>();
     [SerializeField] private bool reverseDirection;
+    // Put the hinge/slide origin at the part's own centre (inferred) rather than making the user type
+    // link-local coordinates — on for the friendly axis presets by default.
+    [SerializeField] private bool autoPivot = true;
+    [SerializeField] private bool showAxisPreview = true;
+    // The shaft/rod the part turns on, when the axis is defined by pointing at a part (FromAxle).
+    [SerializeField] private GameObject axlePart;
 
     [MenuItem("Tools/RoboSim/Robot/Mechanisms/Add or Fix Mechanism Joint", false, 1)]
     private static void ShowWindow()
@@ -81,7 +115,10 @@ public class AddMechanismJointWindow : EditorWindow
     private void OnEnable()
     {
         if (childLink == null) childLink = Selection.activeGameObject;
+        SceneView.duringSceneGui += OnSceneGUI;
     }
+
+    private void OnDisable() => SceneView.duringSceneGui -= OnSceneGUI;
 
     private void OnGUI()
     {
@@ -141,24 +178,54 @@ public class AddMechanismJointWindow : EditorWindow
 
         if (showAxis)
         {
-            axisPreset = (AxisPreset)EditorGUILayout.EnumPopup(new GUIContent("Axis (link-local)",
-                "Auto guesses the hinge/slide axis and anchor from the part's geometry — good for a " +
-                "mesh/FBX part. X/Y/Z/Custom set it by hand (use these to fix a URDF link's axis)."),
-                axisPreset);
-            if (axisPreset == AxisPreset.Auto)
+            int cur = Mathf.Max(0, Array.IndexOf(AxisOrder, axisPreset));
+            int picked = EditorGUILayout.Popup(new GUIContent("Which way it turns",
+                "The line the part hinges (or slides) about. 'Auto' reads it from the part's shape — good " +
+                "for a roller/axle. The ROBOT options mean the same thing on every model however the CAD " +
+                "is oriented (an arm swings about the robot's left/right line). The SCENE options are the " +
+                "coloured move-gizmo arrows you can check by eye. Part-local X/Y/Z is the URDF-fix hatch."),
+                cur, AxisLabels);
+            axisPreset = AxisOrder[Mathf.Clamp(picked, 0, AxisOrder.Length - 1)];
+
+            if (axisPreset == AxisPreset.FromAxle)
             {
-                EditorGUILayout.HelpBox("Axis + anchor will be inferred from the part's geometry. " +
-                    "It's a best guess — check the result and switch to X/Y/Z/Custom if it's off.",
+                axlePart = (GameObject)EditorGUILayout.ObjectField(new GUIContent("Axle / shaft part",
+                    "Drop the shaft, rod or tube the part turns on. Its LONG direction becomes the hinge " +
+                    "axis and its centre becomes the pivot — nothing to type. This only READS the axis; " +
+                    "if the shaft should also move with the part, add it under 'Parts That Move Together'."),
+                    axlePart, typeof(GameObject), true);
+                if (axlePart == null)
+                    EditorGUILayout.HelpBox("Drop the shaft/rod the part rotates on — its long direction " +
+                        "is the axis, its centre is the pivot.", MessageType.Warning);
+                else if (!ChainBuilder.TryAxleWorldAxis(axlePart, out _, out _))
+                    EditorGUILayout.HelpBox($"'{axlePart.name}' has no mesh to read a direction from. Pick " +
+                        "the actual shaft geometry (the long thin part), not an empty group.", MessageType.Warning);
+                else
+                    EditorGUILayout.HelpBox($"Axis + pivot read from '{axlePart.name}'. Check the blue " +
+                        "line in the Scene view runs down the shaft.", MessageType.None);
+            }
+            else if (axisPreset == AxisPreset.Auto)
+            {
+                EditorGUILayout.HelpBox("Axis + pivot inferred from the part's geometry — a best guess. " +
+                    "Watch the Scene view; if it hinges the wrong way, pick a robot or scene axis.",
                     MessageType.None);
             }
             else
             {
                 if (axisPreset == AxisPreset.Custom)
-                    customAxis = EditorGUILayout.Vector3Field("Custom Axis", customAxis);
-                anchor = EditorGUILayout.Vector3Field(new GUIContent("Anchor (link-local)",
-                    "Pivot/slide origin in the link's local space. 0 = the link origin (the usual case)."),
-                    anchor);
+                    customAxis = EditorGUILayout.Vector3Field("Custom Axis (link-local)", customAxis);
+                autoPivot = EditorGUILayout.Toggle(new GUIContent("Pivot from geometry",
+                    "Put the hinge/slide origin at the part's own centre (inferred). Turn off to type the " +
+                    "pivot in the part's local space — only needed if the hinge isn't at the part's middle."),
+                    autoPivot);
+                if (!autoPivot)
+                    anchor = EditorGUILayout.Vector3Field(new GUIContent("Anchor (link-local)",
+                        "Pivot/slide origin in the link's local space. 0 = the link origin."), anchor);
             }
+
+            showAxisPreview = EditorGUILayout.ToggleLeft(new GUIContent("Show axis in the Scene view",
+                "Draw the line the part turns about and the arc it sweeps, live, before you Apply — so a " +
+                "wrong axis is visible now rather than after."), showAxisPreview);
         }
 
         if (!isFixed)
@@ -221,28 +288,18 @@ public class AddMechanismJointWindow : EditorWindow
                 "Fixed welds the link to its parent and REMOVES any mechanism it had.", MessageType.None);
         }
 
+        // Any edit above can move the previewed axis/arc, so keep the Scene view in step.
+        if (GUI.changed && showAxisPreview) SceneView.RepaintAll();
+
         EditorGUILayout.Space();
         if (!GUILayout.Button(isFixed ? "Apply (make fixed)" : "Apply Mechanism", GUILayout.Height(30))) return;
 
         try
         {
-            Vector3 axis;
+            Vector3 axis = Vector3.up;
             Vector3 effectiveAnchor = anchor;
-            if (axisPreset == AxisPreset.Auto && !isFixed)
-            {
-                MechanismAutoDetect.TryInferAxisAnchor(childLink, jointType, out axis, out effectiveAnchor);
-            }
-            else
-            {
-                axis = axisPreset switch
-                {
-                    AxisPreset.X => Vector3.right,
-                    AxisPreset.Y => Vector3.up,
-                    AxisPreset.Z => Vector3.forward,
-                    AxisPreset.Custom => customAxis,
-                    _ => Vector3.up, // Auto + Fixed: axis unused
-                };
-            }
+            if (!isFixed)
+                ResolveAxisAnchor(childLink, registry, jointType, out axis, out effectiveAnchor);
 
             Undo.IncrementCurrentGroup();
             Undo.SetCurrentGroupName(Title);
@@ -281,6 +338,135 @@ public class AddMechanismJointWindow : EditorWindow
             EditorUtility.DisplayDialog(Title, e.Message, "OK");
             Debug.LogException(e, childLink);
         }
+    }
+
+    // The link-local axis + anchor the current form describes — the exact pair Apply feeds the joint
+    // core, and what the Scene preview draws, so the two can never disagree. Auto (and 'Pivot from
+    // geometry') infer the anchor from the part's shape; the friendly robot/scene presets are resolved
+    // into the link's own frame, which is the frame a joint axis is measured in.
+    private void ResolveAxisAnchor(GameObject link, RobotMechanisms reg,
+        AddMechanismJoint.JointType jointType, out Vector3 axis, out Vector3 anchorLocal)
+    {
+        // An axle part wins: the shaft's own long axis + centre, read exactly the way Build Chain reads a
+        // shaft, then converted into the link's frame. This is what lets you point at the pin instead of
+        // typing where the axis sits.
+        if (axisPreset == AxisPreset.FromAxle && axlePart != null &&
+            ChainBuilder.TryAxleWorldAxis(axlePart, out Vector3 wAxis, out Vector3 wCenter))
+        {
+            Vector3 a = link.transform.InverseTransformDirection(wAxis);
+            axis = a.sqrMagnitude > 1e-8f ? a.normalized : Vector3.up;
+            anchorLocal = link.transform.InverseTransformPoint(wCenter);
+            return;
+        }
+
+        // Auto — and FromAxle with no usable shaft yet — infer axis+anchor from the part's own geometry.
+        bool inferMode = axisPreset == AxisPreset.Auto || axisPreset == AxisPreset.FromAxle;
+        bool needInfer = inferMode || autoPivot;
+        bool inferredOk = false;
+        Vector3 autoAxis = Vector3.up, autoAnchor = Vector3.zero;
+        if (needInfer)
+            inferredOk = MechanismAutoDetect.TryInferAxisAnchor(link, jointType, out autoAxis, out autoAnchor);
+
+        if (inferMode)
+        {
+            axis = inferredOk ? autoAxis : Vector3.up;
+            anchorLocal = inferredOk ? autoAnchor : anchor;
+            return;
+        }
+        axis = ResolveAxisLocal(link, reg, axisPreset, customAxis);
+        anchorLocal = autoPivot ? (inferredOk ? autoAnchor : Vector3.zero) : anchor;
+    }
+
+    // One friendly preset -> a unit axis in `link`'s local frame. Robot options convert the robot's own
+    // up/right/forward through the link; scene options convert the world gizmo arrows; part-local is the
+    // raw axis. RobotSide prefers the drivetrain's measured left/right line over the root's X, which
+    // stays right even when the CAD root is rotated relative to the chassis.
+    private static Vector3 ResolveAxisLocal(GameObject link, RobotMechanisms reg, AxisPreset p, Vector3 custom)
+    {
+        switch (p)
+        {
+            case AxisPreset.X: return Vector3.right;
+            case AxisPreset.Y: return Vector3.up;
+            case AxisPreset.Z: return Vector3.forward;
+            case AxisPreset.Custom: return custom.sqrMagnitude > 1e-8f ? custom.normalized : Vector3.up;
+            case AxisPreset.RobotUp: return RobotDirLocal(link, reg, Vector3.up);
+            case AxisPreset.RobotFwd: return RobotDirLocal(link, reg, Vector3.forward);
+            case AxisPreset.RobotSide:
+                return MechanismBuildUtil.TryDrivetrainLateralLocal(link, out Vector3 lat)
+                    ? lat : RobotDirLocal(link, reg, Vector3.right);
+            case AxisPreset.WorldX: return link.transform.InverseTransformDirection(Vector3.right).normalized;
+            case AxisPreset.WorldY: return link.transform.InverseTransformDirection(Vector3.up).normalized;
+            case AxisPreset.WorldZ: return link.transform.InverseTransformDirection(Vector3.forward).normalized;
+            default: return Vector3.up;
+        }
+    }
+
+    private static Vector3 RobotDirLocal(GameObject link, RobotMechanisms reg, Vector3 rootLocalDir)
+    {
+        Vector3 world = reg != null ? reg.transform.TransformDirection(rootLocalDir) : rootLocalDir;
+        Vector3 local = link.transform.InverseTransformDirection(world);
+        return local.sqrMagnitude > 1e-8f ? local.normalized : Vector3.up;
+    }
+
+    // Draws, live in the Scene view, the line the part will turn (or slide) about and the arc it sweeps
+    // between its limits — resolved through the SAME ResolveAxisAnchor the Apply uses, so what you see is
+    // what you'll get. "Diagnose by looking": a hinge about the wrong line is obvious here in a way a
+    // link-local vector in a field never is.
+    private void OnSceneGUI(SceneView view)
+    {
+        if (!showAxisPreview || childLink == null) return;
+        RobotMechanisms reg = childLink.GetComponentInParent<RobotMechanisms>();
+        if (reg == null || mechKind == MechanismKind.Fixed) return;
+
+        AddMechanismJoint.JointType jointType = JointTypeOf(mechKind);
+        ResolveAxisAnchor(childLink, reg, jointType, out Vector3 axisLocal, out Vector3 anchorLocal);
+        Vector3 axisW = childLink.transform.TransformDirection(axisLocal);
+        if (axisW.sqrMagnitude < 1e-6f) return;
+        axisW.Normalize();
+        Vector3 pivotW = childLink.transform.TransformPoint(anchorLocal);
+
+        float h = HandleUtility.GetHandleSize(pivotW);
+        Vector3 center = MechanismBuildUtil.BoundsCenterOrOrigin(childLink);
+        Vector3 arm = Vector3.ProjectOnPlane(center - pivotW, axisW);
+        float reach = Mathf.Max(arm.magnitude, h * 2.5f);
+        var color = new Color(0.35f, 0.7f, 1f);
+
+        Handles.color = color;
+        Handles.DrawAAPolyLine(4f, pivotW - axisW * reach, pivotW + axisW * reach);
+        Handles.SphereHandleCap(0, pivotW, Quaternion.identity, h * 0.16f, EventType.Repaint);
+
+        if (jointType == AddMechanismJoint.JointType.Prismatic)
+        {
+            Handles.ArrowHandleCap(0, pivotW, Quaternion.LookRotation(axisW), h, EventType.Repaint);
+            Handles.ArrowHandleCap(0, pivotW, Quaternion.LookRotation(-axisW), h, EventType.Repaint);
+            Handles.Label(pivotW + axisW * reach, $"{childLink.name} slides along this line");
+            return;
+        }
+
+        if (arm.sqrMagnitude < 1e-8f)
+        {
+            Handles.DrawWireDisc(pivotW, axisW, reach);
+            Handles.Label(pivotW + axisW * reach, $"{childLink.name} turns about this line (pivot at its centre)");
+            return;
+        }
+
+        if (jointType == AddMechanismJoint.JointType.Continuous)
+        {
+            Handles.DrawWireDisc(pivotW, axisW, arm.magnitude);
+            Handles.DrawAAPolyLine(2f, pivotW, pivotW + arm);
+            Handles.Label(pivotW + arm * 1.1f, $"{childLink.name} free-spins about this line");
+            return;
+        }
+
+        // Revolute: shade the swept range low..high about the current (rest) pose, mark both ends.
+        Handles.color = new Color(color.r, color.g, color.b, 0.18f);
+        Handles.DrawSolidArc(pivotW, axisW, Quaternion.AngleAxis(lowerLimit, axisW) * arm,
+            upperLimit - lowerLimit, arm.magnitude);
+        Handles.color = color;
+        Handles.DrawAAPolyLine(2f, pivotW, pivotW + arm);                                   // rest pose
+        Handles.DrawDottedLine(pivotW, pivotW + Quaternion.AngleAxis(lowerLimit, axisW) * arm, 3f);
+        Handles.DrawDottedLine(pivotW, pivotW + Quaternion.AngleAxis(upperLimit, axisW) * arm, 3f);
+        Handles.Label(pivotW + arm * 1.12f, $"{childLink.name}: swings {lowerLimit:0}°..{upperLimit:0}°");
     }
 }
 

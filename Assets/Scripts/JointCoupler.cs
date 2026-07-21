@@ -58,6 +58,28 @@ public class JointCoupler : MonoBehaviour
     [Tooltip("rad/s cap used when the driver's own maxJointVelocity is unknown (0).")]
     public float maxFollowerJointVelocity = 40f;
 
+    [Header("Midpoint flip (Position mode, optional)")]
+    [Tooltip("Once the DRIVER swings past the midpoint of its travel, add an extra turn (usually 180) to " +
+             "the follower — for a claw on a swing arm that must face the OTHER way on the back half of " +
+             "the arc. It rides ON TOP of the normal angle tracking (leveling), and ramps in over Flip " +
+             "Seconds so it's a quick snap, not an instant jump.")]
+    public bool flipPastMidpoint;
+    [Tooltip("How far the extra flip turns the follower once triggered, in degrees.")]
+    public float flipDegrees = 180f;
+    [Tooltip("Where in the driver's travel the flip fires, as a fraction FROM the driver's rest pose to " +
+             "its far end. 0.5 = the exact midpoint of the swing.")]
+    [Range(0.05f, 0.95f)] public float flipFraction = 0.5f;
+    [Tooltip("Seconds the flip takes to swing in once it fires — the 'quick' part. 0 = an instant jump.")]
+    public float flipTravelSeconds = 0.3f;
+
+    // Runtime flip state: the driver's angle at startup (so the swing is measured from where it rests),
+    // whether the flip is currently engaged (with a hysteresis band so it doesn't chatter at the
+    // threshold), and the ramped-in offset actually applied this step.
+    private float restAngleDeg;
+    private bool restCaptured;
+    private bool flipEngaged;
+    private float currentFlipDeg;
+
     void Awake()
     {
         if (follower == null) follower = GetComponent<ArticulationBody>();
@@ -104,7 +126,16 @@ public class JointCoupler : MonoBehaviour
         // driver's cap times the ratio so a spun-up follower can actually keep pace.
         float driverMax = driver != null && driver.maxJointVelocity > 0f
             ? driver.maxJointVelocity : maxFollowerJointVelocity;
-        follower.maxJointVelocity = driverMax * Mathf.Max(1f, Mathf.Abs(ratio)) * 1.1f;
+        float followerMax = driverMax * Mathf.Max(1f, Mathf.Abs(ratio)) * 1.1f;
+        // The midpoint flip drives its own quick sweep on top of the tracking, and it can be much faster
+        // than the arm — a 180 in 0.3 s is ~10 rad/s, well past a slow arm motor's cap. Lift the ceiling
+        // to whichever is faster, or the "quick" flip crawls behind a geared-down arm.
+        if (flipPastMidpoint && flipTravelSeconds > 1e-3f)
+        {
+            float flipRateRad = Mathf.Abs(flipDegrees) * Mathf.Deg2Rad / flipTravelSeconds;
+            followerMax = Mathf.Max(followerMax, flipRateRad * 1.2f);
+        }
+        follower.maxJointVelocity = followerMax;
     }
 
     void FixedUpdate() => ApplyStep();
@@ -127,9 +158,38 @@ public class JointCoupler : MonoBehaviour
         {
             ArticulationReducedSpace p = driver.jointPosition;
             if (p.dofCount == 0) return;
-            float targetDeg = p[0] * Mathf.Rad2Deg * ratio + offsetDeg; // rad -> deg
+            float driverDeg = p[0] * Mathf.Rad2Deg;
+            float targetDeg = driverDeg * ratio + offsetDeg; // rad -> deg
+            if (flipPastMidpoint) targetDeg += FlipOffset(driverDeg);
             follower.SetDriveTarget(ArticulationDriveAxis.X, targetDeg);
         }
+    }
+
+    // The extra flip offset (degrees) to add on top of the tracked angle. It engages once the driver has
+    // swung past `flipFraction` of the way from its rest pose to its far limit, and ramps toward the full
+    // flip over `flipTravelSeconds` so a claw snaps through 180 quickly at the top of the arc rather than
+    // teleporting in a single frame. A small hysteresis band keeps it from chattering right at the
+    // threshold. Public so the edit-mode harness can step it the same way it steps ApplyStep.
+    public float FlipOffset(float driverDeg)
+    {
+        float lo = driver.xDrive.lowerLimit, hi = driver.xDrive.upperLimit;
+        if (hi - lo > 1e-3f)
+        {
+            // Capture the rest angle the first time we get a real (stepped) reading — a revolute's
+            // jointPosition can read NaN before the first physics step.
+            if (!restCaptured && !float.IsNaN(driverDeg)) { restAngleDeg = driverDeg; restCaptured = true; }
+            // Measure travel from rest toward whichever limit is farther, so the fraction runs 0 at rest
+            // to 1 fully swung whichever way the arm is set up to move.
+            float far = Mathf.Abs(hi - restAngleDeg) >= Mathf.Abs(lo - restAngleDeg) ? hi : lo;
+            float span = far - restAngleDeg;
+            float frac = Mathf.Abs(span) > 1e-3f ? (driverDeg - restAngleDeg) / span : 0f;
+            if (!flipEngaged && frac > flipFraction + 0.03f) flipEngaged = true;
+            else if (flipEngaged && frac < flipFraction - 0.03f) flipEngaged = false;
+        }
+        float goal = flipEngaged ? flipDegrees : 0f;
+        float rate = flipTravelSeconds > 1e-3f ? Mathf.Abs(flipDegrees) / flipTravelSeconds : 1e7f;
+        currentFlipDeg = Mathf.MoveTowards(currentFlipDeg, goal, rate * Mathf.Max(Time.fixedDeltaTime, 1e-4f));
+        return currentFlipDeg;
     }
 
     void OnDisable()

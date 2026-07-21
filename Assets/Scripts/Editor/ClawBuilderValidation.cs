@@ -84,9 +84,28 @@ public static class ClawBuilderValidation
             string axes = ExplicitAxesMeanWhatTheySay();
 
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            string level = LevelKeeperStaysLevel();
+
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            string levelFlip = LevelKeeperFlipsPastMidpoint();
+
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            string yaw = LevelKeeperYawsWithWrist();
+
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            string axle = LevelKeeperRidesTheAxle();
+
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            string roll = FlipRollsAboutTheAxle();
+
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            string rebuild = RebuildFollowsMovedAxle();
+
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             string rejects = RejectionsHold();
             return structure + "\n\n" + motion + "\n\n" + trim + "\n\n" + flip + "\n\n" + carry
-                   + "\n\n" + axes + "\n\n" + rejects;
+                   + "\n\n" + axes + "\n\n" + level + "\n\n" + levelFlip + "\n\n" + yaw + "\n\n" + axle
+                   + "\n\n" + roll + "\n\n" + rebuild + "\n\n" + rejects;
         }
         finally
         {
@@ -606,6 +625,603 @@ public static class ClawBuilderValidation
         ClawSetup.ResolveAxisAnchor(link, null, preset, Vector3.right, isFlip,
             out Vector3 axisLocal, out _);
         return link.transform.TransformDirection(axisLocal).normalized;
+    }
+
+    // --- Level-keeper: a claw on a rotating arm has to keep its orientation as the arm sweeps ---------
+    // The whole feature is a sign problem two ways over — the counter axis has to be the arm's OWN line
+    // (not its negative, or ratio -1 doubles the tumble instead of cancelling it), and the ratio has to
+    // be negative. Neither is visible in a number; both fail the same way (the claw tumbles). And an
+    // axis-aligned fixture hides both, the same way it hid the carry bugs. So the robot is tilted off
+    // every world axis, the arm is actually swept under physics, and the shipped coupler — not a restated
+    // formula — is asked to hold the claw level. The in-test mutation at the end proves the check bites.
+    private static string LevelKeeperStaysLevel()
+    {
+        ArmFixture f = MakeSwingArmClaw("ArmBot", flipPastMidpoint: false);
+        RobotMechanisms registry = f.registry;
+        GameObject arm = f.arm, mount = f.mount, flip = f.flip;
+        ArticulationBody armBody = f.armBody, mountBody = f.mountBody;
+        JointCoupler coupler = f.coupler;
+
+        // --- Structure: the mount is a passive counter-rotating link between the arm and the claw ----
+        Assert(mountBody != null && mountBody.jointType == ArticulationJointType.RevoluteJoint,
+            "the mount should have become a revolute joint");
+        Assert(mount.transform.parent == arm.transform,
+            "the mount must be pulled up to be a DIRECT child of the arm even when the CAD nested it " +
+            "inside the flip assembly — otherwise it's a leaf that flips alone while the claw stays rigid");
+        Assert(flip.transform.IsChildOf(mount.transform),
+            "the claw (flip link) must ride the mount, or it wouldn't be kept level");
+        Assert(f.jawA.transform.IsChildOf(mount.transform) && f.jawB.transform.IsChildOf(mount.transform),
+            "the JAWS must end up under the mount too, or they stay rigid to the arm (the reported bug)");
+        Assert(mount.GetComponent<PneumaticActuator>() == null && mount.GetComponent<MotorActuator>() == null,
+            "the mount is a passive linkage — an actuator would let ButtonRouter fight the coupler");
+        Assert(registry.Find(UrdfPostProcessor.Slugify(mount.name)) == null,
+            "the mount must not be registered as a mechanism (it rides no button)");
+        Assert(coupler != null && coupler.mode == JointCoupler.CoupleMode.Position,
+            "the mount should track the arm's ANGLE through a Position coupler");
+        Assert(coupler.driver == armBody && coupler.follower == mountBody,
+            "the coupler should read the arm and drive the mount");
+        Assert(coupler.ratio < 0f,
+            $"the counter-rotation needs a NEGATIVE ratio to cancel the arm (got {coupler.ratio})");
+        Assert(!coupler.flipPastMidpoint, "the plain level-keeper must not flip unless it's asked to");
+
+        // The pivot must sit on the CLAW's centre, not the mount's own origin — else leveling swings the
+        // claw off into the scene, because the claw's offset from an off-claw pivot rotates opposite the
+        // arm. Here the mount sits ~1.5u from the claw's middle, so the two are distinguishable.
+        Vector3 pivotWorld = mountBody.transform.TransformPoint(mountBody.anchorPosition);
+        Bounds clawB = WorldBounds(flip);
+        clawB.Encapsulate(WorldBounds(f.jawA));
+        clawB.Encapsulate(WorldBounds(f.jawB));
+        float pivToClaw = Vector3.Distance(pivotWorld, clawB.center);
+        float pivToMountOrigin = Vector3.Distance(pivotWorld, mount.transform.position);
+        Assert(pivToClaw < pivToMountOrigin,
+            $"the level pivot is nearer the mount's origin ({pivToMountOrigin:F1}u) than the claw's centre " +
+            $"({pivToClaw:F1}u) — it must hinge about the claw so the claw spins in place, not swing off " +
+            "into the scene as it levels");
+
+        // --- Behaviour: sweep the arm and watch the claw hold its orientation ------------------------
+        // The arm is RAMPED to each checkpoint, the way a motor drives it — a stiff position target
+        // slammed on in one step rings the two coupled drives into instability (and isn't how the real
+        // thing moves). Small dt for the same reason.
+        Physics.gravity = Vector3.zero;
+        Physics.simulationMode = SimulationMode.Script;
+
+        SettleArm(armBody, coupler, 0f, 150);
+        Quaternion mountAtRest = mountBody.transform.rotation;
+        Vector3 clawAtRest = flip.transform.position;
+
+        float worstTilt = 0f, farthest = 0f, current = 0f;
+        foreach (float checkpoint in new[] { 45f, 90f, 135f, 180f })
+        {
+            for (; current < checkpoint; current += 1.5f)   // ramp smoothly, like the motor would
+            {
+                DriveArmTo(armBody, current);
+                for (int s = 0; s < 4; s++) { coupler.ApplyStep(); Physics.Simulate(0.01f); }
+            }
+            SettleArm(armBody, coupler, checkpoint, 400);    // then let it settle firmly at the checkpoint
+
+            float armReached = JointAngleDeg(armBody);
+            Assert(Mathf.Abs(armReached - checkpoint) < 8f,
+                $"the arm never settled at {checkpoint} (sat at {armReached:F0}) — the sweep isn't " +
+                "happening, so the test can't say anything about staying level");
+            worstTilt = Mathf.Max(worstTilt, Quaternion.Angle(mountBody.transform.rotation, mountAtRest));
+            farthest = Mathf.Max(farthest, Vector3.Distance(flip.transform.position, clawAtRest));
+        }
+
+        // The claw must have RIDDEN the arc — otherwise "stays level" is vacuous (a frozen arm keeps its
+        // orientation for free).
+        Assert(farthest > 1f,
+            $"the claw moved only {farthest:F2} units as the arm swept, so it isn't riding the arm — a " +
+            "stationary claw stays level trivially and proves nothing");
+        // ...and at every checkpoint through the 180 sweep it held the orientation it started at.
+        Assert(worstTilt < 5f,
+            $"the claw tilted {worstTilt:F1} degrees as the arm swept 180 — the mount isn't cancelling " +
+            "the arm's rotation, so a claw picked up at the front arrives crooked at the back");
+
+        // --- Mutation guard: prove the -1 is load-bearing --------------------------------------------
+        // If tracking the arm 1:1 the SAME way (ratio +1) left the claw just as level, this test would be
+        // blind to a broken coupler. It must instead tumble — hard.
+        coupler.ratio = 1f;
+        coupler.BakeDrive();
+        for (current = JointAngleDeg(armBody); current > 45f; current -= 1.5f)   // ramp back down smoothly
+        {
+            DriveArmTo(armBody, current);
+            for (int s = 0; s < 4; s++) { coupler.ApplyStep(); Physics.Simulate(0.01f); }
+        }
+        SettleArm(armBody, coupler, 45f, 200);
+        float mutantTilt = Quaternion.Angle(mountBody.transform.rotation, mountAtRest);
+        Assert(mutantTilt > 30f,
+            $"tracking the arm 1:1 the wrong way only tilted the claw {mutantTilt:F0} degrees — the " +
+            "stays-level check can't tell a working level-keeper from a broken one");
+
+        return $"Level-keeper: PASSED — on a robot tilted (17,40,13), the claw rode the arm {farthest:F0} " +
+               $"units through a 180 sweep while holding its orientation to within {worstTilt:F1} degrees; " +
+               $"reversing the coupler tumbled it {mutantTilt:F0} degrees, so the check has teeth.";
+    }
+
+    // --- Midpoint flip: past the top of the swing the claw must snap to face the other way -----------
+    // The counter-rotation keeps the claw level; this option adds a 180 once the arm is past the midpoint,
+    // for a claw that grabs at the front and must present the other face at the back. The proof is a
+    // before/after read across the midpoint; the mutation is the SAME sweep with the flip OFF, which must
+    // NOT flip — otherwise the test would pass on a claw that never had the feature.
+    private static string LevelKeeperFlipsPastMidpoint()
+    {
+        ArmFixture f = MakeSwingArmClaw("FlipBot", flipPastMidpoint: true);
+        JointCoupler coupler = f.coupler;
+        ArticulationBody armBody = f.armBody, mountBody = f.mountBody;
+        Assert(coupler != null && coupler.flipPastMidpoint,
+            "the flip option should have reached the built coupler");
+        AssertApprox(coupler.flipDegrees, 180f, 1e-3f, "the flip should be the 180 that was asked for");
+
+        Physics.gravity = Vector3.zero;
+        Physics.simulationMode = SimulationMode.Script;
+
+        // Just before the midpoint (arm 80 of 0..180, fraction ~0.44): the flip hasn't fired, still level.
+        RampArm(armBody, coupler, 0f, 80f);
+        SettleArm(armBody, coupler, 80f, 300);
+        Quaternion beforeMid = mountBody.transform.rotation;
+
+        // Well past the midpoint (arm 160, fraction ~0.89): the claw has snapped ~180 from that pose.
+        RampArm(armBody, coupler, 80f, 160f);
+        SettleArm(armBody, coupler, 160f, 400);
+        float flipped = Quaternion.Angle(mountBody.transform.rotation, beforeMid);
+        Assert(flipped > 150f,
+            $"past the midpoint the claw turned only {flipped:F0} degrees from its pre-midpoint pose — the " +
+            "180 flip isn't firing, so a claw grabbed at the front faces the wrong way at the back");
+
+        // Mutation: the SAME sweep with the flip OFF must leave the claw level across the midpoint (the
+        // level-keeper alone holds one orientation), so the jump above is genuinely the flip.
+        ArmFixture nf = MakeSwingArmClaw("NoFlipBot", flipPastMidpoint: false);
+        RampArm(nf.armBody, nf.coupler, 0f, 80f);
+        SettleArm(nf.armBody, nf.coupler, 80f, 300);
+        Quaternion nfBefore = nf.mountBody.transform.rotation;
+        RampArm(nf.armBody, nf.coupler, 80f, 160f);
+        SettleArm(nf.armBody, nf.coupler, 160f, 400);
+        float nfMoved = Quaternion.Angle(nf.mountBody.transform.rotation, nfBefore);
+        Assert(nfMoved < 15f,
+            $"with the flip OFF the claw still swung {nfMoved:F0} degrees across the midpoint — the flip " +
+            "test would then pass on a claw that never had the feature");
+
+        return $"Midpoint flip: PASSED — past the midpoint the claw snapped {flipped:F0} degrees to face " +
+               $"the other way, while the same sweep with the flip off moved only {nfMoved:F0}.";
+    }
+
+    // --- Yaw wrist: keep level, face the OTHER way (option B) --------------------------------------
+    // With a wrist part the midpoint flip must ride a SEPARATE joint about VERTICAL, so the claw stays
+    // level (up preserved) and yaws 180 to face the opposite way — instead of tipping over on the
+    // leveling joint (a pitch, which flips the up). The proof: the claw's UP holds across the midpoint
+    // while its facing reverses. The mutation is the no-wrist build, whose up FLIPS (a pitch).
+    private static string LevelKeeperYawsWithWrist()
+    {
+        ArmFixture f = MakeSwingArmClaw("YawBot", flipPastMidpoint: true, withWrist: true);
+        Assert(f.wristBody != null && f.wristCoupler != null,
+            "the wrist part should have become a joint with a coupler");
+        Assert(f.flip.transform.IsChildOf(f.wrist.transform),
+            "the claw must ride the WRIST, so the yaw carries it");
+        Assert(f.wrist.transform.IsChildOf(f.mount.transform),
+            "the wrist must ride the MOUNT, so the leveling carries both");
+        Assert(!f.coupler.flipPastMidpoint,
+            "with a wrist present the MOUNT must not flip — it only levels; the wrist yaws");
+        Assert(f.wristCoupler.flipPastMidpoint && Mathf.Abs(f.wristCoupler.ratio) < 1e-3f,
+            "the wrist must yaw (flip on) without tracking the arm (ratio 0)");
+
+        Physics.gravity = Vector3.zero;
+        Physics.simulationMode = SimulationMode.Script;
+
+        for (int s = 0; s < 150; s++) { f.coupler.ApplyStep(); f.wristCoupler.ApplyStep(); Physics.Simulate(0.01f); }
+        Quaternion clawAtRest = f.flip.transform.rotation;
+        Vector3 upAtRest = f.flip.transform.up;
+
+        // Before the midpoint (arm 60 of 0..180, fraction 0.33): level, not yet yawed.
+        RampBoth(f, 0f, 60f); SettleBoth(f, 60f, 300);
+        float unyawed = Quaternion.Angle(f.flip.transform.rotation, clawAtRest);
+        Assert(unyawed < 12f,
+            $"before the midpoint the claw turned {unyawed:F0} degrees — it should still face its start way");
+
+        // After the midpoint (arm 150): the claw must have turned ~180 to face the other way, AND kept its
+        // UP (a yaw preserves the claw's up; a pitch would flip it). Those two ARE option B — measured off
+        // the claw's own up, not the robot's, so a tilted mount doesn't muddy the read.
+        RampBoth(f, 60f, 150f); SettleBoth(f, 150f, 400);
+        float fromStart = Quaternion.Angle(f.flip.transform.rotation, clawAtRest);
+        float upTilt = Vector3.Angle(f.flip.transform.up, upAtRest);
+        Assert(fromStart > 150f, $"the claw only turned {fromStart:F0} degrees — it didn't face the other way");
+        Assert(upTilt < 15f,
+            $"the claw's up tilted {upTilt:F0} degrees across the midpoint — a yaw keeps it level; this is " +
+            "tipping over (a pitch) instead");
+
+        // Mutation: the SAME flip with NO wrist is a pitch on the mount, which FLIPS the up (not a yaw) —
+        // so the up-preserved check above genuinely distinguishes a yaw from a tip-over.
+        ArmFixture pf = MakeSwingArmClaw("PitchBot", flipPastMidpoint: true, withWrist: false);
+        for (int s = 0; s < 150; s++) { pf.coupler.ApplyStep(); Physics.Simulate(0.01f); }
+        Vector3 pfUpRest = pf.flip.transform.up;
+        RampArm(pf.armBody, pf.coupler, 0f, 150f); SettleArm(pf.armBody, pf.coupler, 150f, 400);
+        float pitchUpTilt = Vector3.Angle(pf.flip.transform.up, pfUpRest);
+        Assert(pitchUpTilt > 90f,
+            $"without a wrist the flip only tilted the up {pitchUpTilt:F0} degrees — the up-preserved check " +
+            "would then pass on a claw that tips over, so it wouldn't prove the wrist yaws");
+
+        return $"Yaw wrist: PASSED — past the midpoint the claw turned {fromStart:F0} degrees to face the " +
+               $"other way while its up held to {upTilt:F0} degrees (level, a yaw); the no-wrist pitch " +
+               $"tipped the up {pitchUpTilt:F0} degrees, so the check bites.";
+    }
+
+    // --- Explicit axle: the mount must pivot about the AXLE the claw hangs on, not its own far origin ----
+    // The reported "huge arch" was the counter-rotation hinging about a point out near the robot's centre
+    // (the mount's CAD origin), so the claw swept a robot-radius arc instead of turning in place at the end
+    // of the arm. Pointing the level-keeper at the axle part pins the rotation centre onto the shaft the
+    // claw really pivots on. Proof: the built pivot lands ON the axle, and through a whole 180 sweep the
+    // claw holds a fixed distance from it — it rides WITH the arm's end while it levels. Mutation: force the
+    // pivot onto the robot's centre (the exact bug) and that distance must blow up.
+    private static string LevelKeeperRidesTheAxle()
+    {
+        ArmFixture f = MakeSwingArmClaw("AxleBot", flipPastMidpoint: false, withAxle: true);
+        ArticulationBody armBody = f.armBody, mountBody = f.mountBody;
+        JointCoupler coupler = f.coupler;
+        Assert(f.axle != null, "the axle fixture should have created an axle part");
+
+        // Static: the built rotation centre sits ON the axle, and the axle is well clear of the mount's own
+        // origin (or 'pivots on the axle' rather than 'on its origin' would prove nothing).
+        Vector3 pivotWorld = mountBody.transform.TransformPoint(mountBody.anchorPosition);
+        ChainBuilder.TryAxleWorldAxis(f.axle, out _, out Vector3 axleCentre);
+        float pivToAxle = Vector3.Distance(pivotWorld, axleCentre);
+        float axleToMountOrigin = Vector3.Distance(axleCentre, mountBody.transform.position);
+        Assert(pivToAxle < 0.2f,
+            $"the mount's rotation centre is {pivToAxle:F2}u off the axle it was told to pivot on — the " +
+            "axle input isn't pinning the pivot, so the claw would still arc about the wrong point");
+        Assert(axleToMountOrigin > 0.5f,
+            $"the fixture's axle sits only {axleToMountOrigin:F1}u from the mount's origin — they must " +
+            "differ, or landing the pivot on the axle proves nothing over the old behaviour");
+
+        // Behaviour: sweep the arm; the claw must hold a fixed distance from the axle (stay at the end of
+        // the arm) AND stay level, while actually riding the arc (or 'fixed distance' is vacuous on a frozen
+        // claw).
+        Physics.gravity = Vector3.zero;
+        Physics.simulationMode = SimulationMode.Script;
+        SettleArm(armBody, coupler, 0f, 150);
+        Quaternion clawAtRest = f.flip.transform.rotation;
+        Vector3 clawStart = f.flip.transform.position;
+        float restGap = Vector3.Distance(f.flip.transform.position, f.axle.transform.position);
+        float minGap = restGap, maxGap = restGap, worstTilt = 0f, farthest = 0f, current = 0f;
+        foreach (float checkpoint in new[] { 45f, 90f, 135f, 180f })
+        {
+            RampArm(armBody, coupler, current, checkpoint); current = checkpoint;
+            SettleArm(armBody, coupler, checkpoint, 400);
+            Assert(Mathf.Abs(JointAngleDeg(armBody) - checkpoint) < 8f,
+                $"the arm never settled at {checkpoint} (sat at {JointAngleDeg(armBody):F0}) — the sweep " +
+                "isn't happening, so the test can't say anything");
+            float gap = Vector3.Distance(f.flip.transform.position, f.axle.transform.position);
+            minGap = Mathf.Min(minGap, gap); maxGap = Mathf.Max(maxGap, gap);
+            worstTilt = Mathf.Max(worstTilt, Quaternion.Angle(f.flip.transform.rotation, clawAtRest));
+            farthest = Mathf.Max(farthest, Vector3.Distance(f.flip.transform.position, clawStart));
+        }
+        Assert(farthest > 1f,
+            $"the claw moved only {farthest:F2}u as the arm swept — it isn't riding the arm, so holding a " +
+            "fixed distance to the axle proves nothing");
+        float wobble = maxGap - minGap;
+        Assert(wobble < 1f,
+            $"the claw's distance to the axle swung by {wobble:F1}u over the 180 sweep — it isn't staying " +
+            "at the end of the arm, it's arcing away on its own");
+        Assert(worstTilt < 5f,
+            $"the claw tilted {worstTilt:F1} degrees — the axle-hinged mount isn't keeping it level");
+
+        // Mutation: same claw, but hinge about the robot's centre (the reported bug). The claw must arc
+        // away — its distance to the axle at the arm's end must vary wildly where the good one held steady.
+        ArmFixture m = MakeSwingArmClaw("AxleMutant", flipPastMidpoint: false, withAxle: true,
+            forceLevelPivotAtRootCentre: true);
+        SettleArm(m.armBody, m.coupler, 0f, 150);
+        float mMin = Vector3.Distance(m.flip.transform.position, m.axle.transform.position);
+        float mMax = mMin, mc = 0f;
+        foreach (float checkpoint in new[] { 90f, 180f })
+        {
+            RampArm(m.armBody, m.coupler, mc, checkpoint); mc = checkpoint;
+            SettleArm(m.armBody, m.coupler, checkpoint, 300);
+            float gap = Vector3.Distance(m.flip.transform.position, m.axle.transform.position);
+            mMin = Mathf.Min(mMin, gap); mMax = Mathf.Max(mMax, gap);
+        }
+        float mutantWobble = mMax - mMin;
+        Assert(mutantWobble > 2f,
+            $"hinging about the robot centre only wobbled the claw {mutantWobble:F1}u — the stay-attached " +
+            "check can't tell the axle pivot from the broken one it exists to catch");
+
+        return $"Axle pivot: PASSED — the mount hinged on the axle ({pivToAxle:F2}u off it, the axle itself " +
+               $"{axleToMountOrigin:F1}u from the mount origin); the claw rode the arm {farthest:F0}u yet " +
+               $"held its distance to the arm's end to within {wobble:F2}u while staying level to " +
+               $"{worstTilt:F1} degrees, and hinging about the robot centre instead blew that out to " +
+               $"{mutantWobble:F1}u.";
+    }
+
+    // --- The 180 turn rides the axle: welded to the arm's end, pivoting and rolling about the shaft ------
+    // Follow-ups the user asked for after the axle landed: (a) the axle metal must stay bolted to the end
+    // of the arm through the swing — it was drifting "above the arm" because it hung on the counter-rotating
+    // mount; (b) the 180 must pivot ON that axle; (c) and roll about the axle's own shaft, not the old yaw
+    // about vertical (a single-axle arm has no vertical pin to yaw on). Built with the axle nested ON THE
+    // MOUNT and off vertical, so each fix has an adversarial starting point: skip the weld and the axle
+    // stays under the mount; seed the old pivot and it lands on the claw's middle; keep the old axis and it
+    // reads vertical — every assertion below then flips.
+    private static string FlipRollsAboutTheAxle()
+    {
+        ArmFixture f = MakeSwingArmClaw("RollBot", flipPastMidpoint: true, withWrist: true, withAxle: true,
+            axleUnderMount: true);
+        Assert(f.axle != null && f.wristBody != null, "the fixture should have an axle and a wrist joint");
+
+        // (a) Welded to the ARM — a DIRECT child of the arm, pulled out of the mount it was nested on.
+        Assert(f.axle.transform.parent == f.arm.transform,
+            $"the axle stayed under '{f.axle.transform.parent?.name}', not the arm — it must weld to the arm " +
+            "so it rides the arm's end instead of drifting off with the counter-rotating mount");
+
+        // (b) The 180 pivots ON the axle.
+        Vector3 turnPivot = f.wristBody.transform.TransformPoint(f.wristBody.anchorPosition);
+        ChainBuilder.TryAxleWorldAxis(f.axle, out Vector3 axleAxis, out Vector3 axleCentre);
+        float pivToAxle = Vector3.Distance(turnPivot, axleCentre);
+        Assert(pivToAxle < 0.2f,
+            $"the 180 pivots {pivToAxle:F2}u off the axle — it must turn on the axle, not the claw's middle");
+
+        // (c) ...and rolls about the axle's OWN shaft, not the vertical (the old yaw the arm can't do).
+        Vector3 turnAxis = ClawSetup.DriverWorldTwist(f.wristBody);
+        float toAxle = Mathf.Min(Vector3.Angle(turnAxis, axleAxis), Vector3.Angle(turnAxis, -axleAxis));
+        float toVertical = Mathf.Min(Vector3.Angle(turnAxis, f.registry.transform.up),
+                                     Vector3.Angle(turnAxis, -f.registry.transform.up));
+        Assert(toAxle < 5f,
+            $"the turn axis is {toAxle:F0} degrees off the axle's shaft — it isn't rolling about the axle");
+        Assert(toVertical > 20f,
+            $"the turn axis is only {toVertical:F0} degrees off vertical — still the old yaw, not an axle roll " +
+            "(the fixture's axle is well off vertical, so a real roll must read far from it)");
+
+        // (a), behaviour: sweep the arm; the axle must hold a fixed distance to the arm's origin (riding it
+        // rigidly), where hanging on the counter-rotating mount would swing that distance around.
+        Physics.gravity = Vector3.zero;
+        Physics.simulationMode = SimulationMode.Script;
+        SettleBoth(f, 0f, 120);
+        float minD = float.MaxValue, maxD = 0f, current = 0f;
+        foreach (float checkpoint in new[] { 60f, 120f, 180f })
+        {
+            RampBoth(f, current, checkpoint); current = checkpoint;
+            SettleBoth(f, checkpoint, 250);
+            float d = Vector3.Distance(f.axle.transform.position, f.arm.transform.position);
+            minD = Mathf.Min(minD, d); maxD = Mathf.Max(maxD, d);
+        }
+        Assert(maxD - minD < 0.5f,
+            $"the axle's distance to the arm swung by {(maxD - minD):F1}u over the sweep — it isn't riding " +
+            "the arm rigidly, so it won't stay bolted to the end");
+
+        return $"Flip about the axle: PASSED — the axle welded to the arm (rode it to within " +
+               $"{(maxD - minD):F2}u of rigid), and the 180 pivots on it ({pivToAxle:F2}u off) and rolls " +
+               $"about its shaft ({toAxle:F0} degrees off the shaft, {toVertical:F0} off vertical).";
+    }
+
+    // --- Rebuild must follow a MOVED axle, not a stale marker (2026-07-21 regression) -------------------
+    // Removing the manual Mount-pivot bucket exposed this: EnsurePivot reused the ClawLevelPivot marker
+    // from the previous build at its OLD spot, so the axle only seeded the pivot on the FIRST build — move
+    // the axle and rebuild and nothing changed (the user's exact report). The fix re-seeds the axle-driven
+    // marker every rebuild. This drives it end to end: build, move the axle, rebuild, prove the pivot went
+    // with it.
+    private static string RebuildFollowsMovedAxle()
+    {
+        ArmFixture f = MakeSwingArmClaw("RebuildBot", flipPastMidpoint: false, withAxle: true);
+        ArticulationBody mount = f.mount.GetComponent<ArticulationBody>();
+        Vector3 anchor0 = mount.transform.TransformPoint(mount.anchorPosition);
+        ChainBuilder.TryAxleWorldAxis(f.axle, out _, out Vector3 axle0);
+        Assert(Vector3.Distance(anchor0, axle0) < 0.2f,
+            $"the first build should already pivot on the axle ({Vector3.Distance(anchor0, axle0):F2}u off)");
+
+        // Move the axle well away, then rebuild exactly as the window's Build button does (same Options).
+        f.axle.transform.position += new Vector3(0f, 0f, 3f);
+        ChainBuilder.TryAxleWorldAxis(f.axle, out _, out Vector3 axle1);
+        Assert(Vector3.Distance(axle0, axle1) > 1f,
+            "the axle must have actually moved for the test to mean anything");
+
+        ClawSetup.Build(f.options, useUndo: false);
+
+        mount = f.mount.GetComponent<ArticulationBody>();
+        Vector3 anchor1 = mount.transform.TransformPoint(mount.anchorPosition);
+        Assert(Vector3.Distance(anchor1, axle1) < 0.2f,
+            $"after rebuild the pivot must follow the moved axle — it sits {Vector3.Distance(anchor1, axle1):F2}u " +
+            "off it, so a stale marker pinned it and moving the axle did nothing (the reported bug)");
+        Assert(Vector3.Distance(anchor1, axle0) > 1f,
+            "the pivot must have LEFT the old axle spot — it's still pinned there");
+
+        return $"Rebuild follows the axle: PASSED — moving the axle {Vector3.Distance(axle0, axle1):F0}u and " +
+               $"rebuilding carried the pivot with it (now {Vector3.Distance(anchor1, axle1):F2}u off the axle, " +
+               $"{Vector3.Distance(anchor1, axle0):F0}u from where it started).";
+    }
+
+    // Ramp/settle the arm while stepping BOTH the mount and wrist couplers (the level test's single-coupler
+    // helpers don't drive the wrist).
+    private static void RampBoth(ArmFixture f, float fromDeg, float toDeg)
+    {
+        float step = toDeg >= fromDeg ? 1.5f : -1.5f;
+        for (float a = fromDeg; step > 0 ? a < toDeg : a > toDeg; a += step)
+        {
+            DriveArmTo(f.armBody, a);
+            for (int s = 0; s < 4; s++) { f.coupler.ApplyStep(); f.wristCoupler.ApplyStep(); Physics.Simulate(0.01f); }
+        }
+    }
+
+    private static void SettleBoth(ArmFixture f, float targetDeg, int steps)
+    {
+        DriveArmTo(f.armBody, targetDeg);
+        for (int s = 0; s < steps; s++) { f.coupler.ApplyStep(); f.wristCoupler.ApplyStep(); Physics.Simulate(0.01f); }
+    }
+
+    private class ArmFixture
+    {
+        public RobotMechanisms registry;
+        public GameObject arm, mount, flip, jawA, jawB, wrist, axle;
+        public ArticulationBody armBody, mountBody, wristBody;
+        public JointCoupler coupler, wristCoupler;
+        public ClawSetup.Options options;   // the exact options used, so a test can rebuild like the window
+    }
+
+    // Builds the swing-arm + claw fixture the level-keeper tests share: a robot tilted off every world
+    // axis (so a frame/sign slip can't hide), a bounded-revolute arm on the wheels' lateral line, and a
+    // claw whose mount counter-rotates the arm. `flipPastMidpoint` turns on the extra 180.
+    private static ArmFixture MakeSwingArmClaw(string name, bool flipPastMidpoint, bool withWrist = false,
+        bool withAxle = false, bool forceLevelPivotAtRootCentre = false, bool axleUnderMount = false)
+    {
+        GameObject root = new GameObject(name);
+        RobotMechanisms registry = root.AddComponent<RobotMechanisms>();
+        registry.robotId = TestRobotId;
+        ArticulationBody chassis = root.AddComponent<ArticulationBody>();
+        chassis.immovable = true;
+        MakeBox(root.transform, "ChassisMesh", Vector3.zero, new Vector3(6f, 1f, 6f));
+        RobotMotorController mc = root.AddComponent<RobotMotorController>();
+        mc.leftWheels = new[] { MakeWheel(root.transform, "WheelL", new Vector3(0f, 0f, -3f)) };
+        mc.rightWheels = new[] { MakeWheel(root.transform, "WheelR", new Vector3(0f, 0f, 3f)) };
+
+        // The arm hinges about the lateral line (front-to-back swing); the claw hangs off it, every part
+        // OFFSET from the hinge so it rides an arc rather than spinning in place.
+        GameObject arm = MakeBox(root.transform, "SwingArm", new Vector3(6f, 3f, 0f), new Vector3(1f, 1f, 5f));
+        GameObject mount = MakeBox(root.transform, "ClawMount", new Vector3(8f, 3f, 0f), new Vector3(1.5f, 1.5f, 1.5f));
+        GameObject flip = MakeBox(root.transform, "ClawFlipAssembly", new Vector3(9f, 3f, 0f), new Vector3(2f, 1f, 3f));
+        GameObject jawA = MakeBox(root.transform, "ClawJawLeft", new Vector3(10f, 3f, -1.2f), new Vector3(2f, 0.6f, 0.4f));
+        GameObject jawB = MakeBox(root.transform, "ClawJawRight", new Vector3(10f, 3f, 1.2f), new Vector3(2f, 0.6f, 0.4f));
+        // A wrist between the mount and the claw, for the yaw test — the flip rides this (a yaw about
+        // vertical) instead of the mount (a pitch).
+        GameObject wrist = withWrist
+            ? MakeBox(root.transform, "ClawWrist", new Vector3(8.6f, 3f, 0f), new Vector3(1f, 1f, 1f)) : null;
+        // An axle/standoff at the end of the arm that the claw pivots on, for the explicit-axle path. A
+        // thin shaft along the lateral (Z) line — parallel to the arm's hinge — so 'From the axle' and
+        // 'Match the arm' agree. It sits ~1u off the claw's centre AND far from the robot's origin, so a
+        // pivot that lands on it is distinguishable from both the claw middle and the robot-centre bug.
+        GameObject axle = withAxle
+            ? MakeBox(root.transform, "ClawAxle", new Vector3(8.5f, 3f, 0f), new Vector3(0.3f, 0.3f, 2.2f))
+            : null;
+
+        // Draw the CAD the way a real one comes in: the mount NESTED INSIDE the flip assembly. The build
+        // has to pull the mount back out to a direct child of the arm — leaving it nested makes the
+        // level-keeper a leaf that flips alone while the claw stays rigid to the arm (the reported bug
+        // this fixture reproduces). (Only the mount is nested; the jaws stay siblings so their mass isn't
+        // folded into the flip body before they split off.)
+        mount.transform.SetParent(flip.transform, worldPositionStays: true);
+
+        root.transform.rotation = Quaternion.Euler(17f, 40f, 13f);
+
+        Vector3 lateralWorld = (Centroid(mc.rightWheels) - Centroid(mc.leftWheels)).normalized;
+        Vector3 armAxisLocal = arm.transform.InverseTransformDirection(lateralWorld);
+        AddMechanismJoint.Apply(arm, AddMechanismJoint.JointType.Revolute, armAxisLocal, Vector3.zero,
+            0f, 180f, new AddMechanismJoint.Options { actuation = AddMechanismJoint.Actuation.HoldToRun }, false);
+        ArticulationBody armBody = arm.GetComponent<ArticulationBody>();
+        Assert(armBody != null && armBody.jointType == ArticulationJointType.RevoluteJoint,
+            "the fixture's swing arm should have become a revolute joint");
+
+        // Hang the flip assembly (mount nested inside it) off the ARM, reproducing the reported setup
+        // EXACTLY: the mount is now a DESCENDANT of the arm, so a guard that only asks "is it under the
+        // arm?" thinks it's already placed and skips pulling it out — which is the bug. Done AFTER the
+        // arm joint is built, so the flip's mass isn't welded into the arm body.
+        flip.transform.SetParent(arm.transform, worldPositionStays: true);
+
+        // Where the axle STARTS. Normally on the arm's end (rides the arm). `axleUnderMount` instead nests
+        // it on the counter-rotating mount — the reported "drifts above the arm" setup — so the build's
+        // weld-to-arm has something to pull it out of. Parented AFTER the arm joint either way so its mesh
+        // isn't welded into the arm body's mass.
+        if (axle != null)
+            axle.transform.SetParent(axleUnderMount ? mount.transform : arm.transform, worldPositionStays: true);
+
+        // For the mutation: a pivot forced onto the robot's centre (the reported bug), overriding the axle.
+        Transform forcedPivot = null;
+        if (forceLevelPivotAtRootCentre)
+        {
+            GameObject piv = new GameObject("ForcedRootCentrePivot");
+            piv.transform.SetParent(root.transform, worldPositionStays: true);
+            piv.transform.position = root.transform.position;
+            forcedPivot = piv.transform;
+        }
+
+        ClawSetup.Options o = new ClawSetup.Options
+        {
+            displayName = "Arm Claw",
+            flippingParts = new List<GameObject> { flip },
+            flipAngleDeg = FlipAngle,
+            flipAxisPreset = ClawRig.HingeAxis.Auto,
+            flipCustomAxis = Vector3.right,
+            flipStiffness = 20000f, flipDamping = 500f, flipTravelSeconds = FlipSeconds,
+            flipStrokeMm = 90f, flipRecoil = 0.5f,
+            clampSections = new List<ClawRig.ClampSection>
+            {
+                Section(jawA, CloseAngle, false),
+                Section(jawB, CloseAngle, true),
+            },
+            clampStiffness = 20000f, clampDamping = 500f,
+            clampStrokeMm = ClampStrokeMm, clampRecoil = 0.5f,
+            clampModelled = ClawRig.JawRest.ModelledOpen,
+            enableGrab = false,
+            autoAssignButtons = true,
+            levelParts = new List<GameObject> { mount },
+            armDriver = arm,
+            levelAxle = axle,
+            levelPivot = forcedPivot,
+            levelAxisPreset = ClawRig.HingeAxis.MatchArm,
+            levelCustomAxis = Vector3.right,
+            levelRatio = -1f,
+            levelSweepDeg = 200f,
+            levelStiffness = 20000f, levelDamping = 500f,
+            levelFlipPastMidpoint = flipPastMidpoint || withWrist,   // a wrist needs the flip on to yaw
+            levelFlipDegrees = 180f,
+            levelFlipFraction = 0.5f,
+            levelFlipSeconds = 0.15f,
+            yawWristParts = wrist != null ? new List<GameObject> { wrist } : null,
+        };
+        ClawSetup.Build(o, useUndo: false);
+
+        // Edit-mode Physics.Simulate never runs IgnoreRobotSelfCollision.Awake, so the claw's boxes would
+        // collide with the chassis at some sweep angles and stall the leveling drive — a test artifact,
+        // not real behaviour (in Play the claw ignores the robot). Disable colliders so these tests
+        // measure the DRIVE alone.
+        foreach (Collider c in registry.GetComponentsInChildren<Collider>(true)) c.enabled = false;
+
+        return new ArmFixture
+        {
+            registry = registry, arm = arm, mount = mount, flip = flip, jawA = jawA, jawB = jawB,
+            wrist = wrist, axle = axle, options = o,
+            armBody = armBody, mountBody = mount.GetComponent<ArticulationBody>(),
+            coupler = mount.GetComponent<JointCoupler>(),
+            wristBody = wrist != null ? wrist.GetComponent<ArticulationBody>() : null,
+            wristCoupler = wrist != null ? wrist.GetComponent<JointCoupler>() : null,
+        };
+    }
+
+    // Ramp the arm smoothly from one angle to another, stepping the coupler each step — a slam rings the
+    // coupled drives, so the motion is walked in as a real motor would drive it.
+    private static void RampArm(ArticulationBody arm, JointCoupler coupler, float fromDeg, float toDeg)
+    {
+        float step = toDeg >= fromDeg ? 1.5f : -1.5f;
+        for (float a = fromDeg; step > 0 ? a < toDeg : a > toDeg; a += step)
+        {
+            DriveArmTo(arm, a);
+            for (int s = 0; s < 4; s++) { coupler.ApplyStep(); Physics.Simulate(0.01f); }
+        }
+    }
+
+    // Ramp the arm to `targetDeg` and hold it there for `steps`, stepping the coupler each step so the
+    // mount tracks — the edit-mode stand-in for a motor driving the arm while FixedUpdate is asleep.
+    private static void SettleArm(ArticulationBody arm, JointCoupler coupler, float targetDeg, int steps)
+    {
+        DriveArmTo(arm, targetDeg);
+        for (int s = 0; s < steps; s++) { coupler.ApplyStep(); Physics.Simulate(0.01f); }
+    }
+
+    // Drive the arm joint to a fixed angle with a position target, overriding its velocity motor for a
+    // clean edit-mode sweep (the motor's FixedUpdate never runs here anyway). Stiffness is kept in the
+    // jaws' proven range, not cranked — two coupled stiff drives ring at this timestep. targetVelocity
+    // is cleared deliberately: the HoldToRun motor leaves one behind, and a position drive's
+    // damping*(targetVelocity - v) term would otherwise shove the arm clean past its target.
+    private static void DriveArmTo(ArticulationBody arm, float targetDeg)
+    {
+        ArticulationDrive d = arm.xDrive;
+        d.driveType = ArticulationDriveType.Target;
+        d.stiffness = 30000f;
+        d.damping = 3000f;
+        d.forceLimit = float.MaxValue;
+        d.target = targetDeg;
+        d.targetVelocity = 0f;
+        arm.xDrive = d;
+    }
+
+    private static Vector3 Centroid(ArticulationBody[] bodies)
+    {
+        Vector3 sum = Vector3.zero;
+        int n = 0;
+        foreach (ArticulationBody b in bodies) if (b != null) { sum += b.transform.position; n++; }
+        return n > 0 ? sum / n : Vector3.zero;
     }
 
     // --- Motion: the halves must actually close ON each other, not sweep the same way --------------

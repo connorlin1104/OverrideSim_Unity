@@ -58,6 +58,15 @@ public class ClawRig : MonoBehaviour
         [InspectorName("Scene Z — the BLUE arrow")]
         [Tooltip("Turns about the scene's Z axis, whichever way the robot happens to be facing.")]
         WorldZ = 8,
+        [InspectorName("Match the arm (recommended)")]
+        [Tooltip("Level-keeper only: turn about the SAME line the rotating arm turns about, so the " +
+                 "counter-rotation exactly cancels the arm's. Read straight off the arm's own joint.")]
+        MatchArm = 9,
+        [InspectorName("The Pivot axle's own shaft (level-keeper)")]
+        [Tooltip("Level-keeper only: turn about the shaft dropped in the 'Pivot axle' slot — its long " +
+                 "axis, read straight off the mesh. Use only when that axle isn't mounted parallel to the " +
+                 "arm; otherwise Match the arm is the exact-cancel choice.")]
+        FromAxle = 10,
     }
 
     // Which way round the CAD was drawn. A joint's rest pose is wherever the modeller left the part,
@@ -95,6 +104,64 @@ public class ClawRig : MonoBehaviour
 
     [Tooltip("Shown on the Configure Controller screen, suffixed with Flip / Clamp.")]
     public string displayName = "Claw";
+
+    // A claw hung off a rotating arm (a turret that swings it front-to-back) tumbles with the arm: an
+    // articulation parent turns its whole subtree, so a 180 swing lands the claw upside down. The fix
+    // is a link BETWEEN the arm and the claw that counter-rotates the arm exactly — arm +θ, this -θ,
+    // claw net 0 — so the claw rides the arc but keeps one orientation. It's a real revolute joint
+    // slaved to the arm through a JointCoupler in Position mode at ratio -1 (the DR4B tray's trick, and
+    // the mirrored jaw's), NOT an actuator: nothing on a button, it just tracks the arm. Optional and
+    // independent of flip/clamp; the flip link (or the jaws, on a flipless claw) become its children so
+    // the whole claw rides it.
+    [Header("Rides a rotating arm (stays level)")]
+    [Tooltip("The claw's MOUNT — the bracket the claw hangs off at the end of the arm. It travels with " +
+             "the arm but counter-rotates so the claw stays level. Empty = the claw is bolted straight " +
+             "to the arm and turns with it. The flip/jaws are reparented under this, so don't list them.")]
+    public List<GameObject> levelParts = new List<GameObject>();
+    [Tooltip("The rotating arm this mount rides — the part you turned into a spinning joint with Build " +
+             "Chain. Build that FIRST; the mount reads its axis and slaves to its motion.")]
+    public GameObject armDriver;
+    [Tooltip("The AXLE the claw pivots on at the end of the arm — the shaft the mount turns about. Its " +
+             "centre becomes the rotation point, so the claw turns THERE and stays put at the arm's end " +
+             "instead of swinging on a huge arc about the robot's middle (the reported bug). Empty = the " +
+             "pivot falls back to the claw's own centre, seeded from the jaws.")]
+    public GameObject levelAxle;
+    [Tooltip("The POINT the mount counter-rotates about — usually where it bolts to the end of the arm. " +
+             "Only the axis (below) has to match the arm; the point can sit anywhere along that line. " +
+             "Left empty, the Pivot axle (or the claw's centre) seeds it.")]
+    public Transform levelPivot;
+    public HingeAxis levelAxisPreset = HingeAxis.MatchArm;
+    public Vector3 levelCustomAxis = Vector3.right;
+    [Tooltip("Mount angle : arm angle. -1 keeps the claw dead level (equal and opposite). Between -1 " +
+             "and 0 lets it lean part way with the arm; positive would DOUBLE the tumble — don't.")]
+    public float levelRatio = -1f;
+    [Tooltip("How far each way the mount is allowed to counter-rotate, in degrees. Must cover the arm's " +
+             "full swing or the claw stops staying level past that point. 180 suits a front-to-back arm.")]
+    public float levelSweepDeg = 180f;
+    public float levelStiffness = 20000f;
+    public float levelDamping = 500f;
+    [Tooltip("Once the arm swings past the midpoint of its travel, snap the claw an extra 180 so it faces " +
+             "the OTHER way on the back half of the arc — on top of the leveling. Off = the claw keeps " +
+             "one orientation the whole way.")]
+    public bool levelFlipPastMidpoint;
+    [Tooltip("How far the midpoint flip turns the claw, in degrees.")]
+    public float levelFlipDegrees = 180f;
+    [Tooltip("Where in the arm's swing the flip fires, as a fraction from rest to the far end. 0.5 = halfway.")]
+    [Range(0.05f, 0.95f)] public float levelFlipFraction = 0.5f;
+    [Tooltip("Seconds the flip takes once it fires — the 'quick' part.")]
+    public float levelFlipSeconds = 0.3f;
+    [Tooltip("The part that YAWS the claw to face the other way at the midpoint — a wrist between the " +
+             "mount and the claw. With this set, the midpoint flip turns about the robot's UP axis (a " +
+             "yaw: claw stays level, just faces the opposite way) instead of tipping the whole claw over " +
+             "on the leveling joint. Empty = the flip tips the claw over (a pitch) on the mount.")]
+    public List<GameObject> yawWristParts = new List<GameObject>();
+    [Tooltip("The POINT the wrist yaws about — usually the middle of the claw, so it spins in place. " +
+             "Empty = the build drops a marker on the claw's centre.")]
+    public Transform yawWristPivot;
+    [Tooltip("Set at build: the link the counter-rotation joint ended up on.")]
+    public GameObject builtLevelLink;
+    [Tooltip("Set at build: the link the yaw-wrist joint ended up on.")]
+    public GameObject builtYawWristLink;
 
     [Header("Flip")]
     [Tooltip("What the claw hangs off — its mount, or the group the claw sits in. The jaws are NOT " +
