@@ -52,3 +52,6 @@ MonoBehaviour:
     - id: claw-polycarb-left-side-claw-v1-1
       displayName: PlasticClaw Clamp
       type: pneumatic
+    - id: cascademotor
+      displayName: Cascade
+      type: motor

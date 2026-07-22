@@ -640,14 +640,7 @@ public static class AddMechanismJoint
         // Re-derive the parent-side anchor from the actual (already-scaled) transforms with
         // matchAnchors off — the same fix the post-processor's scale bake uses, or PhysX snaps the
         // link back on the first Simulate().
-        body.matchAnchors = false;
-        ArticulationBody parentBody = FindParentBody(body);
-        if (parentBody != null)
-        {
-            Transform p = parentBody.transform, c = body.transform;
-            body.parentAnchorPosition = p.InverseTransformPoint(c.TransformPoint(body.anchorPosition));
-            body.parentAnchorRotation = Quaternion.Inverse(p.rotation) * (c.rotation * body.anchorRotation);
-        }
+        MechanismBuildUtil.RederiveParentAnchors(body);
 
         // Travel limits (degrees for revolute, scaled units for prismatic; set BEFORE WireMechanism
         // because the pneumatic reads these as its endpoints).
@@ -662,11 +655,8 @@ public static class AddMechanismJoint
         return body;
     }
 
-    // Nearest ancestor ArticulationBody — the parent link this joint connects to.
-    private static ArticulationBody FindParentBody(ArticulationBody body) => FindParentBodyOf(body.transform);
-
-    // Nearest ArticulationBody strictly above a transform. Used before the split link has its own
-    // body, to confirm there's a rigged chassis to joint it to.
+    // Nearest ArticulationBody strictly above a transform — the parent link a joint connects to.
+    // Used before the split link has its own body, to confirm there's a rigged chassis to joint it to.
     private static ArticulationBody FindParentBodyOf(Transform t)
     {
         for (Transform p = t.parent; p != null; p = p.parent)

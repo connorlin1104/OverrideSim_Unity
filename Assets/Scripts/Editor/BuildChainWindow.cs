@@ -672,9 +672,17 @@ public static class ChainBuilder
     // centerline by construction — and the anchor matters even for a free-spinning joint, since it's
     // the point the axis runs through (get it wrong and the part orbits instead of spinning in place).
     public static bool TryAxleWorldAxis(GameObject axle, out Vector3 worldAxis, out Vector3 worldCenter)
+        => TryAxleWorldAxis(axle, out worldAxis, out worldCenter, out _);
+
+    // Same reading, plus how LONG that longest mesh is along the axis (world units). The cascade
+    // builder measures a C-channel this way: the channel's length is what says how far the stage above
+    // it can slide before it runs out of channel.
+    public static bool TryAxleWorldAxis(GameObject axle, out Vector3 worldAxis, out Vector3 worldCenter,
+        out float worldLength)
     {
         worldAxis = Vector3.right;
         worldCenter = Vector3.zero;
+        worldLength = 0f;
         if (axle == null) return false;
 
         MeshFilter best = null;
@@ -699,6 +707,7 @@ public static class ChainBuilder
         Vector3 localAxis = worldSize.x >= worldSize.y && worldSize.x >= worldSize.z ? Vector3.right
             : worldSize.y >= worldSize.z ? Vector3.up : Vector3.forward;
         worldAxis = (best.transform.rotation * localAxis).normalized;
+        worldLength = bestLength;
 
         Renderer renderer = best.GetComponent<Renderer>();
         worldCenter = renderer != null

@@ -104,6 +104,26 @@ internal static class MechanismBuildUtil
         if (n > 0) ControllerMapSettings.Save(robotId, map);
     }
 
+    // Re-derive a joint's PARENT-side anchor from the live (already-scaled) transforms, with
+    // matchAnchors off. PhysX stores the joint frame on BOTH sides, so this is needed whenever the
+    // link's own anchor is set or the link CHANGES PARENT — a stale parent anchor snaps the link back
+    // to where its old parent held it on the first Simulate(). Shared by
+    // AddMechanismJoint.ConfigureJointLink (fresh anchor) and the cascade builder (which reparents an
+    // already-jointed arm under a lift stage). No-op for a root or a link with no body above it.
+    public static void RederiveParentAnchors(ArticulationBody body)
+    {
+        if (body == null || body.isRoot) return;
+        body.matchAnchors = false;   // cleared whether or not a parent is found, as the inline code did
+        ArticulationBody parent = null;
+        for (Transform p = body.transform.parent; p != null && parent == null; p = p.parent)
+            parent = p.GetComponent<ArticulationBody>();
+        if (parent == null) return;
+
+        Transform pt = parent.transform, ct = body.transform;
+        body.parentAnchorPosition = pt.InverseTransformPoint(ct.TransformPoint(body.anchorPosition));
+        body.parentAnchorRotation = Quaternion.Inverse(pt.rotation) * (ct.rotation * body.anchorRotation);
+    }
+
     // --- Geometry ---------------------------------------------------------------------------------
     // Bounds are RENDERER-based (the visual), not transform origins: CAD parts routinely have their
     // pivot far off the mesh, which is what made early rigs place pivots and cylinder ends in midair.
