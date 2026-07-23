@@ -147,9 +147,20 @@ public static class FieldFeatureSmokeTest
         {
             if (axisError > MaxSeatedAxisError)
                 failures.Add($"magnet hit: seated '{cup.name}' is {axisError:0.###}u off the stack axis (max {MaxSeatedAxisError})");
-            float uprightDot = UprightDot(cup, up);
-            if (uprightDot < MinUprightDot)
-                failures.Add($"magnet hit: seated '{cup.name}' is tilted (upright dot {uprightDot:0.###} < {MinUprightDot})");
+            if (magnet.keepDroppedOrientation)
+            {
+                // New default: the magnet keeps the piece's dropped attitude rather than standing it
+                // upright, so don't assert upright — assert it is HELD STEADY (not tumbling) instead.
+                float spin = cup.angularVelocity.magnitude;
+                if (spin > MaxDetentRestSpeed)
+                    failures.Add($"magnet hit: seated '{cup.name}' is still spinning ({spin:0.##} rad/s > {MaxDetentRestSpeed}) — the hold should freeze its dropped attitude");
+            }
+            else
+            {
+                float uprightDot = UprightDot(cup, up);
+                if (uprightDot < MinUprightDot)
+                    failures.Add($"magnet hit: seated '{cup.name}' is tilted (upright dot {uprightDot:0.###} < {MinUprightDot})");
+            }
 
             // Casual bump: a sideways shove within the magnet's strength must self-correct.
             cup.linearVelocity += lateral * 2f;

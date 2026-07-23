@@ -14,7 +14,9 @@ using UnityEngine;
 // can't, which is what sent robots skidding and cartwheeling. Anything grabbed after the first keeps
 // its arrangement RELATIVE to it, so a cup sitting on a pin still lands pin-on-top through a 180°
 // flip. Because the hold point is a child of the flipping link, the flip carries them with zero extra
-// bookkeeping.
+// bookkeeping. One guard on that: held pieces ghost through each other, and standing the first one up
+// can sweep its mesh through a piece grabbed a moment later — so two coaxial pieces are forced at least
+// their combined heights apart along the stack axis (stackClearance), not frozen inside each other.
 //
 // What sits ON the hold point is the stack's COMBINED centre of mass, not the first piece's. Which
 // piece the claw catches first is arbitrary, and hanging the others off it left the stack lopsided
@@ -74,6 +76,11 @@ public class ClawGrab : MonoBehaviour
              "only ignores the claw itself and stays solid to the field.")]
     public bool passThroughWhileHeld = true;
 
+    [Tooltip("Least gap two held pieces are forced apart along the stack axis, so a cup and a pin can't " +
+             "end up frozen inside each other. Added on top of the two pieces' own measured heights; " +
+             "world units (1 = 100 mm).")]
+    public float stackClearance = 0.1f;
+
     [Tooltip("How fast a grabbed piece slides into the hold point, in world units per second " +
              "(1 unit = 100 mm). 0 pins it where it was caught.")]
     public float snapSpeed = 20f;
@@ -113,6 +120,9 @@ public class ClawGrab : MonoBehaviour
         public Quaternion holdRot;       // the attitude it rides at, relative to the hold point
         public Vector3 relPos;           // for pieces after the first: pose relative to that piece,
         public Quaternion relRot;        //   so a cup sitting on a pin stays sitting on it
+        public Vector3 longAxisLocal;    // the piece's long axis in its own frame — the stack axis
+        public float halfExtent;         // half its size along that long axis (world units)
+        public float radius;             // half its widest cross-section (world units)
         public bool wasKinematic;
         public bool wasDetectCollisions;
         public RigidbodyInterpolation wasInterpolation;
@@ -390,6 +400,8 @@ public class ClawGrab : MonoBehaviour
 
         Transform hold = HoldTf;
         Vector3 longAxis = autoUpright ? ComputeUpAxis(rb) : Vector3.zero;
+        Vector3 stackAxis = ComputeUpAxis(rb); // measured regardless of auto-upright, for stack spacing
+        MeasurePieceSize(rb, out float pieceHalfExtent, out float pieceRadius);
         Held h = new Held
         {
             rb = rb,
@@ -399,6 +411,9 @@ public class ClawGrab : MonoBehaviour
             localCom = rb.centerOfMass,
             // Where it will ride, decided once and for all here.
             holdRot = CarriedHoldLocalRotation(rb.rotation, longAxis),
+            longAxisLocal = stackAxis,
+            halfExtent = pieceHalfExtent,
+            radius = pieceRadius,
             wasKinematic = rb.isKinematic,
             wasDetectCollisions = rb.detectCollisions,
             wasInterpolation = rb.interpolation,
@@ -414,6 +429,26 @@ public class ClawGrab : MonoBehaviour
                 ? first.CenterOf(first.rb.position, first.rb.rotation) : hold.position;
             h.relRot = firstInv * rb.rotation;
             h.relPos = firstInv * (h.CenterOf(rb.position, rb.rotation) - firstCenter);
+
+            // Don't let the two be frozen INSIDE each other. Held pieces ghost through each other, and
+            // standing the first piece up can sweep its mesh through a piece grabbed a moment later — so
+            // the caught arrangement can already be interpenetrating. If their centres are within a
+            // piece-width of the stack axis (they're meant to stack, not sit side by side) push them at
+            // least their combined half-heights apart ALONG that axis, so a cup lands cleanly on a pin.
+            // relPos is in the first piece's body frame; so is its longAxisLocal — the same frame.
+            Vector3 axis = first.longAxisLocal;
+            if (axis.sqrMagnitude > 1e-6f)
+            {
+                axis = axis.normalized;
+                float along = Vector3.Dot(h.relPos, axis);
+                Vector3 perp = h.relPos - axis * along;
+                float minSep = first.halfExtent + h.halfExtent + Mathf.Max(0f, stackClearance);
+                if (perp.magnitude < first.radius + h.radius && Mathf.Abs(along) < minSep)
+                {
+                    float sign = along >= 0f ? 1f : -1f; // keep whichever end was caught uppermost, on top
+                    h.relPos = perp + axis * (sign * minSep);
+                }
+            }
         }
 
         rb.isKinematic = true;
@@ -618,5 +653,25 @@ public class ClawGrab : MonoBehaviour
         else return Vector3.zero;
 
         return (Quaternion.Inverse(rb.rotation) * (meshTf.rotation * axisMeshLocal)).normalized;
+    }
+
+    // Half the piece's size along its long axis (halfExtent) and half its widest cross-section (radius),
+    // from the mesh bounds in world units — enough to space two carried pieces so they don't overlap.
+    // Long axis = longest bounds dimension (matching ComputeUpAxis's default pick); radius = half the
+    // middle dimension (the widest one perpendicular to it).
+    private void MeasurePieceSize(Rigidbody rb, out float halfExtent, out float radius)
+    {
+        halfExtent = 0f;
+        radius = 0f;
+        MeshFilter mf = rb.GetComponentInChildren<MeshFilter>();
+        Mesh mesh = mf != null ? mf.sharedMesh : null;
+        if (mesh == null) return;
+        Vector3 size = Vector3.Scale(mesh.bounds.size, mf.transform.lossyScale);
+        float x = Mathf.Abs(size.x), y = Mathf.Abs(size.y), z = Mathf.Abs(size.z);
+        float longest = Mathf.Max(x, Mathf.Max(y, z));
+        float shortest = Mathf.Min(x, Mathf.Min(y, z));
+        float middle = x + y + z - longest - shortest; // the second-largest dimension
+        halfExtent = 0.5f * longest;
+        radius = 0.5f * middle;
     }
 }
