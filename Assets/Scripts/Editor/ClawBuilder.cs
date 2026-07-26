@@ -766,6 +766,15 @@ public class ClawBuilderWindow : EditorWindow
                                 "claw's centre if none)."),
                                 yawWristPivot, typeof(Transform), true);
                     }
+                // The separate turn link lives inside the block above, so with the flip off it's out of
+                // reach — say what became of one left over from an earlier build rather than leaving the
+                // user to wonder (it used to be a hard build error with no way to clear it).
+                else if (CountNonNull(yawWristParts) > 0)
+                    EditorGUILayout.HelpBox(
+                        $"'{ClawSetup.FirstNonNull(yawWristParts).name}' is still listed as the flip's " +
+                        "separate turn link. With the flip off it has nothing to turn, so building " +
+                        "releases it back to plain geometry and the claw holds one orientation the " +
+                        "whole arc.", MessageType.Info);
             }
         }
     }
@@ -1306,6 +1315,18 @@ public static class ClawSetup
         // --- Level-keeper: a claw on a rotating arm counter-rotates so it stays level -------------
         GameObject levelLink = FirstNonNull(o.levelParts);
         ArticulationBody armBody = ResolveArmDriver(o.armDriver);
+
+        // Turning the flip OFF releases the wrist. The wrist exists only to carry the midpoint flip, and
+        // the form hides its bucket when the flip is off — so a wrist left over from an earlier build is
+        // unreachable, and refusing to build until it was cleared left no way to turn the flip off at all.
+        // Dropping it from the options here instead means the stale-link sweep below strips its joint back
+        // to plain geometry and the claw hangs straight off the mount, holding one orientation everywhere.
+        // A FRESH list, never the caller's own — the window hands over its live field.
+        if (!o.levelFlipPastMidpoint)
+        {
+            o.yawWristParts = new List<GameObject>();
+            o.yawWristPivot = null;
+        }
         ValidateLevelKeeper(o, levelLink, armBody, flipRoot, sections);
 
         int group = 0;
@@ -1731,7 +1752,13 @@ public static class ClawSetup
         if (previous.builtLevelLink != null && !keep.Contains(previous.builtLevelLink))
             StripLink(registry, previous.builtLevelLink, useUndo);
         if (previous.builtYawWristLink != null && !keep.Contains(previous.builtYawWristLink))
+        {
             StripLink(registry, previous.builtYawWristLink, useUndo);
+            // ...and the marker the build dropped on it, or a "released" part isn't plain geometry again.
+            // Name-checked so a pivot the USER supplied is left alone.
+            if (previous.yawWristPivot != null && previous.yawWristPivot.name == YawWristPivotName)
+                MechanismBuildUtil.DestroyGo(previous.yawWristPivot, useUndo);
+        }
 
         // Cylinder parts dropped from the form must give their colliders back.
         foreach (GameObject part in new[] { previous.flipCylinderBody, previous.flipCylinderRod,
@@ -1931,14 +1958,11 @@ public static class ClawSetup
         }
 
         // The yaw wrist, if named, is its own link between the mount and the claw — it can't double as
-        // the mount, the flip, a jaw, or the arm, and it only does anything with the midpoint flip on.
+        // the mount, the flip, a jaw, or the arm. With the flip off Build has already cleared it (it has
+        // nothing to turn), so this only ever sees a wrist that's genuinely in play.
         GameObject wrist = FirstNonNull(o.yawWristParts);
         if (wrist != null)
         {
-            if (!o.levelFlipPastMidpoint)
-                throw new InvalidOperationException(
-                    "A yaw wrist was named but 'Flip past the midpoint' is off, so it would never turn. " +
-                    "Tick the flip, or clear the wrist.");
             if (wrist == levelLink)
                 throw new InvalidOperationException(
                     $"'{wrist.name}' is named as both the mount and the yaw wrist. The mount levels; the " +

@@ -93,6 +93,9 @@ public static class ClawBuilderValidation
             string yaw = LevelKeeperYawsWithWrist();
 
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            string wristOff = FlipOffReleasesTheWrist();
+
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             string axle = LevelKeeperRidesTheAxle();
 
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -104,8 +107,9 @@ public static class ClawBuilderValidation
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             string rejects = RejectionsHold();
             return structure + "\n\n" + motion + "\n\n" + trim + "\n\n" + flip + "\n\n" + carry
-                   + "\n\n" + axes + "\n\n" + level + "\n\n" + levelFlip + "\n\n" + yaw + "\n\n" + axle
-                   + "\n\n" + roll + "\n\n" + rebuild + "\n\n" + rejects;
+                   + "\n\n" + axes + "\n\n" + level + "\n\n" + levelFlip + "\n\n" + yaw
+                   + "\n\n" + wristOff + "\n\n" + axle + "\n\n" + roll + "\n\n" + rebuild
+                   + "\n\n" + rejects;
         }
         finally
         {
@@ -842,6 +846,91 @@ public static class ClawBuilderValidation
         return $"Yaw wrist: PASSED — past the midpoint the claw turned {fromStart:F0} degrees to face the " +
                $"other way while its up held to {upTilt:F0} degrees (level, a yaw); the no-wrist pitch " +
                $"tipped the up {pitchUpTilt:F0} degrees, so the check bites.";
+    }
+
+    // --- Turning the flip OFF must actually turn it off (2026-07-26 regression) ----------------------
+    // The separate-turn-link bucket only shows while the flip is ticked, so once a claw had been built
+    // with one, unticking the flip hid the wrist AND made the build refuse ("a yaw wrist was named but
+    // the flip is off") — a dead end: the user couldn't clear what they couldn't see. Now the flip going
+    // off RELEASES the wrist. This drives the user's exact path: build with a wrist, untick, rebuild —
+    // and the claw must hold ONE orientation the whole arc, which is what they asked for.
+    private static string FlipOffReleasesTheWrist()
+    {
+        ArmFixture f = MakeSwingArmClaw("WristOffBot", flipPastMidpoint: true, withWrist: true, withAxle: true);
+        // Precondition: the wrist really was a live joint, so what follows is a removal and not a build
+        // that never made one (which would pass every assertion below for free).
+        Assert(f.wristBody != null && f.wristCoupler != null,
+            "the first build should have made the wrist a joint with a coupler");
+        Transform wristMarker = FindChildNamed(f.wrist.transform, "ClawYawWristPivot");
+        Assert(wristMarker != null, "the first build should have dropped a wrist pivot marker");
+
+        // Untick the flip and rebuild with the wrist STILL listed — exactly what the window sends.
+        ClawSetup.Options o = f.options;
+        o.levelFlipPastMidpoint = false;
+        ClawSetup.Build(o, useUndo: false);   // must not throw — that refusal was the reported bug
+
+        Assert(f.wrist.GetComponent<ArticulationBody>() == null,
+            "the wrist kept its joint after the flip was turned off — it must be released back to plain " +
+            "geometry, or it stays a link with nothing driving it");
+        Assert(f.wrist.GetComponent<JointCoupler>() == null,
+            "the wrist kept its coupler — a leftover coupler would still turn it at the midpoint");
+        Assert(wristMarker == null, "the released wrist kept its pivot marker");
+
+        ArticulationBody mountBody = f.mount.GetComponent<ArticulationBody>();
+        JointCoupler coupler = f.mount.GetComponent<JointCoupler>();   // rebuilt, so the old ref is dead
+        Assert(mountBody != null && coupler != null, "the mount must still be the level-keeper joint");
+        Assert(!coupler.flipPastMidpoint,
+            "the mount picked the flip up instead — turning the flip off must leave NOTHING flipping");
+        Assert(f.flip.transform.IsChildOf(f.mount.transform),
+            "the claw must still ride the mount, or it stops being kept level at all");
+
+        // Behaviour: sweep across the midpoint (fraction 0.5 of the arm's 0..180 = 90 degrees) and the
+        // claw must hold the orientation it had before it.
+        foreach (Collider c in f.registry.GetComponentsInChildren<Collider>(true)) c.enabled = false;
+        Physics.gravity = Vector3.zero;
+        Physics.simulationMode = SimulationMode.Script;
+
+        RampArm(f.armBody, coupler, 0f, 80f);
+        SettleArm(f.armBody, coupler, 80f, 300);
+        Quaternion beforeMid = f.flip.transform.rotation;
+        Vector3 clawBeforeMid = f.flip.transform.position;
+        RampArm(f.armBody, coupler, 80f, 160f);
+        SettleArm(f.armBody, coupler, 160f, 400);
+        float turned = Quaternion.Angle(f.flip.transform.rotation, beforeMid);
+        float rode = Vector3.Distance(f.flip.transform.position, clawBeforeMid);
+        Assert(rode > 1f,
+            $"the claw moved only {rode:F2} units across the midpoint, so it isn't riding the arm — a " +
+            "claw that never travels holds its orientation for free and proves nothing");
+        Assert(turned < 15f,
+            $"the claw turned {turned:F0} degrees across the midpoint with the flip off — it must stay in " +
+            "exactly one orientation everywhere");
+
+        // Mutation: switch the flip back on in the very same coupler and repeat the crossing. It must
+        // turn ~180 — otherwise "held its orientation" was measuring a sweep that couldn't show a flip
+        // anyway, and this test would pass on a build that silently dropped the whole feature.
+        coupler.flipPastMidpoint = true;
+        coupler.BakeDrive();
+        RampArm(f.armBody, coupler, 160f, 80f);
+        SettleArm(f.armBody, coupler, 80f, 300);
+        Quaternion mutantBefore = f.flip.transform.rotation;
+        RampArm(f.armBody, coupler, 80f, 160f);
+        SettleArm(f.armBody, coupler, 160f, 400);
+        float mutantTurned = Quaternion.Angle(f.flip.transform.rotation, mutantBefore);
+        Assert(mutantTurned > 150f,
+            $"switching the flip back on only turned the claw {mutantTurned:F0} degrees across the same " +
+            "crossing — the stays-put check can't tell a flip that's off from one that never fires");
+
+        return $"Flip off releases the wrist: PASSED — unticking the flip rebuilt without error, gave the " +
+               $"wrist back as plain geometry, and held the claw to {turned:F0} degrees across the midpoint " +
+               $"while it rode {rode:F0} units; switching the flip back on turned it {mutantTurned:F0}.";
+    }
+
+    // First descendant with this name, or null — used to prove a build's marker is there, and gone.
+    private static Transform FindChildNamed(Transform root, string name)
+    {
+        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
+            if (t != null && t.name == name) return t;
+        return null;
     }
 
     // --- Explicit axle: the mount must pivot about the AXLE the claw hangs on, not its own far origin ----

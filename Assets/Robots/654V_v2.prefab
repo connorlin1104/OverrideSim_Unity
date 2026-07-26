@@ -27181,7 +27181,7 @@ ArticulationBody:
   m_SwingZ: 2
   m_Twist: 1
   m_XDrive:
-    lowerLimit: -300
+    lowerLimit: -260
     upperLimit: 0
     stiffness: 0
     damping: 1000
@@ -28536,9 +28536,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 4060344704073985050}
-  - component: {fileID: 627840482357389056}
-  - component: {fileID: 5093622567667645645}
-  - component: {fileID: 3519848095209736523}
   m_Layer: 0
   m_Name: 10 - 2x C-Chan v1
   m_TagString: Player
@@ -28561,113 +28558,8 @@ Transform:
   m_Children:
   - {fileID: 93283783478133268}
   - {fileID: 8668360324093592692}
-  - {fileID: 2180518999818808311}
   m_Father: {fileID: 4148751306630898679}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!171741748 &627840482357389056
-ArticulationBody:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 912516306210123004}
-  m_Enabled: 1
-  serializedVersion: 6
-  m_Mass: 0.022008644
-  m_ParentAnchorPosition: {x: -0.86871624, y: -1.1328169, z: 3.4955165}
-  m_ParentAnchorRotation: {x: -0.0000000018107039, y: -0.7071068, z: 0.7071067, w: 0.000000057969462}
-  m_AnchorPosition: {x: -0.1270231, y: 1.3751564, z: -0.0000008940697}
-  m_AnchorRotation: {x: -0, y: 0.00000008429287, z: 0.7071067, w: 0.7071068}
-  m_MatchAnchors: 0
-  m_ArticulationJointType: 2
-  m_LinearX: 0
-  m_LinearY: 0
-  m_LinearZ: 0
-  m_SwingY: 2
-  m_SwingZ: 2
-  m_Twist: 1
-  m_XDrive:
-    lowerLimit: -225
-    upperLimit: 225
-    stiffness: 20000
-    damping: 500
-    forceLimit: 3.4028235e+38
-    target: 0
-    targetVelocity: 0
-    driveType: 2
-  m_YDrive:
-    lowerLimit: 0
-    upperLimit: 0
-    stiffness: 0
-    damping: 0
-    forceLimit: 3.4028235e+38
-    target: 0
-    targetVelocity: 0
-    driveType: 0
-  m_ZDrive:
-    lowerLimit: 0
-    upperLimit: 0
-    stiffness: 0
-    damping: 0
-    forceLimit: 3.4028235e+38
-    target: 0
-    targetVelocity: 0
-    driveType: 0
-  m_LinearDamping: 0.05
-  m_AngularDamping: 0.05
-  m_JointFriction: 0.05
-  m_CenterOfMass: {x: 0, y: 0, z: 0}
-  m_InertiaTensor: {x: 1, y: 1, z: 1}
-  m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ImplicitCom: 1
-  m_ImplicitTensor: 1
-  m_Immovable: 0
-  m_UseGravity: 1
-  m_CollisionDetectionMode: 3
---- !u!114 &5093622567667645645
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 912516306210123004}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 233c535a255b44e296b1b3e58b5f0444, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::IgnoreRobotSelfCollision
---- !u!114 &3519848095209736523
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 912516306210123004}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: db135222ed93a43e0abd7c5285f54501, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::JointCoupler
-  follower: {fileID: 627840482357389056}
-  driver: {fileID: 1223153925174894227}
-  mode: 1
-  ratio: 0
-  offsetDeg: 0
-  velocityDriveDamping: 1000
-  positionStiffness: 20000
-  positionDamping: 500
-  forceLimit: 3.4028235e+38
-  maxFollowerJointVelocity: 40
-  flipPastMidpoint: 1
-  flipDegrees: 180
-  flipFraction: 0.5
-  flipTravelSeconds: 0.3
 --- !u!1 &914661450418698244
 GameObject:
   m_ObjectHideFlags: 0
@@ -48095,7 +47987,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 3806319491269514768}
-  - component: {fileID: 15848365230814518}
+  - component: {fileID: 7336155012331790808}
   m_Layer: 0
   m_Name: Component1:1
   m_TagString: Untagged
@@ -48119,7 +48011,7 @@ Transform:
   - {fileID: 8896718219683845181}
   m_Father: {fileID: 4642410542568413965}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &15848365230814518
+--- !u!114 &7336155012331790808
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -56394,37 +56286,6 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!1 &1852595233771129870
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 6178552168202757353}
-  m_Layer: 0
-  m_Name: ClawHoldPoint
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &6178552168202757353
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1852595233771129870}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0.000000029802319, y: 0.000000029802319, z: -0.000000059604638, w: 1}
-  m_LocalPosition: {x: -0.059, y: -2.084, z: 3.559}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 8668360324093592692}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1852730146979456000
 GameObject:
   m_ObjectHideFlags: 0
@@ -63507,37 +63368,6 @@ Transform:
   - {fileID: 4337138192245202247}
   m_Father: {fileID: 335911156645373683}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &2088128683176192985
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 5120882513253663808}
-  m_Layer: 0
-  m_Name: ClawClampPivot2
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &5120882513253663808
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2088128683176192985}
-  serializedVersion: 2
-  m_LocalRotation: {x: -0.6116114, y: 0.3592255, z: -0.35698628, w: 0.60782343}
-  m_LocalPosition: {x: 0.70504236, y: 0.054980755, z: 0.00037597484}
-  m_LocalScale: {x: 0.99999976, y: 0.9999999, z: 0.9999999}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 7077027726558026450}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &2093109499293103644
 GameObject:
   m_ObjectHideFlags: 0
@@ -69483,37 +69313,6 @@ Transform:
   m_Children:
   - {fileID: 996874474829948321}
   m_Father: {fileID: 8010152474889298096}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &2277807415822874823
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 2180518999818808311}
-  m_Layer: 0
-  m_Name: ClawYawWristPivot
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &2180518999818808311
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2277807415822874823}
-  serializedVersion: 2
-  m_LocalRotation: {x: -0.0022001266, y: 0.0022001565, z: -0.7070972, w: 0.7071096}
-  m_LocalPosition: {x: -0.1270231, y: 1.3751564, z: -0.0000008940697}
-  m_LocalScale: {x: 0.9999999, y: 0.9999999, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 4060344704073985050}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &2278067371715307074
 GameObject:
@@ -76499,6 +76298,37 @@ Transform:
   - {fileID: 4234976710059876753}
   - {fileID: 2702109051691997029}
   m_Father: {fileID: 3708096532874558743}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &2512346161280425473
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 6391518413301611972}
+  m_Layer: 0
+  m_Name: ClawFlipPivot
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &6391518413301611972
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2512346161280425473}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.70490324, y: -0.000006198883, z: 0.000006213784, w: 0.7093035}
+  m_LocalPosition: {x: -0.05900246, y: -1.8765342, z: 3.5589497}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 8668360324093592692}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &2513670315545453546
 GameObject:
@@ -103125,7 +102955,7 @@ GameObject:
   - component: {fileID: 4148751306630898679}
   - component: {fileID: 6110499798839847105}
   - component: {fileID: 131726194853718877}
-  - component: {fileID: 7854425640063364911}
+  - component: {fileID: 8365750686104354966}
   m_Layer: 0
   m_Name: Rotating Claw Mount
   m_TagString: Player
@@ -103151,7 +102981,7 @@ Transform:
   - {fileID: 6967405815835190555}
   - {fileID: 7577123096063895368}
   - {fileID: 4060344704073985050}
-  - {fileID: 863382051215844605}
+  - {fileID: 7898393953598332775}
   m_Father: {fileID: 4088543544850847800}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!171741748 &6110499798839847105
@@ -103177,8 +103007,8 @@ ArticulationBody:
   m_SwingZ: 2
   m_Twist: 1
   m_XDrive:
-    lowerLimit: -315
-    upperLimit: 315
+    lowerLimit: -345
+    upperLimit: 345
     stiffness: 20000
     damping: 500
     forceLimit: 3.4028235e+38
@@ -103232,7 +103062,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 233c535a255b44e296b1b3e58b5f0444, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::IgnoreRobotSelfCollision
---- !u!114 &7854425640063364911
+--- !u!114 &8365750686104354966
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -103613,21 +103443,21 @@ MonoBehaviour:
     type: motor
     motor: {fileID: 1569860493952405542}
     pneumatic: {fileID: 0}
-  - id: rotating-claw-mount-1
-    displayName: PlasticClaw Flip
-    type: pneumatic
-    motor: {fileID: 0}
-    pneumatic: {fileID: 8904286124521075271}
-  - id: claw-polycarb-left-side-claw-v1-1
-    displayName: PlasticClaw Clamp
-    type: pneumatic
-    motor: {fileID: 0}
-    pneumatic: {fileID: 6826591915708084768}
   - id: cascademotor
     displayName: Cascade
     type: motor
     motor: {fileID: 94452269717629603}
     pneumatic: {fileID: 0}
+  - id: rotating-claw-mount-1
+    displayName: PlasticClaw Flip
+    type: pneumatic
+    motor: {fileID: 0}
+    pneumatic: {fileID: 8880344620491196483}
+  - id: claw-polycarb-left-side-claw-v1-1
+    displayName: PlasticClaw Clamp
+    type: pneumatic
+    motor: {fileID: 0}
+    pneumatic: {fileID: 7433007288897788797}
 --- !u!114 &5602463777934578425
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -150128,7 +149958,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 806153783416519533}
-  - component: {fileID: 7702009318664961421}
+  - component: {fileID: 1197871584843274303}
   m_Layer: 0
   m_Name: Component1:1
   m_TagString: Untagged
@@ -150152,7 +149982,7 @@ Transform:
   - {fileID: 5431478018501172713}
   m_Father: {fileID: 8668360324093592692}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &7702009318664961421
+--- !u!114 &1197871584843274303
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -155614,37 +155444,6 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!1 &5079580041321515626
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 863382051215844605}
-  m_Layer: 0
-  m_Name: ClawLevelPivot
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &863382051215844605
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 5079580041321515626}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0.7049033, y: -0.0000062092204, z: 0.0000062480904, w: 0.7093035}
-  m_LocalPosition: {x: -0.86871624, y: -1.1328169, z: 3.4955165}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 4148751306630898679}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &5079691423973609541
 GameObject:
   m_ObjectHideFlags: 0
@@ -164760,6 +164559,37 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
+--- !u!1 &5376071116982928114
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2503454992912402324}
+  m_Layer: 0
+  m_Name: ClawClampPivot1
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &2503454992912402324
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5376071116982928114}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.35699683, y: 0.60781723, z: 0.6116178, w: 0.3592146}
+  m_LocalPosition: {x: 0.7050426, y: 0.3407305, z: -0.00039218218}
+  m_LocalScale: {x: 0.99999976, y: 0.9999999, z: 0.9999999}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 2108853696208629693}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &5376204794498209983
 GameObject:
   m_ObjectHideFlags: 0
@@ -167653,6 +167483,37 @@ Transform:
   - {fileID: 6255889769740813943}
   m_Father: {fileID: 6814084546109228916}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &5482361673672462151
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 7737792204625401756}
+  m_Layer: 0
+  m_Name: ClawClampPivot2
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7737792204625401756
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5482361673672462151}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0.6116114, y: 0.3592255, z: -0.35698628, w: 0.60782343}
+  m_LocalPosition: {x: 0.70504236, y: 0.054980755, z: 0.00037597484}
+  m_LocalScale: {x: 0.99999976, y: 0.9999999, z: 0.9999999}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 7077027726558026450}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &5483026195427371069
 GameObject:
   m_ObjectHideFlags: 0
@@ -167872,7 +167733,7 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 7687859267045377675}
-  - {fileID: 5120882513253663808}
+  - {fileID: 7737792204625401756}
   m_Father: {fileID: 8668360324093592692}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!171741748 &8694127533946840696
@@ -176398,7 +176259,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 4740154229726533670}
-  - component: {fileID: 6388300997297282617}
+  - component: {fileID: 7479916779769294076}
   m_Layer: 0
   m_Name: Component2:1
   m_TagString: Untagged
@@ -176423,7 +176284,7 @@ Transform:
   - {fileID: 3621814492076750142}
   m_Father: {fileID: 8668360324093592692}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &6388300997297282617
+--- !u!114 &7479916779769294076
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -191444,6 +191305,90 @@ Transform:
   - {fileID: 3377873781502151780}
   m_Father: {fileID: 7792607937218066346}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &6272250711827222972
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2680876693359980953}
+  - component: {fileID: 1859631275237209278}
+  - component: {fileID: 4869255946214729518}
+  m_Layer: 0
+  m_Name: ClawMouth
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &2680876693359980953
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6272250711827222972}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.000000029802319, y: 0.000000029802319, z: -0.000000059604638, w: 1}
+  m_LocalPosition: {x: -0.05900246, y: -1.8765342, z: 3.5589497}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 8668360324093592692}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!65 &1859631275237209278
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6272250711827222972}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 1
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 0.7034386, y: 0.9181435, z: 0.9217168}
+  m_Center: {x: 0, y: 0, z: 0}
+--- !u!114 &4869255946214729518
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6272250711827222972}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 40582983358c84c8b97ea4c11a203308, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ClawGrab
+  clampPneumatic: {fileID: 7433007288897788797}
+  grabWhenRetracted: 1
+  holdPoint: {fileID: 2527304635566024310}
+  maxHeld: 2
+  clawParts:
+  - {fileID: 3365859761111756540}
+  - {fileID: 7538184681047031635}
+  - {fileID: 9063105303137831512}
+  - {fileID: 5494982586051022436}
+  passThroughWhileHeld: 1
+  stackClearance: 0.1
+  snapSpeed: 20
+  snapTurnSpeed: 540
+  autoUpright: 1
+  uprightMeshAxis: {x: 0, y: 0, z: 0}
+  uprightHoldAxis: {x: 0, y: 0, z: 0}
+  releaseGrace: 0.25
+  logEvents: 1
 --- !u!1 &6274796245574817869
 GameObject:
   m_ObjectHideFlags: 0
@@ -191485,7 +191430,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 8464461849550866962}
-  - component: {fileID: 4772459091934770740}
+  - component: {fileID: 1756666875986142496}
   m_Layer: 0
   m_Name: Component2:1
   m_TagString: Untagged
@@ -191509,7 +191454,7 @@ Transform:
   - {fileID: 8966483469356732272}
   m_Father: {fileID: 4642410542568413965}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &4772459091934770740
+--- !u!114 &1756666875986142496
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -198601,37 +198546,6 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!1 &6496433042976039143
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 6980064273192161584}
-  m_Layer: 0
-  m_Name: ClawClampPivot1
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &6980064273192161584
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6496433042976039143}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0.35699683, y: 0.60781723, z: 0.6116178, w: 0.3592146}
-  m_LocalPosition: {x: 0.7050426, y: 0.3407305, z: -0.00039218218}
-  m_LocalScale: {x: 0.99999976, y: 0.9999999, z: 0.9999999}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 2108853696208629693}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &6502055009627217999
 GameObject:
   m_ObjectHideFlags: 0
@@ -232049,7 +231963,7 @@ GameObject:
   - component: {fileID: 8373634453097326621}
   - component: {fileID: 6510376667831421952}
   - component: {fileID: 7984225041268162400}
-  - component: {fileID: 8904286124521075271}
+  - component: {fileID: 8880344620491196483}
   m_Layer: 0
   m_Name: Rotating Claw Mount:1
   m_TagString: Player
@@ -232070,13 +231984,13 @@ Transform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
+  - {fileID: 2527304635566024310}
   - {fileID: 2108853696208629693}
   - {fileID: 7077027726558026450}
   - {fileID: 806153783416519533}
   - {fileID: 4740154229726533670}
-  - {fileID: 2469836754429415766}
-  - {fileID: 7164019075035265790}
-  - {fileID: 6178552168202757353}
+  - {fileID: 6391518413301611972}
+  - {fileID: 2680876693359980953}
   m_Father: {fileID: 4060344704073985050}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!171741748 &8373634453097326621
@@ -232089,8 +232003,8 @@ ArticulationBody:
   m_Enabled: 1
   serializedVersion: 6
   m_Mass: 0.038461875
-  m_ParentAnchorPosition: {x: -0.06359033, y: 0.5654426, z: 0.7437164}
-  m_ParentAnchorRotation: {x: -0.7093063, y: -0.00219952, z: -0.7048935, w: 0.0022132292}
+  m_ParentAnchorPosition: {x: -0.0590024, y: -1.8765342, z: 3.5589492}
+  m_ParentAnchorRotation: {x: 0.00000008561471, y: -0.004412663, z: -0.70709306, w: 0.7071068}
   m_AnchorPosition: {x: -0.05900246, y: -1.8765342, z: 3.5589497}
   m_AnchorRotation: {x: 0, y: -0.004412725, z: -0.70709306, w: 0.70710677}
   m_MatchAnchors: 0
@@ -232174,26 +232088,25 @@ MonoBehaviour:
   - {fileID: 3365859761111756540}
   armDriver: {fileID: 868338602044917294}
   levelAxle: {fileID: 1686445556479272858}
-  levelPivot: {fileID: 863382051215844605}
+  levelPivot: {fileID: 7898393953598332775}
   levelAxisPreset: 9
   levelCustomAxis: {x: 1, y: 0, z: 0}
   levelRatio: -1
   levelSweepDeg: 180
   levelStiffness: 20000
   levelDamping: 500
-  levelFlipPastMidpoint: 1
+  levelFlipPastMidpoint: 0
   levelFlipDegrees: 180
   levelFlipFraction: 0.5
   levelFlipSeconds: 0.3
-  yawWristParts:
-  - {fileID: 912516306210123004}
-  yawWristPivot: {fileID: 2180518999818808311}
+  yawWristParts: []
+  yawWristPivot: {fileID: 0}
   builtLevelLink: {fileID: 3365859761111756540}
-  builtYawWristLink: {fileID: 912516306210123004}
+  builtYawWristLink: {fileID: 0}
   flippingParts:
   - {fileID: 7538184681047031635}
   flipAngleDeg: 180
-  flipPivot: {fileID: 2469836754429415766}
+  flipPivot: {fileID: 6391518413301611972}
   flipAxisPreset: 6
   flipCustomAxis: {x: 1, y: 0, z: 0}
   flipTravelSeconds: 0.2
@@ -232210,7 +232123,7 @@ MonoBehaviour:
   - parts:
     - {fileID: 9063105303137831512}
     closeAngleDeg: 35
-    pivot: {fileID: 6980064273192161584}
+    pivot: {fileID: 2503454992912402324}
     axisPreset: 0
     customAxis: {x: 1, y: 0, z: 0}
     mirror: 0
@@ -232218,7 +232131,7 @@ MonoBehaviour:
   - parts:
     - {fileID: 5494982586051022436}
     closeAngleDeg: 35
-    pivot: {fileID: 5120882513253663808}
+    pivot: {fileID: 7737792204625401756}
     axisPreset: 0
     customAxis: {x: 1, y: 0, z: 0}
     mirror: 1
@@ -232237,10 +232150,10 @@ MonoBehaviour:
   grabWhenRetracted: 1
   grabPassThrough: 1
   grabAutoUpright: 1
-  clawMouth: {fileID: 8646622250260234682}
-  holdPoint: {fileID: 6178552168202757353}
+  clawMouth: {fileID: 6272250711827222972}
+  holdPoint: {fileID: 2527304635566024310}
   autoAssignButtons: 1
---- !u!114 &8904286124521075271
+--- !u!114 &8880344620491196483
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -233727,6 +233640,37 @@ Transform:
   m_Children:
   - {fileID: 989965918085879895}
   m_Father: {fileID: 5167312127958658198}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &7579363691794678246
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 7898393953598332775}
+  m_Layer: 0
+  m_Name: ClawLevelPivot
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7898393953598332775
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7579363691794678246}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.7049033, y: -0.0000062092204, z: 0.0000062480904, w: 0.7093035}
+  m_LocalPosition: {x: -0.86871624, y: -1.1328169, z: 3.4955165}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4148751306630898679}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &7580823932745980199
 GameObject:
@@ -269336,90 +269280,6 @@ Transform:
   - {fileID: 6032133351801088312}
   m_Father: {fileID: 7088907354628823133}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &8646622250260234682
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 7164019075035265790}
-  - component: {fileID: 7183032032821727629}
-  - component: {fileID: 2947912369819342791}
-  m_Layer: 0
-  m_Name: ClawMouth
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &7164019075035265790
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8646622250260234682}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0.000000029802319, y: 0.000000029802319, z: -0.000000059604638, w: 1}
-  m_LocalPosition: {x: -0.059, y: -2.087, z: 3.56}
-  m_LocalScale: {x: 1, y: 0.6727, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 8668360324093592692}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!65 &7183032032821727629
-BoxCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8646622250260234682}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 1
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 0.7034386, y: 0.9181435, z: 0.9217168}
-  m_Center: {x: 0, y: 0, z: 0}
---- !u!114 &2947912369819342791
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8646622250260234682}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 40582983358c84c8b97ea4c11a203308, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ClawGrab
-  clampPneumatic: {fileID: 6826591915708084768}
-  grabWhenRetracted: 1
-  holdPoint: {fileID: 6178552168202757353}
-  maxHeld: 2
-  clawParts:
-  - {fileID: 3365859761111756540}
-  - {fileID: 912516306210123004}
-  - {fileID: 7538184681047031635}
-  - {fileID: 9063105303137831512}
-  - {fileID: 5494982586051022436}
-  passThroughWhileHeld: 1
-  snapSpeed: 20
-  snapTurnSpeed: 540
-  autoUpright: 1
-  uprightMeshAxis: {x: 0, y: 0, z: 0}
-  uprightHoldAxis: {x: 0, y: 0, z: 0}
-  releaseGrace: 0.25
-  logEvents: 1
 --- !u!1 &8647254413226681119
 GameObject:
   m_ObjectHideFlags: 0
@@ -280825,37 +280685,6 @@ Transform:
   - {fileID: 2484216662240327461}
   m_Father: {fileID: 4391051498668689736}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &9005344409845815936
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 2469836754429415766}
-  m_Layer: 0
-  m_Name: ClawFlipPivot
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &2469836754429415766
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 9005344409845815936}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0.70490324, y: -0.000006198883, z: 0.000006213784, w: 0.7093035}
-  m_LocalPosition: {x: -0.059, y: -2.087, z: 3.56}
-  m_LocalScale: {x: 1, y: 0.6727, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 8668360324093592692}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &9005503870517756652
 GameObject:
   m_ObjectHideFlags: 0
@@ -283015,7 +282844,7 @@ GameObject:
   - component: {fileID: 2108853696208629693}
   - component: {fileID: 2027873128943287140}
   - component: {fileID: 516343481164092019}
-  - component: {fileID: 6826591915708084768}
+  - component: {fileID: 7433007288897788797}
   m_Layer: 0
   m_Name: Claw Polycarb_Left Side Claw v1:1
   m_TagString: Player
@@ -283037,7 +282866,7 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 5875435281708877257}
-  - {fileID: 6980064273192161584}
+  - {fileID: 2503454992912402324}
   m_Father: {fileID: 8668360324093592692}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!171741748 &2027873128943287140
@@ -283118,7 +282947,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 233c535a255b44e296b1b3e58b5f0444, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::IgnoreRobotSelfCollision
---- !u!114 &6826591915708084768
+--- !u!114 &7433007288897788797
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -284562,6 +284391,37 @@ Transform:
   m_Children:
   - {fileID: 5975006197142441521}
   m_Father: {fileID: 7812703066476386577}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &9102515208953866154
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2527304635566024310}
+  m_Layer: 0
+  m_Name: ClawHoldPoint
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &2527304635566024310
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9102515208953866154}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.000000029802319, y: 0.000000029802319, z: -0.000000059604638, w: 1}
+  m_LocalPosition: {x: -0.059, y: -2.092, z: 3.559}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 8668360324093592692}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &9103725385831678002
 GameObject:
