@@ -59,6 +59,14 @@ public class HomeScreenController : MonoBehaviour
     [Header("Drive")]
     [Tooltip("Checkbox for Reverse Drive Direction (persisted via ReverseDriveSettings). Flips which end of the robot the drive controls treat as front.")]
     [SerializeField] private Toggle reverseDriveToggle;
+    [Tooltip("Checkbox for the lite field (persisted via FieldSceneSettings). Loads the stripped-down LiteScene instead of the full field — far cheaper to run.")]
+    [SerializeField] private Toggle liteFieldToggle;
+
+    [Header("Team Code")]
+    [Tooltip("Where the player types an owner code to reveal a private robot (RobotOwnerSettings).")]
+    [SerializeField] private TMP_InputField teamCodeInput;
+    [Tooltip("Feedback line under the code box: what the last Unlock did, and how many codes are held.")]
+    [SerializeField] private TMP_Text teamCodeStatusLabel;
 
     [Header("Controller Config")]
     [Tooltip("The Configure Controller sub-screen (button -> mechanism mapping).")]
@@ -67,6 +75,10 @@ public class HomeScreenController : MonoBehaviour
     [Header("Controls Layout")]
     [Tooltip("The Edit Control Layout sub-screen (drag on-screen controls to reposition them).")]
     [SerializeField] private ControlsLayoutScreen controlsLayout;
+
+    [Header("Submit a Robot")]
+    [Tooltip("The Submit a Robot sub-screen (send your own FBX/URDF in to be set up).")]
+    [SerializeField] private SubmitRobotScreen submitRobot;
 
     // Clones built from the template, paired with the catalog id each one selects.
     private readonly List<KeyValuePair<Button, string>> modelButtons = new List<KeyValuePair<Button, string>>();
@@ -88,6 +100,8 @@ public class HomeScreenController : MonoBehaviour
         InitControlsOpacityControl();
         InitAutomaticMatchloadControl();
         InitReverseDriveControl();
+        InitLiteFieldControl();
+        ShowHeldCodeCount();
     }
 
     // --- Button hooks (wired as persistent onClick listeners by the Build Home Scene tool) ---
@@ -107,7 +121,9 @@ public class HomeScreenController : MonoBehaviour
     private IEnumerator LoadFieldScene()
     {
         yield return null; // let the overlay paint one frame first
-        AsyncOperation op = SceneManager.LoadSceneAsync("SampleScene");
+        // Full field or the lite one, per the Settings checkbox; FieldSceneSettings falls back to the
+        // full field when the lite scene hasn't been built yet.
+        AsyncOperation op = SceneManager.LoadSceneAsync(FieldSceneSettings.ActiveFieldScene);
         while (op != null && !op.isDone) yield return null;
     }
 
@@ -149,6 +165,19 @@ public class HomeScreenController : MonoBehaviour
         if (settingsPanel != null) settingsPanel.SetActive(true);
     }
 
+    public void OnSubmitRobotPressed()
+    {
+        if (submitRobot == null) return; // older scene without the submit screen
+        if (settingsPanel != null) settingsPanel.SetActive(false);
+        submitRobot.Open();
+    }
+
+    public void OnSubmitBackPressed()
+    {
+        if (submitRobot != null) submitRobot.Close();
+        if (settingsPanel != null) settingsPanel.SetActive(true);
+    }
+
     // --- Model list ---
 
     private void BuildModelList()
@@ -160,16 +189,19 @@ public class HomeScreenController : MonoBehaviour
             return;
         }
 
-        foreach (RobotModelCatalog.Entry entry in catalog.models)
+        // VisibleModels, not models: private entries stay out of the list until their owner enters
+        // the code in Settings. Every other reader of the catalog filters the same way.
+        foreach (RobotModelCatalog.Entry entry in catalog.VisibleModels)
         {
-            if (entry == null || string.IsNullOrEmpty(entry.id)) continue;
-
             Button clone = Instantiate(modelButtonTemplate, modelListParent);
             clone.name = "Model_" + entry.id;
             clone.gameObject.SetActive(true); // template itself stays inactive
 
+            string title = string.IsNullOrWhiteSpace(entry.ownerLabel)
+                ? entry.displayName
+                : $"{entry.displayName}  ({entry.ownerLabel})";
             TMP_Text label = clone.GetComponentInChildren<TMP_Text>(true);
-            if (label != null) label.text = editMode ? "Remove  " + entry.displayName : entry.displayName;
+            if (label != null) label.text = editMode ? "Remove  " + title : title;
 
             string id = entry.id; // capture per-iteration copy for the closure
             clone.onClick.AddListener(() => OnModelButtonPressed(id));
@@ -334,5 +366,93 @@ public class HomeScreenController : MonoBehaviour
 
         reverseDriveToggle.SetIsOnWithoutNotify(ReverseDriveSettings.Reversed);
         reverseDriveToggle.onValueChanged.AddListener(value => ReverseDriveSettings.Reversed = value);
+    }
+
+    // --- Team code (private robots) ---
+
+    // Wired as a persistent onClick by the Build Home Scene tool. A code is only stored when it
+    // actually matches a robot in this build: silently banking a typo'd code and showing no new
+    // models would look identical to the feature being broken.
+    public void OnUnlockCodePressed()
+    {
+        string code = RobotOwnerSettings.Normalize(teamCodeInput != null ? teamCodeInput.text : null);
+        if (code.Length == 0)
+        {
+            SetCodeStatus("Type the code you were given, then press Unlock.");
+            return;
+        }
+        if (RobotOwnerSettings.HasCode(code))
+        {
+            SetCodeStatus("That code is already entered.");
+            return;
+        }
+
+        int matches = CountModelsWithCode(code);
+        if (matches == 0)
+        {
+            SetCodeStatus("No robot in this app uses that code.");
+            return;
+        }
+
+        RobotOwnerSettings.AddCode(code);
+        if (teamCodeInput != null) teamCodeInput.text = string.Empty;
+        RebuildModelList();
+        SetCodeStatus(matches == 1 ? "Unlocked 1 robot." : $"Unlocked {matches} robots.");
+    }
+
+    // Clears every code entered on this device — for handing the phone to someone else, or just to
+    // check what a teammate sees.
+    public void OnForgetCodesPressed()
+    {
+        List<string> held = RobotOwnerSettings.AllCodes();
+        if (held.Count == 0)
+        {
+            SetCodeStatus("No codes are entered on this device.");
+            return;
+        }
+
+        int count = held.Count;
+        foreach (string code in new List<string>(held)) RobotOwnerSettings.RemoveCode(code);
+        RebuildModelList();
+        SetCodeStatus(count == 1 ? "Forgot 1 code." : $"Forgot {count} codes.");
+    }
+
+    // Counts against the FULL catalog, not the visible subset — the whole point is to find the
+    // entries this device currently can't see.
+    private int CountModelsWithCode(string normalizedCode)
+    {
+        if (catalog == null || catalog.models == null) return 0;
+
+        int matches = 0;
+        foreach (RobotModelCatalog.Entry entry in catalog.models)
+        {
+            if (entry == null || entry.visibility != RobotModelCatalog.Visibility.Private) continue;
+            if (RobotOwnerSettings.Normalize(entry.ownerCode) == normalizedCode) matches++;
+        }
+        return matches;
+    }
+
+    private void ShowHeldCodeCount()
+    {
+        int held = RobotOwnerSettings.AllCodes().Count;
+        if (held == 0) SetCodeStatus(string.Empty);
+        else SetCodeStatus(held == 1 ? "1 code entered on this device." : $"{held} codes entered on this device.");
+    }
+
+    private void SetCodeStatus(string message)
+    {
+        if (teamCodeStatusLabel != null) teamCodeStatusLabel.text = message;
+    }
+
+    // --- Lite field ---
+
+    // Same pattern again; guarded so an older HomeScene still runs without the toggle. OnDrivePressed
+    // reads the setting at load time, so flipping it takes effect on the next Drive.
+    private void InitLiteFieldControl()
+    {
+        if (liteFieldToggle == null) return;
+
+        liteFieldToggle.SetIsOnWithoutNotify(FieldSceneSettings.UseLiteField);
+        liteFieldToggle.onValueChanged.AddListener(value => FieldSceneSettings.UseLiteField = value);
     }
 }

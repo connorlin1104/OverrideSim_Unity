@@ -109,10 +109,12 @@ public class RobotSpawner : MonoBehaviour
         RobotModelCatalog.Entry entry = catalog.SelectedModel;
 
         // Fall back to the first entry that actually has a prefab, so a selection whose prefab
-        // hasn't been built yet still puts *a* robot on the field instead of an empty scene.
+        // hasn't been built yet still puts *a* robot on the field instead of an empty scene. The
+        // fallback is visible-only: a private model must not reach the field just because the
+        // selected one had no prefab.
         if (entry == null || entry.prefab == null)
         {
-            entry = FirstEntryWithPrefab();
+            entry = catalog.FirstVisibleWithPrefab();
         }
 
         if (entry == null || entry.prefab == null)
@@ -408,13 +410,4 @@ public class RobotSpawner : MonoBehaviour
         return target - center;
     }
 
-    private RobotModelCatalog.Entry FirstEntryWithPrefab()
-    {
-        if (catalog.models == null) return null;
-        foreach (RobotModelCatalog.Entry entry in catalog.models)
-        {
-            if (entry != null && entry.prefab != null) return entry;
-        }
-        return null;
-    }
 }

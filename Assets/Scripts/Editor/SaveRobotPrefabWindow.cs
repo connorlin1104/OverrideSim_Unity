@@ -16,6 +16,9 @@ public class SaveRobotPrefabWindow : EditorWindow
 
     [SerializeField] private GameObject robotRoot;
     [SerializeField] private bool removeInlineCopy = true;
+    [SerializeField] private RobotModelCatalog.Visibility visibility = RobotModelCatalog.Visibility.Public;
+    [SerializeField] private string ownerCode = string.Empty;
+    [SerializeField] private string ownerLabel = string.Empty;
 
     [MenuItem("Tools/RoboSim/Robot/Save As Robot Prefab", false, 3)]
     private static void ShowWindow()
@@ -58,8 +61,42 @@ public class SaveRobotPrefabWindow : EditorWindow
             "robot at Play via RobotSpawner, so an inline copy gives you two robots. Nothing is lost " +
             "— everything is preserved in the prefab."), removeInlineCopy);
 
+        // Who gets to see this robot. Uploaded robots are normally Private so the team that sent
+        // them in isn't handing their design to everyone who installs the app.
         EditorGUILayout.Space();
-        if (!GUILayout.Button("Save Prefab & Link to Picker", GUILayout.Height(30))) return;
+        EditorGUILayout.LabelField("Visibility", EditorStyles.boldLabel);
+        visibility = (RobotModelCatalog.Visibility)EditorGUILayout.EnumPopup(new GUIContent("Listed For",
+            "Public: everyone sees it in the model picker. Private: hidden until someone enters the " +
+            "owner code below in Settings > Team Code."), visibility);
+
+        bool isPrivate = visibility == RobotModelCatalog.Visibility.Private;
+        using (new EditorGUI.DisabledScope(!isPrivate))
+        {
+            ownerCode = EditorGUILayout.TextField(new GUIContent("Owner Code",
+                "The code you give this robot's owner. Case- and space-insensitive."), ownerCode);
+        }
+        ownerLabel = EditorGUILayout.TextField(new GUIContent("Owner Label",
+            "Optional — shown beside the name in the picker (e.g. a team number)."), ownerLabel);
+
+        if (isPrivate && string.IsNullOrWhiteSpace(ownerCode))
+        {
+            EditorGUILayout.HelpBox(
+                "A Private robot needs an owner code — without one nothing can ever reveal it, and it " +
+                "just disappears from the picker.", MessageType.Error);
+        }
+        else if (isPrivate)
+        {
+            EditorGUILayout.HelpBox(
+                $"Give the owner this code: {RobotOwnerSettings.Normalize(ownerCode)}\n" +
+                "Note this hides the robot from the picker; it does not stop someone extracting it " +
+                "from the app files.", MessageType.Info);
+        }
+
+        EditorGUILayout.Space();
+        using (new EditorGUI.DisabledScope(isPrivate && string.IsNullOrWhiteSpace(ownerCode)))
+        {
+            if (!GUILayout.Button("Save Prefab & Link to Picker", GUILayout.Height(30))) return;
+        }
 
         string path = SaveRobotPrefab.PrefabPathFor(robotRoot.name);
         if (System.IO.File.Exists(path) &&
@@ -68,7 +105,7 @@ public class SaveRobotPrefabWindow : EditorWindow
 
         try
         {
-            string summary = SaveRobotPrefab.Run(robotRoot, removeInlineCopy);
+            string summary = SaveRobotPrefab.Run(robotRoot, removeInlineCopy, visibility, ownerCode, ownerLabel);
             robotRoot = null; // may have been destroyed by removeInlineCopy
             EditorUtility.DisplayDialog(Title, summary, "OK");
         }
@@ -88,10 +125,21 @@ public static class SaveRobotPrefab
 
     public static string PrefabPathFor(string robotName) => $"{RobotsFolder}/{SanitizeFileName(robotName)}.prefab";
 
+    // Saves `root` as a prefab and links it to its catalog entry, leaving the entry's visibility
+    // alone — for callers that only care about the prefab (Set Up Imported Robot, the validator).
+    public static string Run(GameObject root, bool removeInlineCopy)
+    {
+        return Run(root, removeInlineCopy, null, null, null);
+    }
+
     // Saves `root` as a prefab and links it to its catalog entry (id = Slugify(root.name)). When
     // removeInlineCopy is true the scene instance is deleted afterward (SampleScene spawns the
     // selected robot via RobotSpawner, so an inline copy would double-spawn). Throws on failure.
-    public static string Run(GameObject root, bool removeInlineCopy)
+    //
+    // A null `visibility` leaves whatever the entry already had, so re-saving a robot to pick up new
+    // mechanisms never silently republishes someone's private bot.
+    public static string Run(GameObject root, bool removeInlineCopy,
+        RobotModelCatalog.Visibility? visibility, string ownerCode, string ownerLabel)
     {
         if (root == null) throw new System.ArgumentNullException(nameof(root));
         if (root.GetComponent<RobotMotorController>() == null)
@@ -111,7 +159,7 @@ public static class SaveRobotPrefab
         if (prefab == null)
             throw new System.InvalidOperationException($"Failed to save the prefab at {path}.");
 
-        string linkNote = LinkCatalog(id, prefab);
+        string linkNote = LinkCatalog(id, prefab, visibility, ownerCode, ownerLabel);
 
         if (removeInlineCopy)
         {
@@ -125,8 +173,10 @@ public static class SaveRobotPrefab
                    : "\n\nKept the scene instance (now a prefab instance).");
     }
 
-    // Points the named catalog entry's prefab at `prefab`. Returns a human-readable note.
-    private static string LinkCatalog(string id, GameObject prefab)
+    // Points the named catalog entry's prefab at `prefab`, and optionally sets who may see it.
+    // Returns a human-readable note.
+    private static string LinkCatalog(string id, GameObject prefab,
+        RobotModelCatalog.Visibility? visibility, string ownerCode, string ownerLabel)
     {
         RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
         if (catalog == null)
@@ -136,9 +186,22 @@ public static class SaveRobotPrefab
             return $"No catalog entry '{id}' to link to — run Set Up Imported Robot (or the robot was " +
                    "renamed after setup). The prefab is saved; link it by hand in the catalog.";
         entry.prefab = prefab;
+
+        string visibilityNote = string.Empty;
+        if (visibility.HasValue)
+        {
+            entry.visibility = visibility.Value;
+            entry.ownerCode = RobotOwnerSettings.Normalize(ownerCode);
+            entry.ownerLabel = string.IsNullOrWhiteSpace(ownerLabel) ? string.Empty : ownerLabel.Trim();
+            visibilityNote = visibility.Value == RobotModelCatalog.Visibility.Private
+                ? $"\nListed as PRIVATE — it stays hidden until someone enters '{entry.ownerCode}' " +
+                  "in Settings > Team Code."
+                : "\nListed as PUBLIC — everyone sees it.";
+        }
+
         EditorUtility.SetDirty(catalog);
         AssetDatabase.SaveAssets();
-        return $"Linked it to the '{id}' picker entry — the model picker now spawns it.";
+        return $"Linked it to the '{id}' picker entry — the model picker now spawns it.{visibilityNote}";
     }
 
     private static void EnsureRobotsFolder()

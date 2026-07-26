@@ -26,6 +26,14 @@ public class RobotModelCatalog : ScriptableObject
         public string type; // RobotMechanisms.TypeMotor or RobotMechanisms.TypePneumatic
     }
 
+    // Who can see a model. Public is 0 on purpose: entries serialized before this field existed
+    // deserialize to 0, so every robot already in the catalog stays visible with no migration.
+    public enum Visibility
+    {
+        Public = 0,
+        Private = 1,
+    }
+
     [Serializable]
     public class Entry
     {
@@ -36,6 +44,20 @@ public class RobotModelCatalog : ScriptableObject
         // by the spawner (it falls back to the first entry that has one).
         public GameObject prefab;
         public List<MechanismInfo> mechanisms = new List<MechanismInfo>();
+
+        [Tooltip("Public models are listed for everyone. Private models are hidden until someone " +
+                 "enters this entry's owner code in Settings.")]
+        public Visibility visibility = Visibility.Public;
+        [Tooltip("The code that reveals this model when its owner types it in Settings > Team Code. " +
+                 "Only meaningful on a Private entry. Case- and space-insensitive.")]
+        public string ownerCode;
+        [Tooltip("Optional label for whose robot this is (e.g. a team number). Shown in the picker.")]
+        public string ownerLabel;
+
+        // A private entry with no code can never be revealed, so it would silently disappear from the
+        // picker. That's a misconfiguration rather than a policy, and VisibleModels warns about it.
+        public bool IsVisibleOnThisDevice =>
+            visibility == Visibility.Public || RobotOwnerSettings.HasCode(ownerCode);
     }
 
     public List<Entry> models = new List<Entry>();
@@ -43,22 +65,49 @@ public class RobotModelCatalog : ScriptableObject
     // PlayerPrefs key for the selected model id (public so loaders can read it directly).
     public const string SelectedModelPrefKey = "SelectedRobotModelId";
 
-    // The currently selected model id. Reads fall back to the first catalog entry when the
-    // pref is unset or names an id no longer in the catalog (e.g. after an entry is removed),
-    // so callers always get a usable id as long as the catalog is non-empty.
+    // The models this device is allowed to see: everything public, plus any private model whose
+    // owner code has been entered in Settings.
+    //
+    // EVERY reader must go through this rather than `models` directly. A private robot is only
+    // actually hidden if the picker, the spawner, the controller-config screen and the selection
+    // fallbacks all agree — otherwise a stale PlayerPrefs selection or a "first entry" fallback
+    // quietly puts it back on the field.
+    public IEnumerable<Entry> VisibleModels
+    {
+        get
+        {
+            if (models == null) yield break;
+            foreach (Entry entry in models)
+            {
+                if (entry == null || string.IsNullOrEmpty(entry.id)) continue;
+                if (entry.IsVisibleOnThisDevice) { yield return entry; continue; }
+
+                if (entry.visibility == Visibility.Private && string.IsNullOrWhiteSpace(entry.ownerCode))
+                {
+                    Debug.LogWarning($"RobotModelCatalog: '{entry.displayName}' is Private but has no " +
+                                     "owner code, so nothing can ever reveal it. Give it a code, or " +
+                                     "set it back to Public.", this);
+                }
+            }
+        }
+    }
+
+    // The currently selected model id. Reads fall back to the first VISIBLE catalog entry when the
+    // pref is unset, names an id no longer in the catalog (e.g. after an entry is removed), or names
+    // a private model this device hasn't unlocked — so callers always get a usable id, and never one
+    // the player isn't allowed to see.
     public string SelectedModelId
     {
         get
         {
             string saved = PlayerPrefs.GetString(SelectedModelPrefKey, string.Empty);
-            if (!string.IsNullOrEmpty(saved) && models != null)
+            string firstVisible = null;
+            foreach (Entry entry in VisibleModels)
             {
-                foreach (Entry entry in models)
-                {
-                    if (entry != null && entry.id == saved) return saved;
-                }
+                if (!string.IsNullOrEmpty(saved) && entry.id == saved) return saved;
+                if (firstVisible == null) firstVisible = entry.id;
             }
-            return (models != null && models.Count > 0 && models[0] != null) ? models[0].id : null;
+            return firstVisible;
         }
         set
         {
@@ -67,19 +116,30 @@ public class RobotModelCatalog : ScriptableObject
         }
     }
 
-    // The Entry for the current selection (mirrors SelectedModelId's fallback), or null if the
-    // catalog is empty. RobotSpawner reads this to know which prefab to place on the field.
+    // The Entry for the current selection (mirrors SelectedModelId's fallback), or null if there is
+    // nothing visible to select. RobotSpawner reads this to know which prefab to place on the field.
     public Entry SelectedModel
     {
         get
         {
             string id = SelectedModelId;
-            if (id == null || models == null) return null;
-            foreach (Entry entry in models)
+            if (id == null) return null;
+            foreach (Entry entry in VisibleModels)
             {
-                if (entry != null && entry.id == id) return entry;
+                if (entry.id == id) return entry;
             }
             return null;
         }
+    }
+
+    // First visible entry that actually has a prefab — the spawner's last resort when the selection
+    // has no prefab built yet. Visible-only, so it can't surface a private robot.
+    public Entry FirstVisibleWithPrefab()
+    {
+        foreach (Entry entry in VisibleModels)
+        {
+            if (entry.prefab != null) return entry;
+        }
+        return null;
     }
 }

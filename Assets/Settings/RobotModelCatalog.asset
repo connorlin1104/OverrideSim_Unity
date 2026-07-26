@@ -17,6 +17,9 @@ MonoBehaviour:
     displayName: 360 RPM Drivetrain
     prefab: {fileID: 5735647931427841497, guid: 23d9f44831aff4b718f19fc9e660cc74, type: 3}
     mechanisms: []
+    visibility: 0
+    ownerCode: 
+    ownerLabel: 
   - id: 654v-v1
     displayName: 654V v1
     prefab: {fileID: 8896121903650456618, guid: 256eab26b288b43f2b83f934f7a84512, type: 3}
@@ -33,6 +36,9 @@ MonoBehaviour:
     - id: metalpart
       displayName: Doinker
       type: pneumatic
+    visibility: 0
+    ownerCode: 
+    ownerLabel: 
   - id: 654v-v2
     displayName: 654V v2
     prefab: {fileID: 3368822269678000047, guid: b24e7cadad95c403791ed70b472595ec, type: 3}
@@ -46,12 +52,22 @@ MonoBehaviour:
     - id: clawarm
       displayName: ClawArm
       type: motor
+    - id: cascademotor
+      displayName: Cascade
+      type: motor
     - id: rotating-claw-mount-1
       displayName: PlasticClaw Flip
       type: pneumatic
     - id: claw-polycarb-left-side-claw-v1-1
       displayName: PlasticClaw Clamp
       type: pneumatic
-    - id: cascademotor
-      displayName: Cascade
-      type: motor
+    visibility: 0
+    ownerCode: 
+    ownerLabel: 
+  - id: ryan-cascaderobot
+    displayName: 654V-v3
+    prefab: {fileID: 332329364715366720, guid: c8a66e3d5b40f40dc9bc16248a84cb16, type: 3}
+    mechanisms: []
+    visibility: 0
+    ownerCode: 
+    ownerLabel: 

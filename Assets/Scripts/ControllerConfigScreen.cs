@@ -95,11 +95,13 @@ public class ControllerConfigScreen : MonoBehaviour
     {
         RobotModelCatalog.Entry entry = null;
         robotId = catalog != null ? catalog.SelectedModelId : null;
-        if (catalog != null && catalog.models != null && !string.IsNullOrEmpty(robotId))
+        if (catalog != null && !string.IsNullOrEmpty(robotId))
         {
-            foreach (RobotModelCatalog.Entry candidate in catalog.models)
+            // VisibleModels, not models: a private robot's mechanism list would otherwise leak here
+            // even though it isn't listed in the picker.
+            foreach (RobotModelCatalog.Entry candidate in catalog.VisibleModels)
             {
-                if (candidate != null && candidate.id == robotId) { entry = candidate; break; }
+                if (candidate.id == robotId) { entry = candidate; break; }
             }
         }
         robotDisplayName = entry != null ? entry.displayName : "No Robot";

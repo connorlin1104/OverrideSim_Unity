@@ -36,6 +36,7 @@ public class BuildHomeScene
     private const string HomeScenePath = "Assets/Scenes/HomeScene.unity";
     private const string SampleScenePath = "Assets/Scenes/SampleScene.unity";
     private const string CatalogPath = "Assets/Settings/RobotModelCatalog.asset";
+    private const string UploadConfigPath = "Assets/Settings/RobotUploadConfig.asset";
     private const string TmpSettingsPath = "Assets/TextMesh Pro/Resources/TMP Settings.asset";
 
     // The Input System package's built-in DefaultInputActions asset (same one the field
@@ -80,9 +81,11 @@ public class BuildHomeScene
         bool tmpImported;
         if (!EnsureTmpEssentials(interactive, out tmpImported)) return;
 
-        // 2) The model catalog the home screen lists.
+        // 2) The model catalog the home screen lists, and the (initially blank) submissions
+        //    destination the Submit a Robot screen posts to.
         bool catalogCreated;
         RobotModelCatalog catalog = EnsureCatalog(out catalogCreated);
+        EnsureUploadConfig(out bool uploadConfigCreated);
 
         string previousScenePath = SceneManager.GetActiveScene().path;
         if (interactive && !EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
@@ -142,6 +145,7 @@ public class BuildHomeScene
 
         Debug.Log($"Build Home Scene: TMP essentials {(tmpImported ? "imported" : "already present")}, " +
                   $"catalog {(catalogCreated ? "created at " + CatalogPath : "found")}, " +
+                  $"upload config {(uploadConfigCreated ? "created at " + UploadConfigPath + " (fill in the Firebase bucket + key to switch submissions on)" : "found")}, " +
                   $"HomeScene {rebuildStatus}, build settings = [HomeScene, SampleScene], " +
                   $"field Home button {homeButtonStatus}, controls appearance {appearanceStatus}.");
     }
@@ -171,7 +175,9 @@ public class BuildHomeScene
         SerializedObject configSo = new SerializedObject(configScreen);
         return IsRefSet(so, "catalog") && IsRefSet(so, "controllerConfig") &&
                IsRefSet(so, "controlsLayout") && IsRefSet(so, "loadingOverlay") &&
-               IsRefSet(so, "automaticMatchloadToggle") &&
+               IsRefSet(so, "automaticMatchloadToggle") && IsRefSet(so, "liteFieldToggle") &&
+               IsRefSet(so, "teamCodeInput") && IsRefSet(so, "teamCodeStatusLabel") &&
+               IsRefSet(so, "submitRobot") &&
                IsRefSet(configSo, "controlStyleButton");
     }
 
@@ -335,44 +341,7 @@ public class BuildHomeScene
         // panel to fit everything under the list (which absorbs the leftover height).
         GameObject settingsPanel = CreatePanel("SettingsPanel", canvasGo.transform, new Vector2(680f, 980f));
 
-        // The settings rows (model list + every control row + buttons) can total more than the
-        // panel's height, so they live in a vertical scroll view that fills the panel. Without it
-        // the fixed layout overflows centered and the lower rows — the matchloading toggle and the
-        // buttons — get pushed off-screen. The viewport clips; the content grows to fit and scrolls.
-        GameObject viewport = CreateUIObject("SettingsViewport", settingsPanel.transform);
-        RectTransform viewportRect = (RectTransform)viewport.transform;
-        viewportRect.anchorMin = Vector2.zero;
-        viewportRect.anchorMax = Vector2.one;
-        viewportRect.offsetMin = new Vector2(12f, 12f);
-        viewportRect.offsetMax = new Vector2(-12f, -12f);
-        // Scroll-catcher. UGUI routes a wheel event by raycasting the pointer and bubbling UP from
-        // whatever graphic it hit, so with no raycast target here the only scrollable spots are the
-        // rows that happen to have their own graphic — the layout padding, the gaps between rows and
-        // any space past the end of the list are all dead, which reads as "I have to put my cursor on
-        // a button to scroll". The panel's own image can't stand in: it's this object's PARENT, and
-        // bubbling never travels back down. Transparent, so the panel fill still shows through.
-        Image viewportCatcher = viewport.AddComponent<Image>();
-        viewportCatcher.color = Color.clear;
-        viewportCatcher.raycastTarget = true;
-        viewport.AddComponent<RectMask2D>();
-        ScrollRect settingsScroll = viewport.AddComponent<ScrollRect>();
-        settingsScroll.horizontal = false;
-        settingsScroll.vertical = true;
-        settingsScroll.movementType = ScrollRect.MovementType.Clamped;
-        settingsScroll.scrollSensitivity = 28f;
-
-        GameObject content = CreateUIObject("SettingsContent", viewport.transform);
-        RectTransform contentRect = (RectTransform)content.transform;
-        contentRect.anchorMin = new Vector2(0f, 1f);
-        contentRect.anchorMax = new Vector2(1f, 1f);
-        contentRect.pivot = new Vector2(0.5f, 1f);
-        contentRect.anchoredPosition = Vector2.zero;
-        contentRect.sizeDelta = Vector2.zero; // width stretches to the viewport; height fits content
-        AddVerticalLayout(content, 24, 24f);
-        ContentSizeFitter contentFitter = content.AddComponent<ContentSizeFitter>();
-        contentFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-        settingsScroll.viewport = viewportRect;
-        settingsScroll.content = contentRect;
+        GameObject content = CreateScrollingContent(settingsPanel, "Settings");
 
         TextMeshProUGUI header = CreateText("HeaderLabel", content.transform, "Select Robot Model", 48f);
         header.fontStyle = FontStyles.Bold;
@@ -431,6 +400,35 @@ public class BuildHomeScene
             "Reverse Drive Direction", ReverseDriveSettings.DefaultReversed);
         SetLayoutHeight(reverseDriveToggle.gameObject, 64f);
 
+        // Lite field: checkbox (persisted via FieldSceneSettings). Drive loads the stripped-down
+        // LiteScene — one of each field feature — instead of the full field. Build it with
+        // Tools > RoboSim > Scenes > Build Lite Field Scene; until then the setting falls back.
+        Toggle liteFieldToggle = CreateToggle("LiteFieldToggle", content.transform,
+            "Lite Field (faster)", FieldSceneSettings.DefaultUseLiteField);
+        SetLayoutHeight(liteFieldToggle.gameObject, 64f);
+
+        // Team code: reveals private robots whose owner code matches. Private models ship inside the
+        // app but stay out of the list above until their owner types the code here (RobotOwnerSettings
+        // keeps the entered codes in PlayerPrefs).
+        TextMeshProUGUI teamCodeLabel = CreateText("TeamCodeLabel", content.transform, "Team Code", 40f);
+        teamCodeLabel.fontStyle = FontStyles.Bold;
+        SetLayoutHeight(teamCodeLabel.gameObject, 56f);
+
+        TMP_InputField teamCodeInput = CreateInputField("TeamCodeInput", content.transform,
+            "Enter a code to unlock a robot", 34f);
+        SetLayoutHeight(teamCodeInput.gameObject, 72f);
+
+        Button unlockButton = CreateButton("UnlockCodeButton", content.transform, "Unlock", 36f, AccentColor);
+        SetLayoutHeight(unlockButton.gameObject, 72f);
+
+        TextMeshProUGUI teamCodeStatus = CreateText("TeamCodeStatus", content.transform, string.Empty, 30f);
+        teamCodeStatus.alignment = TextAlignmentOptions.Center;
+        SetLayoutHeight(teamCodeStatus.gameObject, 44f);
+
+        Button forgetCodesButton = CreateButton("ForgetCodesButton", content.transform,
+            "Forget Codes", 32f, NeutralColor);
+        SetLayoutHeight(forgetCodesButton.gameObject, 60f);
+
         // Entry point to the button -> mechanism mapping screen.
         Button configureButton = CreateButton("ConfigureControllerButton", content.transform,
             "Configure Controller", 40f, AccentColor);
@@ -440,6 +438,11 @@ public class BuildHomeScene
         Button editLayoutButton = CreateButton("EditLayoutButton", content.transform,
             "Edit Control Layout", 40f, AccentColor);
         SetLayoutHeight(editLayoutButton.gameObject, 84f);
+
+        // Entry point to the upload-your-own-robot screen.
+        Button submitRobotButton = CreateButton("SubmitRobotButton", content.transform,
+            "Submit a Robot", 40f, AccentColor);
+        SetLayoutHeight(submitRobotButton.gameObject, 84f);
 
         Button backButton = CreateButton("BackButton", content.transform, "Back", 44f, AccentColor);
         SetLayoutHeight(backButton.gameObject, 96f);
@@ -451,6 +454,9 @@ public class BuildHomeScene
 
         // Control layout panel (inactive; opened from Settings > Edit Control Layout).
         ControlsLayoutParts layoutParts = BuildControlsLayoutPanel(canvasGo.transform);
+
+        // Submit-a-robot panel (inactive; opened from Settings > Submit a Robot).
+        SubmitRobotParts submitParts = BuildSubmitRobotPanel(canvasGo.transform);
 
         // Loading overlay: built LAST so it's the top-most canvas child, covering everything while
         // the field scene loads. Inactive until Drive is pressed.
@@ -479,6 +485,9 @@ public class BuildHomeScene
         so.FindProperty("controlsOpacityLabel").objectReferenceValue = opacityLabel;
         so.FindProperty("automaticMatchloadToggle").objectReferenceValue = autoMatchloadToggle;
         so.FindProperty("reverseDriveToggle").objectReferenceValue = reverseDriveToggle;
+        so.FindProperty("liteFieldToggle").objectReferenceValue = liteFieldToggle;
+        so.FindProperty("teamCodeInput").objectReferenceValue = teamCodeInput;
+        so.FindProperty("teamCodeStatusLabel").objectReferenceValue = teamCodeStatus;
 
         // Controller config screen: same root object, wired to the diagram it opens.
         ControllerConfigScreen configScreen = homeRoot.AddComponent<ControllerConfigScreen>();
@@ -518,6 +527,25 @@ public class BuildHomeScene
         layoutSo.ApplyModifiedPropertiesWithoutUndo();
 
         so.FindProperty("controlsLayout").objectReferenceValue = layoutScreen;
+
+        // Submit-a-robot screen: same root object, wired to its panel and the upload destination.
+        SubmitRobotScreen submitScreen = homeRoot.AddComponent<SubmitRobotScreen>();
+        SerializedObject submitSo = new SerializedObject(submitScreen);
+        submitSo.FindProperty("panel").objectReferenceValue = submitParts.panel;
+        submitSo.FindProperty("config").objectReferenceValue =
+            AssetDatabase.LoadAssetAtPath<RobotUploadConfig>(UploadConfigPath);
+        submitSo.FindProperty("teamInput").objectReferenceValue = submitParts.team;
+        submitSo.FindProperty("robotInput").objectReferenceValue = submitParts.robot;
+        submitSo.FindProperty("contactInput").objectReferenceValue = submitParts.contact;
+        submitSo.FindProperty("notesInput").objectReferenceValue = submitParts.notes;
+        submitSo.FindProperty("chooseFileButton").objectReferenceValue = submitParts.chooseFile;
+        submitSo.FindProperty("fileLabel").objectReferenceValue = submitParts.fileLabel;
+        submitSo.FindProperty("sendButton").objectReferenceValue = submitParts.send;
+        submitSo.FindProperty("progressBar").objectReferenceValue = submitParts.progress;
+        submitSo.FindProperty("statusLabel").objectReferenceValue = submitParts.status;
+        submitSo.ApplyModifiedPropertiesWithoutUndo();
+
+        so.FindProperty("submitRobot").objectReferenceValue = submitScreen;
         so.ApplyModifiedPropertiesWithoutUndo();
 
         UnityEventTools.AddPersistentListener(driveButton.onClick, controller.OnDrivePressed);
@@ -525,10 +553,16 @@ public class BuildHomeScene
         UnityEventTools.AddPersistentListener(backButton.onClick, controller.OnBackPressed);
         UnityEventTools.AddPersistentListener(configureButton.onClick, controller.OnConfigureControllerPressed);
         UnityEventTools.AddPersistentListener(editModelsButton.onClick, controller.OnEditModelsPressed);
+        UnityEventTools.AddPersistentListener(unlockButton.onClick, controller.OnUnlockCodePressed);
+        UnityEventTools.AddPersistentListener(forgetCodesButton.onClick, controller.OnForgetCodesPressed);
         UnityEventTools.AddPersistentListener(configParts.backButton.onClick, controller.OnConfigBackPressed);
         UnityEventTools.AddPersistentListener(editLayoutButton.onClick, controller.OnEditLayoutPressed);
         UnityEventTools.AddPersistentListener(layoutParts.backButton.onClick, controller.OnLayoutBackPressed);
         UnityEventTools.AddPersistentListener(layoutParts.resetButton.onClick, layoutScreen.OnResetPressed);
+        UnityEventTools.AddPersistentListener(submitRobotButton.onClick, controller.OnSubmitRobotPressed);
+        UnityEventTools.AddPersistentListener(submitParts.backButton.onClick, controller.OnSubmitBackPressed);
+        UnityEventTools.AddPersistentListener(submitParts.chooseFile.onClick, submitScreen.OnChooseFilePressed);
+        UnityEventTools.AddPersistentListener(submitParts.send.onClick, submitScreen.OnSendPressed);
     }
 
     // --- Controller config panel ---
@@ -771,6 +805,95 @@ public class BuildHomeScene
         captionRect.pivot = new Vector2(0.5f, 0.5f);
         captionRect.anchoredPosition = new Vector2(position.x, position.y - 92f);
         captionRect.sizeDelta = new Vector2(240f, 28f);
+    }
+
+    // --- Submit a Robot panel ---
+
+    private class SubmitRobotParts
+    {
+        public GameObject panel;
+        public TMP_InputField team;
+        public TMP_InputField robot;
+        public TMP_InputField contact;
+        public TMP_InputField notes;
+        public Button chooseFile;
+        public TextMeshProUGUI fileLabel;
+        public Button send;
+        public Slider progress;
+        public TextMeshProUGUI status;
+        public Button backButton;
+    }
+
+    // Where a player sends their own robot in. The screen is deliberately plain-spoken: the file goes
+    // to the developer and comes back set up in an update, because every step of robot setup
+    // (collider generation, the drivetrain rig, mechanism joints, prefab saving) is Editor-only and
+    // cannot run in the shipped app.
+    private static SubmitRobotParts BuildSubmitRobotPanel(Transform canvas)
+    {
+        var parts = new SubmitRobotParts();
+
+        GameObject panel = CreatePanel("SubmitRobotPanel", canvas, new Vector2(760f, 980f));
+        parts.panel = panel;
+        GameObject content = CreateScrollingContent(panel, "Submit");
+
+        TextMeshProUGUI header = CreateText("SubmitHeader", content.transform, "Submit a Robot", 48f);
+        header.fontStyle = FontStyles.Bold;
+        SetLayoutHeight(header.gameObject, 66f);
+
+        TextMeshProUGUI hint = CreateText("SubmitHint", content.transform,
+            "Send your robot's FBX or URDF and it gets set up for you, then arrives in an update.", 28f);
+        SetLayoutHeight(hint.gameObject, 76f);
+
+        parts.team = CreateInputField("TeamInput", content.transform, "Team (e.g. 654V)", 32f);
+        SetLayoutHeight(parts.team.gameObject, 68f);
+        parts.robot = CreateInputField("RobotNameInput", content.transform, "Robot name", 32f);
+        SetLayoutHeight(parts.robot.gameObject, 68f);
+        parts.contact = CreateInputField("ContactInput", content.transform, "Email or Discord", 32f);
+        SetLayoutHeight(parts.contact.gameObject, 68f);
+        parts.notes = CreateInputField("NotesInput", content.transform,
+            "Anything I should know (optional)", 32f);
+        SetLayoutHeight(parts.notes.gameObject, 68f);
+
+        parts.chooseFile = CreateButton("ChooseFileButton", content.transform, "Choose File", 36f, NeutralColor);
+        SetLayoutHeight(parts.chooseFile.gameObject, 72f);
+
+        parts.fileLabel = CreateText("SubmitFileLabel", content.transform, "No file chosen", 28f);
+        SetLayoutHeight(parts.fileLabel.gameObject, 44f);
+
+        parts.progress = CreateSlider("SubmitProgress", content.transform, 0f, 1f, 0f);
+        SetLayoutHeight(parts.progress.gameObject, 30f);
+        parts.progress.interactable = false; // a read-out, not a control
+        parts.progress.gameObject.SetActive(false);
+
+        parts.send = CreateButton("SendRobotButton", content.transform, "Send", 40f, AccentColor);
+        SetLayoutHeight(parts.send.gameObject, 84f);
+        parts.send.interactable = false; // nothing to send until a file is chosen
+
+        parts.status = CreateText("SubmitStatus", content.transform, string.Empty, 28f);
+        SetLayoutHeight(parts.status.gameObject, 90f);
+
+        parts.backButton = CreateButton("SubmitBackButton", content.transform, "Back", 36f, AccentColor);
+        SetLayoutHeight(parts.backButton.gameObject, 76f);
+
+        panel.SetActive(false); // opened from Settings > Submit a Robot
+        return parts;
+    }
+
+    // The submissions destination asset. Created empty on purpose — it needs a Firebase bucket and
+    // web API key that only the project owner can supply, and the submit screen says so until it has
+    // them rather than failing halfway through an upload.
+    private static RobotUploadConfig EnsureUploadConfig(out bool created)
+    {
+        RobotUploadConfig config = AssetDatabase.LoadAssetAtPath<RobotUploadConfig>(UploadConfigPath);
+        created = false;
+        if (config != null) return config;
+
+        if (!AssetDatabase.IsValidFolder("Assets/Settings")) AssetDatabase.CreateFolder("Assets", "Settings");
+        config = ScriptableObject.CreateInstance<RobotUploadConfig>();
+        AssetDatabase.CreateAsset(config, UploadConfigPath);
+        AssetDatabase.SaveAssets();
+        created = true;
+        return config;
     }
 
     // --- Control layout panel ---
@@ -1089,6 +1212,49 @@ public class BuildHomeScene
         return layout;
     }
 
+    // A panel whose rows scroll. Both the settings and submit panels have more rows than fit at a
+    // fixed height, and without this the layout overflows CENTERED — the lower rows (the toggles, the
+    // buttons) simply end up off-screen with no scrollbar to reveal them. The viewport clips; the
+    // content grows to fit. Returns the object rows should be added to.
+    private static GameObject CreateScrollingContent(GameObject panel, string namePrefix)
+    {
+        GameObject viewport = CreateUIObject(namePrefix + "Viewport", panel.transform);
+        RectTransform viewportRect = (RectTransform)viewport.transform;
+        viewportRect.anchorMin = Vector2.zero;
+        viewportRect.anchorMax = Vector2.one;
+        viewportRect.offsetMin = new Vector2(12f, 12f);
+        viewportRect.offsetMax = new Vector2(-12f, -12f);
+        // Scroll-catcher. UGUI routes a wheel event by raycasting the pointer and bubbling UP from
+        // whatever graphic it hit, so with no raycast target here the only scrollable spots are the
+        // rows that happen to have their own graphic — the layout padding, the gaps between rows and
+        // any space past the end of the list are all dead, which reads as "I have to put my cursor on
+        // a button to scroll". The panel's own image can't stand in: it's this object's PARENT, and
+        // bubbling never travels back down. Transparent, so the panel fill still shows through.
+        Image viewportCatcher = viewport.AddComponent<Image>();
+        viewportCatcher.color = Color.clear;
+        viewportCatcher.raycastTarget = true;
+        viewport.AddComponent<RectMask2D>();
+        ScrollRect scroll = viewport.AddComponent<ScrollRect>();
+        scroll.horizontal = false;
+        scroll.vertical = true;
+        scroll.movementType = ScrollRect.MovementType.Clamped;
+        scroll.scrollSensitivity = 28f;
+
+        GameObject content = CreateUIObject(namePrefix + "Content", viewport.transform);
+        RectTransform contentRect = (RectTransform)content.transform;
+        contentRect.anchorMin = new Vector2(0f, 1f);
+        contentRect.anchorMax = new Vector2(1f, 1f);
+        contentRect.pivot = new Vector2(0.5f, 1f);
+        contentRect.anchoredPosition = Vector2.zero;
+        contentRect.sizeDelta = Vector2.zero; // width stretches to the viewport; height fits content
+        AddVerticalLayout(content, 24, 24f);
+        ContentSizeFitter contentFitter = content.AddComponent<ContentSizeFitter>();
+        contentFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        scroll.viewport = viewportRect;
+        scroll.content = contentRect;
+        return content;
+    }
+
     private static void SetLayoutHeight(GameObject go, float height)
     {
         LayoutElement element = go.AddComponent<LayoutElement>();
@@ -1207,6 +1373,49 @@ public class BuildHomeScene
         Toggle toggle = go.GetComponent<Toggle>();
         toggle.isOn = isOn;
         return toggle;
+    }
+
+    // Text box built from TMP's own default control (correct Text Area / Text / Placeholder wiring,
+    // which is fiddly to hand-roll), then themed to match the panel. Same approach as the slider and
+    // toggle helpers above.
+    private static TMP_InputField CreateInputField(string name, Transform parent, string placeholder,
+        float fontSize)
+    {
+        var resources = new TMP_DefaultControls.Resources
+        {
+            standard = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd"),
+            inputField = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/InputFieldBackground.psd"),
+        };
+
+        GameObject go = TMP_DefaultControls.CreateInputField(resources);
+        go.name = name;
+        go.transform.SetParent(parent, false);
+        foreach (Transform child in go.GetComponentsInChildren<Transform>(true))
+            child.gameObject.layer = LayerMask.NameToLayer("UI");
+
+        Image background = go.GetComponent<Image>();
+        if (background != null) background.color = ListColor;
+
+        TMP_InputField field = go.GetComponent<TMP_InputField>();
+        if (field.textComponent != null)
+        {
+            field.textComponent.color = TextColor;
+            field.textComponent.fontSize = fontSize;
+            field.textComponent.alignment = TextAlignmentOptions.MidlineLeft;
+        }
+        if (field.placeholder is TextMeshProUGUI placeholderText)
+        {
+            placeholderText.text = placeholder;
+            placeholderText.color = new Color(TextColor.r, TextColor.g, TextColor.b, 0.45f);
+            placeholderText.fontSize = fontSize;
+            placeholderText.alignment = TextAlignmentOptions.MidlineLeft;
+        }
+        field.pointSize = fontSize;
+        // Owner codes are short tags like "654V-8213"; uppercase keeps them readable and matches how
+        // RobotOwnerSettings normalizes them before comparing.
+        field.characterValidation = TMP_InputField.CharacterValidation.None;
+        field.lineType = TMP_InputField.LineType.SingleLine;
+        return field;
     }
 
     private static void TintChildImage(GameObject root, string path, Color color)
