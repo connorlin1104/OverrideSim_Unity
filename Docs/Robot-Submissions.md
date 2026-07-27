@@ -98,10 +98,28 @@ several GB. Filling the bucket is slow and cheap to undo; there is no way to run
 
 Three controls, in order of how much they buy:
 
-- **A lifecycle rule on the bucket** — Google Cloud console → the bucket → Lifecycle → delete objects
-  older than 30 days. This is the one that matters. Intake is *download the file, set it up, done*,
-  so `/uploads` has no reason to retain anything; the rule makes steady-state cost flat no matter how
-  much arrives, with no code and nothing to remember.
+- **A lifecycle rule on the bucket** — `Docs/storage-lifecycle.json`, applied with:
+
+  ```
+  gcloud storage buckets update gs://overridesimunity.firebasestorage.app \
+      --lifecycle-file=Docs/storage-lifecycle.json
+  ```
+
+  or by hand in the Google Cloud console → Cloud Storage → the bucket → **Lifecycle** → *Add a rule*
+  → action **Delete object**, condition **Age 30 days** *and* **Name matches prefix** `uploads/`.
+
+  This is the one that matters. Intake is *download the file, set it up, done*, so `/uploads` has no
+  reason to retain anything, and the rule makes steady-state cost flat no matter how much arrives.
+
+  **The prefix is not optional.** A lifecycle rule applies to the whole bucket, so an age-only rule
+  would also delete `/inbox/<uploaderId>.json` after 30 days — and those must live indefinitely,
+  because a player who reinstalls re-reads their inbox to recover the code for a robot that shipped
+  months ago. Losing them fails silently: the app treats a missing inbox as "nothing waiting", which
+  is exactly what it should do and exactly what makes the breakage invisible.
+
+  Deletion is permanent unless the bucket has object versioning on, which it does not by default.
+  Check nothing unprocessed is already older than 30 days before applying it to a bucket that has
+  been collecting for a while.
 - **A budget alert** in Google Cloud Billing, set low — a few dollars. It emails you within a day or
   two of anything odd, which is all the reaction time this situation needs. Note it only *notifies*;
   the documented hard stop is a budget → Pub/Sub → Cloud Function that detaches the billing account,
