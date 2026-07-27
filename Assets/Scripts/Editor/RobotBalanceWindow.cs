@@ -76,6 +76,8 @@ public class RobotBalanceWindow : EditorWindow
         public int wheelCount;
         public int colliderlessLinks;
         public float colliderlessMass;
+        public float groundClearance;   // lowest non-wheel collider above the contact plane
+        public string lowestPart;
         public string note;
     }
 
@@ -160,6 +162,13 @@ public class RobotBalanceWindow : EditorWindow
             // puts its whole mass at the link origin. The mechanism builders place a motor hub's
             // origin on its joint axis, which can be below the floor — so this is mass actively
             // pulling the COM the wrong way, not just an unmeasured link.
+            bool tight = r.groundClearance < 0.06f; // under 6 mm — a real VEX bot runs 6-10
+            EditorGUILayout.LabelField(
+                $"ground clearance {r.groundClearance * 100f:0.0} mm" +
+                (string.IsNullOrEmpty(r.lowestPart) ? "" : $"  (lowest: {r.lowestPart})") +
+                (tight ? "  — TIGHT: this robot may rest on that part instead of its wheels" : ""),
+                tight ? EditorStyles.boldLabel : EditorStyles.miniLabel);
+
             if (r.colliderlessLinks > 0)
                 EditorGUILayout.LabelField(
                     $"{r.colliderlessLinks} link(s) with no enabled collider carry " +
@@ -264,7 +273,75 @@ public class RobotBalanceWindow : EditorWindow
         r.tipGRaised = r.comHeightRaised > 0.01f ? r.halfTrack / r.comHeightRaised : r.tipG;
 
         r.tractionG = DrivetrainTuning.MeasureFriction(wheels);
+        r.groundClearance = GroundClearance(root, wheelSet, lowest, out r.lowestPart);
         return r;
+    }
+
+    // How far the lowest NON-WHEEL collider sits above the plane the wheels touch.
+    //
+    // This is the number that decides whether a robot can drive at all, and nothing surfaced it
+    // before. A drivetrain resting on a bracket instead of its tyres will spin its wheels and go
+    // nowhere — which is what PhysicsSmokeTest reports as "the wheels spun but the robot didn't
+    // turn", and it names the offending part. Worth watching after any mass change, since a robot
+    // with only a few mm to spare has no margin for the chassis settling into its contacts.
+    private static float GroundClearance(ArticulationBody root, HashSet<ArticulationBody> wheels,
+        float contactPlane, out string lowestPart)
+    {
+        lowestPart = null;
+        float lowest = float.PositiveInfinity;
+
+        foreach (Collider col in root.GetComponentsInChildren<Collider>(true))
+        {
+            if (col == null || col.isTrigger || !col.enabled || !col.gameObject.activeSelf) continue;
+            ArticulationBody owner = col.GetComponentInParent<ArticulationBody>(true);
+            if (owner == null || wheels.Contains(owner)) continue;
+
+            float bottom = LowestPoint(col);
+            if (bottom >= lowest) continue;
+            lowest = bottom;
+            lowestPart = col.transform.parent != null
+                ? $"{col.transform.parent.name}/{col.name}" : col.name;
+        }
+        return float.IsPositiveInfinity(lowest) ? 0f : lowest - contactPlane;
+    }
+
+    // Lowest world-space point of a collider, projecting its oriented box onto world up rather
+    // than reading Collider.bounds — which, on a prefab asset with no PhysX shapes, is a
+    // degenerate box at the origin and would report every part as buried under the floor.
+    private static float LowestPoint(Collider col)
+    {
+        Transform t = col.transform;
+        Vector3 lossy = t.lossyScale;
+        float uniform = Mathf.Max(Mathf.Abs(lossy.x), Mathf.Max(Mathf.Abs(lossy.y), Mathf.Abs(lossy.z)));
+
+        Vector3 centre;
+        Vector3 halfExtents;
+        switch (col)
+        {
+            case SphereCollider sphere:
+                return t.TransformPoint(sphere.center).y - sphere.radius * uniform;
+            case CapsuleCollider capsule:
+                return t.TransformPoint(capsule.center).y - capsule.height * uniform * 0.5f;
+            case BoxCollider box:
+                centre = t.TransformPoint(box.center);
+                halfExtents = box.size * 0.5f;
+                break;
+            case MeshCollider mesh when mesh.sharedMesh != null:
+                centre = t.TransformPoint(mesh.sharedMesh.bounds.center);
+                halfExtents = mesh.sharedMesh.bounds.extents;
+                break;
+            default:
+                return float.PositiveInfinity;
+        }
+
+        // Vertical half-extent of the oriented box: each local axis contributes its own half-size
+        // times how much of that axis points down. Using the local Y size alone would be wrong for
+        // a rotated part, which every C-channel on these robots is.
+        float drop = 0f;
+        drop += Mathf.Abs((t.rotation * new Vector3(lossy.x, 0f, 0f)).y) * halfExtents.x;
+        drop += Mathf.Abs((t.rotation * new Vector3(0f, lossy.y, 0f)).y) * halfExtents.y;
+        drop += Mathf.Abs((t.rotation * new Vector3(0f, 0f, lossy.z)).y) * halfExtents.z;
+        return centre.y - drop;
     }
 
     // How much upward moment (kg * world units) the robot gains with every prismatic joint driven
