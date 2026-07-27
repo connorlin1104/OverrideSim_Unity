@@ -25,24 +25,18 @@ So the flow is: player uploads → you set it up in the editor → it ships in t
 2. Enable **Authentication → Sign-in method → Anonymous**. The first uid a device is given is kept in
    PlayerPrefs and reused as the folder name for every later submission, so one player's robots stay
    together.
-3. Enable **Storage**, and set rules so the app can write submissions and read only the inbox:
+3. Enable **Storage**, then deploy the rules so the app can write submissions and read only the
+   inbox:
 
    ```
-   rules_version = '2';
-   service firebase.storage {
-     match /b/{bucket}/o {
-       match /uploads/{uid}/{file} {
-         allow write: if request.auth != null
-                      && request.resource.size < 250 * 1024 * 1024;
-         allow read: if false;
-       }
-       match /inbox/{file} {
-         allow read: if true;
-         allow write: if false;
-       }
-     }
-   }
+   firebase deploy --only storage
    ```
+
+   **`storage.rules` at the repo root is the only copy.** `firebase.json` points the deploy at it and
+   `.firebaserc` pins the project, so that file is what is running. Read the rules there; do not
+   paste a block out of documentation or out of a source comment. Both used to carry their own
+   paraphrase, and a paraphrase that quietly drops the size cap deploys clean, passes every manual
+   test, and removes the one limit below that is actually enforced.
 
    The write rule checks only that the caller signed in, **not** that the folder matches their uid.
    That is deliberate: anonymous sign-up mints a brand-new uid on every call, so a player who
@@ -64,16 +58,23 @@ So the flow is: player uploads → you set it up in the editor → it ships in t
    `robot.fbx` would be refused.
 
    `{file}` rather than `{file=**}` keeps both folders flat — uploads are always one level under the
-   uid, so nobody has a reason to build a deep tree in the bucket.
+   uid, so nobody has a reason to build a deep tree in the bucket. `SanitizeFileName` maps every
+   character outside `[A-Za-z0-9._-]` to `_`, including `/`, so an upload key can never gain a second
+   level and reach past the single-segment match.
 
 4. In Unity, fill in `Assets/Settings/RobotUploadConfig.asset`:
    - **Storage Bucket** — from the Storage tab, e.g. `overridesim.firebasestorage.app`
    - **Web API Key** — Project settings → General
-   - **Max Upload Megabytes** — 250 by default; keep the rule above in sync
+   - **Max Upload Megabytes** — currently 200; keep it at or below the cap in `storage.rules`
 
    The web API key is not a secret. Firebase web keys are public identifiers; access is decided by
-   the rules above, not by hiding the key. It ships inside every build and is committed to this
+   `storage.rules`, not by hiding the key. It ships inside every build and is committed to this
    repo deliberately — see *What it can cost* for what does and doesn't follow from that.
+
+   GitHub secret scanning flags it anyway, because `AIzaSy…` is also the shape of billable Maps and
+   Cloud keys. Close those alerts as a false positive rather than rotating: a replacement is equally
+   public the moment it ships, and the key is API-restricted to the services this app calls, so it
+   cannot reach anything else on the project.
 
 Until the bucket and key are set, the screen still opens and lets a player pick a file, and then says
 submitting isn't switched on yet — it never fails halfway through an upload.

@@ -18,8 +18,8 @@ using UnityEngine.Networking;
 // The file is written by hand from the Firebase console when the robot ships:
 //   { "items": [ { "robotName": "654V Claw", "code": "654V-8213", "message": "" } ] }
 //
-// Suggested Storage Rules — public read, no writes from the app:
-//   match /inbox/{file=**} { allow read: if true; allow write: if false; }
+// /inbox is world-readable and never written by the app; the enforcing text is storage.rules at the
+// repo root, not a copy here.
 //
 // Public read is deliberate: the uploader id is a 28-character random string and is itself the only
 // thing guarding an inbox, so it is treated as a secret (shown to the player as a recovery code, not

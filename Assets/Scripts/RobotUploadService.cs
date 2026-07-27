@@ -15,9 +15,9 @@ using UnityEngine.Networking;
 // account: it does not survive a reinstall on its own, which is why it is shown to the player as a
 // recovery id they can write down and paste back (AdoptUploaderId). That bearer code IS the account.
 //
-// Suggested Storage Rules — a drop box that players write to and never read:
-//   match /uploads/{uid}/{file=**} { allow write: if request.auth != null; allow read: if false; }
-//   match /inbox/{file=**}         { allow read:  if true;  allow write: if false; }
+// /uploads is a drop box: players write to it and never read back. What enforces that is
+// storage.rules at the repo root, which is the deployed text rather than a paraphrase of it — this
+// comment used to restate the rules and had drifted into omitting the upload size cap.
 //
 // The write rule checks only that the caller signed in, not that the folder matches their uid: a
 // player who restores an id from an old device signs in fresh (a NEW auth uid) but must still land in
