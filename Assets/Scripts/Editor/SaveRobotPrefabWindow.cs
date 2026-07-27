@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -72,13 +73,17 @@ public class SaveRobotPrefabWindow : EditorWindow
         bool isPrivate = visibility == RobotModelCatalog.Visibility.Private;
         using (new EditorGUI.DisabledScope(!isPrivate))
         {
-            ownerCode = EditorGUILayout.TextField(new GUIContent("Owner Code",
-                "The code you give this robot's owner. Case- and space-insensitive."), ownerCode);
+            ownerCode = EditorGUILayout.TextField(new GUIContent("Owner Code(s)",
+                "The code you give this robot's owner. Case- and space-insensitive. Separate several " +
+                "with commas — give this robot its own code AND its team's code, and holding either " +
+                "one reveals it. Reusing one team code across several robots is how a team shares a " +
+                "set."), ownerCode);
         }
         ownerLabel = EditorGUILayout.TextField(new GUIContent("Owner Label",
             "Optional — shown beside the name in the picker (e.g. a team number)."), ownerLabel);
 
-        if (isPrivate && string.IsNullOrWhiteSpace(ownerCode))
+        List<string> codes = RobotOwnerSettings.SplitCodes(ownerCode);
+        if (isPrivate && codes.Count == 0)
         {
             EditorGUILayout.HelpBox(
                 "A Private robot needs an owner code — without one nothing can ever reveal it, and it " +
@@ -87,13 +92,13 @@ public class SaveRobotPrefabWindow : EditorWindow
         else if (isPrivate)
         {
             EditorGUILayout.HelpBox(
-                $"Give the owner this code: {RobotOwnerSettings.Normalize(ownerCode)}\n" +
+                $"Any one of these reveals it: {string.Join(", ", codes)}\n" +
                 "Note this hides the robot from the picker; it does not stop someone extracting it " +
                 "from the app files.", MessageType.Info);
         }
 
         EditorGUILayout.Space();
-        using (new EditorGUI.DisabledScope(isPrivate && string.IsNullOrWhiteSpace(ownerCode)))
+        using (new EditorGUI.DisabledScope(isPrivate && codes.Count == 0))
         {
             if (!GUILayout.Button("Save Prefab & Link to Picker", GUILayout.Height(30))) return;
         }
@@ -191,11 +196,13 @@ public static class SaveRobotPrefab
         if (visibility.HasValue)
         {
             entry.visibility = visibility.Value;
-            entry.ownerCode = RobotOwnerSettings.Normalize(ownerCode);
+            // Store the codes canonically (normalized, de-duplicated, comma-separated) so what the
+            // asset shows is exactly what a player has to type, however the field was filled in.
+            entry.ownerCode = string.Join(", ", RobotOwnerSettings.SplitCodes(ownerCode));
             entry.ownerLabel = string.IsNullOrWhiteSpace(ownerLabel) ? string.Empty : ownerLabel.Trim();
             visibilityNote = visibility.Value == RobotModelCatalog.Visibility.Private
-                ? $"\nListed as PRIVATE — it stays hidden until someone enters '{entry.ownerCode}' " +
-                  "in Settings > Team Code."
+                ? $"\nListed as PRIVATE — it stays hidden until someone enters one of " +
+                  $"'{entry.ownerCode}' in Settings > Team Code."
                 : "\nListed as PUBLIC — everyone sees it.";
         }
 

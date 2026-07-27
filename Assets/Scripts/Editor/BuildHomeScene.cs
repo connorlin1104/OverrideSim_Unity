@@ -177,7 +177,9 @@ public class BuildHomeScene
                IsRefSet(so, "controlsLayout") && IsRefSet(so, "loadingOverlay") &&
                IsRefSet(so, "automaticMatchloadToggle") && IsRefSet(so, "liteFieldToggle") &&
                IsRefSet(so, "teamCodeInput") && IsRefSet(so, "teamCodeStatusLabel") &&
-               IsRefSet(so, "submitRobot") &&
+               IsRefSet(so, "submitRobot") && IsRefSet(so, "recoveryIdLabel") &&
+               IsRefSet(so, "recoveryIdInput") && IsRefSet(so, "uploadConfig") &&
+               IsRefSet(so, "inboxNotice") && IsRefSet(so, "inboxLabel") &&
                IsRefSet(configSo, "controlStyleButton");
     }
 
@@ -429,6 +431,33 @@ public class BuildHomeScene
             "Forget Codes", 32f, NeutralColor);
         SetLayoutHeight(forgetCodesButton.gameObject, 60f);
 
+        // Recovery ID: the id the upload service minted for this device. It is the only link between a
+        // player and the robots they've sent in, it lives only in PlayerPrefs, and a reinstall wipes
+        // it — so it's shown here to be written down, and can be pasted back on a new device.
+        TextMeshProUGUI recoveryHeader = CreateText("RecoveryIdHeader", content.transform, "Your ID", 40f);
+        recoveryHeader.fontStyle = FontStyles.Bold;
+        SetLayoutHeight(recoveryHeader.gameObject, 56f);
+
+        TextMeshProUGUI recoveryHint = CreateText("RecoveryIdHint", content.transform,
+            "Keep this if you've sent a robot in — it's how a new phone finds it again.", 26f);
+        SetLayoutHeight(recoveryHint.gameObject, 62f);
+
+        TextMeshProUGUI recoveryIdLabel = CreateText("RecoveryIdLabel", content.transform,
+            "No ID yet", 26f);
+        SetLayoutHeight(recoveryIdLabel.gameObject, 44f);
+
+        Button copyRecoveryButton = CreateButton("CopyRecoveryIdButton", content.transform,
+            "Copy My ID", 32f, NeutralColor);
+        SetLayoutHeight(copyRecoveryButton.gameObject, 64f);
+
+        TMP_InputField recoveryIdInput = CreateInputField("RecoveryIdInput", content.transform,
+            "Paste an ID from an old device", 30f);
+        SetLayoutHeight(recoveryIdInput.gameObject, 68f);
+
+        Button restoreRecoveryButton = CreateButton("RestoreRecoveryIdButton", content.transform,
+            "Restore", 32f, NeutralColor);
+        SetLayoutHeight(restoreRecoveryButton.gameObject, 64f);
+
         // Entry point to the button -> mechanism mapping screen.
         Button configureButton = CreateButton("ConfigureControllerButton", content.transform,
             "Configure Controller", 40f, AccentColor);
@@ -457,6 +486,9 @@ public class BuildHomeScene
 
         // Submit-a-robot panel (inactive; opened from Settings > Submit a Robot).
         SubmitRobotParts submitParts = BuildSubmitRobotPanel(canvasGo.transform);
+
+        // Inbox notice (inactive; shown at launch when a robot the player submitted has come back).
+        InboxNoticeParts inboxParts = BuildInboxNotice(canvasGo.transform);
 
         // Loading overlay: built LAST so it's the top-most canvas child, covering everything while
         // the field scene loads. Inactive until Drive is pressed.
@@ -488,6 +520,13 @@ public class BuildHomeScene
         so.FindProperty("liteFieldToggle").objectReferenceValue = liteFieldToggle;
         so.FindProperty("teamCodeInput").objectReferenceValue = teamCodeInput;
         so.FindProperty("teamCodeStatusLabel").objectReferenceValue = teamCodeStatus;
+        so.FindProperty("recoveryIdLabel").objectReferenceValue = recoveryIdLabel;
+        so.FindProperty("copyRecoveryIdButton").objectReferenceValue = copyRecoveryButton;
+        so.FindProperty("recoveryIdInput").objectReferenceValue = recoveryIdInput;
+        so.FindProperty("uploadConfig").objectReferenceValue =
+            AssetDatabase.LoadAssetAtPath<RobotUploadConfig>(UploadConfigPath);
+        so.FindProperty("inboxNotice").objectReferenceValue = inboxParts.panel;
+        so.FindProperty("inboxLabel").objectReferenceValue = inboxParts.label;
 
         // Controller config screen: same root object, wired to the diagram it opens.
         ControllerConfigScreen configScreen = homeRoot.AddComponent<ControllerConfigScreen>();
@@ -538,6 +577,7 @@ public class BuildHomeScene
         submitSo.FindProperty("robotInput").objectReferenceValue = submitParts.robot;
         submitSo.FindProperty("contactInput").objectReferenceValue = submitParts.contact;
         submitSo.FindProperty("notesInput").objectReferenceValue = submitParts.notes;
+        submitSo.FindProperty("sharingButton").objectReferenceValue = submitParts.sharing;
         submitSo.FindProperty("chooseFileButton").objectReferenceValue = submitParts.chooseFile;
         submitSo.FindProperty("fileLabel").objectReferenceValue = submitParts.fileLabel;
         submitSo.FindProperty("sendButton").objectReferenceValue = submitParts.send;
@@ -562,7 +602,48 @@ public class BuildHomeScene
         UnityEventTools.AddPersistentListener(submitRobotButton.onClick, controller.OnSubmitRobotPressed);
         UnityEventTools.AddPersistentListener(submitParts.backButton.onClick, controller.OnSubmitBackPressed);
         UnityEventTools.AddPersistentListener(submitParts.chooseFile.onClick, submitScreen.OnChooseFilePressed);
+        UnityEventTools.AddPersistentListener(submitParts.sharing.onClick, submitScreen.OnSharingPressed);
         UnityEventTools.AddPersistentListener(submitParts.send.onClick, submitScreen.OnSendPressed);
+        UnityEventTools.AddPersistentListener(copyRecoveryButton.onClick, controller.OnCopyRecoveryIdPressed);
+        UnityEventTools.AddPersistentListener(restoreRecoveryButton.onClick, controller.OnRestoreRecoveryIdPressed);
+        UnityEventTools.AddPersistentListener(inboxParts.unlockButton.onClick, controller.OnInboxUnlockPressed);
+    }
+
+    // --- Robot inbox notice ---
+
+    private class InboxNoticeParts
+    {
+        public GameObject panel;
+        public TextMeshProUGUI label;
+        public Button unlockButton;
+    }
+
+    // A banner above the main panel saying a submitted robot has come back, with a button that enters
+    // the owner code the inbox handed over.
+    //
+    // It sits OUTSIDE the main panel rather than as a row inside it: it is hidden almost every launch,
+    // and an empty row inside a fixed-height, middle-aligned layout leaves a visible gap. Built before
+    // the loading overlay so the overlay stays the top-most canvas child.
+    private static InboxNoticeParts BuildInboxNotice(Transform canvas)
+    {
+        var parts = new InboxNoticeParts();
+
+        GameObject panel = CreatePanel("InboxNotice", canvas, new Vector2(760f, 176f));
+        RectTransform rect = (RectTransform)panel.transform;
+        rect.anchoredPosition = new Vector2(0f, 266f); // the gap between the title and the main panel
+        parts.panel = panel;
+        AddVerticalLayout(panel, 16, 16f);
+
+        parts.label = CreateText("InboxLabel", panel.transform, "Your robot is ready.", 34f);
+        parts.label.fontStyle = FontStyles.Bold;
+        SetLayoutHeight(parts.label.gameObject, 56f);
+
+        parts.unlockButton = CreateButton("InboxUnlockButton", panel.transform,
+            "Add it to my list", 32f, AccentColor);
+        SetLayoutHeight(parts.unlockButton.gameObject, 64f);
+
+        panel.SetActive(false); // shown only when the inbox actually has something waiting
+        return parts;
     }
 
     // --- Controller config panel ---
@@ -816,6 +897,7 @@ public class BuildHomeScene
         public TMP_InputField robot;
         public TMP_InputField contact;
         public TMP_InputField notes;
+        public Button sharing;
         public Button chooseFile;
         public TextMeshProUGUI fileLabel;
         public Button send;
@@ -853,6 +935,12 @@ public class BuildHomeScene
         parts.notes = CreateInputField("NotesInput", content.transform,
             "Anything I should know (optional)", 32f);
         SetLayoutHeight(parts.notes.gameObject, 68f);
+
+        // Who may use the robot afterwards — the uploader's call, since it decides whether the finished
+        // catalog entry ships Public or Private. Cycles through RobotUploadService.SharingOptions.
+        parts.sharing = CreateButton("SharingButton", content.transform,
+            "Who can use it:  " + RobotUploadService.SharingOptions[0], 28f, NeutralColor);
+        SetLayoutHeight(parts.sharing.gameObject, 72f);
 
         parts.chooseFile = CreateButton("ChooseFileButton", content.transform, "Choose File", 36f, NeutralColor);
         SetLayoutHeight(parts.chooseFile.gameObject, 72f);

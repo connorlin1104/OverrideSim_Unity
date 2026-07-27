@@ -10,14 +10,33 @@ using UnityEngine.Networking;
 //   1. POST identitytoolkit.googleapis.com/v1/accounts:signUp   -> anonymous uid + idToken
 //   2. POST firebasestorage.googleapis.com/v0/b/<bucket>/o?name=... -> the bytes
 //
-// The anonymous uid is cached in PlayerPrefs so repeat submissions from one device group together —
-// it is an upload identity, not an account, and it does not survive a reinstall.
+// The first anonymous uid a device is given is cached in PlayerPrefs and reused as the folder name
+// for every later submission, so one player's robots stay together. It is an upload identity, not an
+// account: it does not survive a reinstall on its own, which is why it is shown to the player as a
+// recovery id they can write down and paste back (AdoptUploaderId). That bearer code IS the account.
 //
-// Suggested Storage Rules (writes only into your own folder, no reads from the app):
-//   match /uploads/{uid}/{file=**} { allow write: if request.auth.uid == uid; allow read: if false; }
+// Suggested Storage Rules — a drop box that players write to and never read:
+//   match /uploads/{uid}/{file=**} { allow write: if request.auth != null; allow read: if false; }
+//   match /inbox/{file=**}         { allow read:  if true;  allow write: if false; }
+//
+// The write rule checks only that the caller signed in, not that the folder matches their uid: a
+// player who restores an id from an old device signs in fresh (a NEW auth uid) but must still land in
+// their original folder. Anyone can obtain an anonymous sign-in, so treat /uploads as untrusted input
+// — which it is regardless, being arbitrary player files.
 public static class RobotUploadService
 {
     public const string UploaderIdPrefKey = "RobotUploaderId";
+
+    // What the uploader wants done with their robot once it's set up — it decides whether the finished
+    // catalog entry ships Public or Private, so it has to be their call rather than a guess. Plain
+    // sentences because a human reads them off the sidecar. The default is the most private option:
+    // guessing wrong the other way publishes a design someone wanted kept.
+    public static readonly string[] SharingOptions =
+    {
+        "Only me",
+        "My team — anyone I give the code to",
+        "Anyone — list it publicly",
+    };
 
     private const string SignUpUrl = "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=";
     private const string StorageUrl = "https://firebasestorage.googleapis.com/v0/b/{0}/o?name={1}";
@@ -38,6 +57,7 @@ public static class RobotUploadService
         public string robotName;
         public string contact;
         public string notes;
+        public string sharing; // one of SharingOptions — who the uploader wants to be able to use it
         public string fileName;
         public long fileBytes;
         public string uploaderId;
@@ -105,19 +125,23 @@ public static class RobotUploadService
             uid = response.localId;
         }
 
-        // Keep the first uid we're ever given, so a player's later submissions land in one folder.
+        // Keep the first uid we're ever given and keep USING it, rather than the uid this particular
+        // sign-in returned. Anonymous sign-up mints a new uid every call, so the stored one is the only
+        // stable handle a player has — it names their upload folder, it is what their inbox is keyed
+        // on, and it is what a restore on a new device brings back.
         string storedUid = PlayerPrefs.GetString(UploaderIdPrefKey, string.Empty);
         if (string.IsNullOrEmpty(storedUid))
         {
-            PlayerPrefs.SetString(UploaderIdPrefKey, uid);
+            storedUid = uid;
+            PlayerPrefs.SetString(UploaderIdPrefKey, storedUid);
             PlayerPrefs.Save();
         }
-        info.uploaderId = uid;
+        info.uploaderId = storedUid;
 
         onProgress?.Invoke(0.05f);
 
         // --- 2. the model itself ---
-        string folder = $"uploads/{uid}";
+        string folder = $"uploads/{storedUid}";
         string modelPath = $"{folder}/{SanitizeFileName(info.fileName)}";
         using (UnityWebRequest upload = new UnityWebRequest(
                    string.Format(StorageUrl, config.storageBucket, UnityWebRequest.EscapeURL(modelPath)),
@@ -168,8 +192,31 @@ public static class RobotUploadService
         onDone?.Invoke(true, $"Sent {Format(bytes.LongLength)}. {(string.IsNullOrWhiteSpace(info.robotName) ? "Your robot" : info.robotName)} is on its way.");
     }
 
+    // The uploader id held on this device, or empty if nothing has ever been sent from it. This is the
+    // only thing tying a player to their submissions and to their inbox, so it is worth showing them:
+    // PlayerPrefs is all that holds it, and a reinstall wipes it.
+    public static string UploaderId => PlayerPrefs.GetString(UploaderIdPrefKey, string.Empty);
+
+    // Take on an id from another install, so a new phone reclaims the robots the old one sent in.
+    // Permissive about case and surrounding space (it gets read off a screenshot), strict about shape,
+    // so a mistyped id is rejected here rather than silently pointing the inbox at nothing. Firebase
+    // uids are 28 alphanumeric characters; the bounds are loose in case that ever changes.
+    public static bool AdoptUploaderId(string id)
+    {
+        string trimmed = string.IsNullOrWhiteSpace(id) ? string.Empty : id.Trim();
+        if (trimmed.Length < 20 || trimmed.Length > 64) return false;
+        foreach (char c in trimmed)
+        {
+            if (!char.IsLetterOrDigit(c)) return false;
+        }
+
+        PlayerPrefs.SetString(UploaderIdPrefKey, trimmed);
+        PlayerPrefs.Save();
+        return true;
+    }
+
     public static Submission DescribeThisDevice(string teamName, string robotName, string contact,
-        string notes, string fileName, long fileBytes, string submittedAtUtc)
+        string notes, string sharing, string fileName, long fileBytes, string submittedAtUtc)
     {
         return new Submission
         {
@@ -177,6 +224,7 @@ public static class RobotUploadService
             robotName = robotName,
             contact = contact,
             notes = notes,
+            sharing = sharing,
             fileName = fileName,
             fileBytes = fileBytes,
             uploaderId = PlayerPrefs.GetString(UploaderIdPrefKey, string.Empty),

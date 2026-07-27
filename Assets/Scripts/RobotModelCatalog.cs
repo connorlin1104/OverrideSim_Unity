@@ -48,16 +48,23 @@ public class RobotModelCatalog : ScriptableObject
         [Tooltip("Public models are listed for everyone. Private models are hidden until someone " +
                  "enters this entry's owner code in Settings.")]
         public Visibility visibility = Visibility.Public;
-        [Tooltip("The code that reveals this model when its owner types it in Settings > Team Code. " +
-                 "Only meaningful on a Private entry. Case- and space-insensitive.")]
+        [Tooltip("The code(s) that reveal this model when its owner types one in Settings > Team Code. " +
+                 "Only meaningful on a Private entry. Separate several with commas — a robot can carry " +
+                 "its own one-off code AND its team's code, and holding either one reveals it. " +
+                 "Case- and space-insensitive.")]
         public string ownerCode;
         [Tooltip("Optional label for whose robot this is (e.g. a team number). Shown in the picker.")]
         public string ownerLabel;
 
+        // Every code that reveals this entry. Giving several entries one code in common is how a team
+        // shares its robots: "654V-TEAM" on five entries means one code opens all five, with no
+        // accounts and nothing to verify.
+        public List<string> OwnerCodes => RobotOwnerSettings.SplitCodes(ownerCode);
+
         // A private entry with no code can never be revealed, so it would silently disappear from the
         // picker. That's a misconfiguration rather than a policy, and VisibleModels warns about it.
         public bool IsVisibleOnThisDevice =>
-            visibility == Visibility.Public || RobotOwnerSettings.HasCode(ownerCode);
+            visibility == Visibility.Public || RobotOwnerSettings.HasAnyCode(ownerCode);
     }
 
     public List<Entry> models = new List<Entry>();
@@ -82,7 +89,7 @@ public class RobotModelCatalog : ScriptableObject
                 if (entry == null || string.IsNullOrEmpty(entry.id)) continue;
                 if (entry.IsVisibleOnThisDevice) { yield return entry; continue; }
 
-                if (entry.visibility == Visibility.Private && string.IsNullOrWhiteSpace(entry.ownerCode))
+                if (entry.visibility == Visibility.Private && entry.OwnerCodes.Count == 0)
                 {
                     Debug.LogWarning($"RobotModelCatalog: '{entry.displayName}' is Private but has no " +
                                      "owner code, so nothing can ever reveal it. Give it a code, or " +

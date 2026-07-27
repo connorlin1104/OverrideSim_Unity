@@ -21,22 +21,32 @@ So the flow is: player uploads → you set it up in the editor → it ships in t
 ## Switching submissions on
 
 1. Create a Firebase project (the free tier is fine).
-2. Enable **Authentication → Sign-in method → Anonymous**. Each device gets a stable uploader id, so
-   repeat submissions from one player land in one folder.
-3. Enable **Storage**, and set rules so a device can only write into its own folder and the app can
-   never read anything back:
+2. Enable **Authentication → Sign-in method → Anonymous**. The first uid a device is given is kept in
+   PlayerPrefs and reused as the folder name for every later submission, so one player's robots stay
+   together.
+3. Enable **Storage**, and set rules so the app can write submissions and read only the inbox:
 
    ```
    rules_version = '2';
    service firebase.storage {
      match /b/{bucket}/o {
        match /uploads/{uid}/{file=**} {
-         allow write: if request.auth.uid == uid;
+         allow write: if request.auth != null;
          allow read: if false;
+       }
+       match /inbox/{file=**} {
+         allow read: if true;
+         allow write: if false;
        }
      }
    }
    ```
+
+   The write rule checks only that the caller signed in, **not** that the folder matches their uid.
+   That is deliberate: anonymous sign-up mints a brand-new uid on every call, so a player who
+   restored their id on a new device signs in as someone else entirely and would be locked out of
+   their own folder. Anyone can obtain an anonymous sign-in, so treat `/uploads` as untrusted input —
+   which it is anyway, being arbitrary player files.
 
 4. In Unity, fill in `Assets/Settings/RobotUploadConfig.asset`:
    - **Storage Bucket** — from the Storage tab, e.g. `overridesim.firebasestorage.app`
@@ -50,8 +60,9 @@ Until the bucket and key are set, the screen still opens and lets a player pick 
 submitting isn't switched on yet — it never fails halfway through an upload.
 
 Uploads land as `uploads/<uid>/<filename>` with a `<filename>.json` sidecar next to it holding the
-team, robot name, contact, notes, app version and timestamp. Firebase does not notify you on its
-own; either check the Storage tab or add a Cloud Function on finalize to email yourself.
+team, robot name, contact, notes, **who the uploader wants to be able to use it**, app version and
+timestamp. Firebase does not notify you on its own; either check the Storage tab or add a Cloud
+Function on finalize to email yourself.
 
 ## How a player picks a file
 
@@ -79,9 +90,45 @@ that size takes a while, so the screen shows progress and checks for a connectio
 3. `Tools ▸ RoboSim ▸ Robot ▸ Set Up Imported Robot` (colliders, drivetrain, catalog entry, prefab,
    physics smoke test — one click).
 4. Add the mechanisms by hand: `Tools ▸ RoboSim ▸ Robot ▸ Mechanisms ▸ …`.
-5. `Tools ▸ RoboSim ▸ Robot ▸ Save As Robot Prefab`, and set **Listed For** to **Private** with an
-   owner code. Give that code to whoever sent the robot in — they type it into
-   **Settings → Team Code** and it appears in their picker.
+5. `Tools ▸ RoboSim ▸ Robot ▸ Save As Robot Prefab`, and set **Listed For** per the sidecar's
+   `sharing` field — **Public** for "Anyone", **Private** with an owner code otherwise.
+6. Tell the player it's ready, by writing their inbox file (below).
+
+## Telling a player their robot arrived
+
+The app can't download a finished robot — it ships inside the update — but it can say the robot is
+here and enter the code for them. Otherwise the only reply channel is the free-text contact field,
+and a typo there orphans a submission for good.
+
+When the update carrying their robot goes out, upload a file to `inbox/<uploaderId>.json` in the same
+bucket, where `<uploaderId>` is the folder name their submission arrived under:
+
+```json
+{ "items": [ { "robotName": "654V Claw", "code": "654V-8213", "message": "" } ] }
+```
+
+At the next launch the home screen shows *"654V Claw is ready"* with a button that enters the code.
+Items are ignored when the code is already held or when no robot in that build uses it, so writing
+the file early is harmless — the notice simply appears once the update lands.
+
+The uploader id is the only thing guarding an inbox (the rules above make `/inbox` publicly
+readable), so it is treated as a secret. Players can see and copy theirs under **Settings → Your ID**,
+and paste it back on a new phone with **Restore** — that bearer code is the whole account system.
+
+## Team codes
+
+An entry's **Owner Code(s)** field takes a comma-separated list, and holding *any* one of them
+reveals the robot. Two consequences worth using:
+
+- Give five of a team's robots the same `654V-TEAM` code and one code unlocks all five.
+- Give a robot both its own one-off code and its team's — `CLAW-9F2K, 654V-TEAM` — and either works,
+  so an individual robot can be shared without handing over the team's whole set.
+
+Nothing verifies team membership, and nothing can: a self-declared team number is unfalsifiable.
+Treat a code as a **capability**, not an identity claim — access starts with whoever sent the robot
+in and spreads only because they passed the code on. That makes lying about your team pointless
+rather than dangerous. The residual risk is a code leaking, which is the same risk as a teammate
+screenshotting the robot, and no software prevents it.
 
 ## What "private" does and doesn't mean
 

@@ -36,8 +36,8 @@ MonoBehaviour:
     - id: metalpart
       displayName: Doinker
       type: pneumatic
-    visibility: 0
-    ownerCode: 
+    visibility: 1
+    ownerCode: 654V-1104
     ownerLabel: 
   - id: 654v-v2
     displayName: 654V v2
@@ -65,7 +65,7 @@ MonoBehaviour:
     ownerCode: 
     ownerLabel: 
   - id: ryan-cascaderobot
-    displayName: 654V-v3
+    displayName: 654V v3
     prefab: {fileID: 332329364715366720, guid: c8a66e3d5b40f40dc9bc16248a84cb16, type: 3}
     mechanisms: []
     visibility: 0

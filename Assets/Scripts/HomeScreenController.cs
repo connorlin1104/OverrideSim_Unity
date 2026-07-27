@@ -68,6 +68,22 @@ public class HomeScreenController : MonoBehaviour
     [Tooltip("Feedback line under the code box: what the last Unlock did, and how many codes are held.")]
     [SerializeField] private TMP_Text teamCodeStatusLabel;
 
+    [Header("Recovery ID")]
+    [Tooltip("Shows this device's uploader id — the only thing linking a player to robots they've sent in.")]
+    [SerializeField] private TMP_Text recoveryIdLabel;
+    [Tooltip("Copies the uploader id to the clipboard so the player can keep it somewhere safe.")]
+    [SerializeField] private Button copyRecoveryIdButton;
+    [Tooltip("Where a player pastes an uploader id from an old install to reclaim their submissions.")]
+    [SerializeField] private TMP_InputField recoveryIdInput;
+
+    [Header("Robot Inbox")]
+    [Tooltip("Where submissions go, and where the inbox is read from. Same asset as SubmitRobotScreen's.")]
+    [SerializeField] private RobotUploadConfig uploadConfig;
+    [Tooltip("Notice shown over the main panel when a robot the player sent in has arrived.")]
+    [SerializeField] private GameObject inboxNotice;
+    [Tooltip("Line inside the notice naming what arrived.")]
+    [SerializeField] private TMP_Text inboxLabel;
+
     [Header("Controller Config")]
     [Tooltip("The Configure Controller sub-screen (button -> mechanism mapping).")]
     [SerializeField] private ControllerConfigScreen controllerConfig;
@@ -89,6 +105,9 @@ public class HomeScreenController : MonoBehaviour
     // While true, the model list is in edit mode: tapping a row deletes that model from the catalog.
     private bool editMode;
 
+    // Inbox items that would actually reveal something on this device — see OnInboxFetched.
+    private readonly List<RobotInboxService.Item> pendingInbox = new List<RobotInboxService.Item>();
+
     void Start()
     {
         if (mainPanel != null) mainPanel.SetActive(true);
@@ -102,6 +121,8 @@ public class HomeScreenController : MonoBehaviour
         InitReverseDriveControl();
         InitLiteFieldControl();
         ShowHeldCodeCount();
+        ShowRecoveryId();
+        CheckInbox();
     }
 
     // --- Button hooks (wired as persistent onClick listeners by the Build Home Scene tool) ---
@@ -418,16 +439,17 @@ public class HomeScreenController : MonoBehaviour
     }
 
     // Counts against the FULL catalog, not the visible subset — the whole point is to find the
-    // entries this device currently can't see.
+    // entries this device currently can't see. An entry can name several codes (its own and its
+    // team's), and matching any one of them counts, which is what makes one team code unlock a set.
     private int CountModelsWithCode(string normalizedCode)
     {
-        if (catalog == null || catalog.models == null) return 0;
+        if (catalog == null || catalog.models == null || string.IsNullOrEmpty(normalizedCode)) return 0;
 
         int matches = 0;
         foreach (RobotModelCatalog.Entry entry in catalog.models)
         {
             if (entry == null || entry.visibility != RobotModelCatalog.Visibility.Private) continue;
-            if (RobotOwnerSettings.Normalize(entry.ownerCode) == normalizedCode) matches++;
+            if (entry.OwnerCodes.Contains(normalizedCode)) matches++;
         }
         return matches;
     }
@@ -442,6 +464,114 @@ public class HomeScreenController : MonoBehaviour
     private void SetCodeStatus(string message)
     {
         if (teamCodeStatusLabel != null) teamCodeStatusLabel.text = message;
+    }
+
+    // --- Recovery ID ---
+
+    // The uploader id is minted on the first submission and lives only in PlayerPrefs, so a reinstall
+    // or a new phone loses it — and with it the link between a player and the robot they sent in.
+    // Showing it, and letting them paste it back, IS the account system here: a bearer code they own,
+    // with no sign-up, no email and nothing to verify.
+    private void ShowRecoveryId()
+    {
+        if (recoveryIdLabel == null) return; // older HomeScene built before this row existed
+
+        string id = RobotUploadService.UploaderId;
+        recoveryIdLabel.text = string.IsNullOrEmpty(id)
+            ? "No ID yet — you get one when you send a robot in."
+            : id;
+        if (copyRecoveryIdButton != null) copyRecoveryIdButton.interactable = !string.IsNullOrEmpty(id);
+    }
+
+    // Wired as a persistent onClick by the Build Home Scene tool.
+    public void OnCopyRecoveryIdPressed()
+    {
+        string id = RobotUploadService.UploaderId;
+        if (string.IsNullOrEmpty(id)) return;
+
+        GUIUtility.systemCopyBuffer = id;
+        if (recoveryIdLabel != null) recoveryIdLabel.text = id + "   (copied)";
+    }
+
+    public void OnRestoreRecoveryIdPressed()
+    {
+        string typed = recoveryIdInput != null ? recoveryIdInput.text : null;
+        if (!RobotUploadService.AdoptUploaderId(typed))
+        {
+            if (recoveryIdLabel != null)
+                recoveryIdLabel.text = "That doesn't look like an ID — check for missing characters.";
+            return;
+        }
+
+        if (recoveryIdInput != null) recoveryIdInput.text = string.Empty;
+        ShowRecoveryId();
+        CheckInbox(); // the restored id may already have a robot waiting under it
+    }
+
+    // --- Robot inbox ---
+
+    // A submitted robot ships inside an app update, so nothing here downloads one: the inbox only says
+    // "it arrived" and hands over the code that reveals it. Deliberately silent about every failure —
+    // this runs at launch, and an offline start or an unconfigured build must not put an error on the
+    // home screen.
+    private void CheckInbox()
+    {
+        SetInboxNoticeVisible(false);
+        if (uploadConfig == null || !uploadConfig.IsConfigured) return;
+
+        string id = RobotUploadService.UploaderId;
+        if (string.IsNullOrEmpty(id)) return;
+
+        StartCoroutine(RobotInboxService.Fetch(uploadConfig, id, OnInboxFetched));
+    }
+
+    private void OnInboxFetched(RobotInboxService.Inbox inbox, string error)
+    {
+        pendingInbox.Clear();
+        if (!string.IsNullOrEmpty(error) || inbox == null || inbox.items == null) return;
+
+        // Only keep items that would actually change something. A code already entered, or one no
+        // robot in this build uses yet (the update carrying it hasn't landed), would make the notice
+        // a lie — "your robot is ready", tap, and nothing appears.
+        foreach (RobotInboxService.Item item in inbox.items)
+        {
+            if (item == null || string.IsNullOrWhiteSpace(item.code)) continue;
+            if (RobotOwnerSettings.HasCode(item.code)) continue;
+            if (CountModelsWithCode(RobotOwnerSettings.Normalize(item.code)) == 0) continue;
+            pendingInbox.Add(item);
+        }
+
+        if (pendingInbox.Count == 0) return;
+
+        if (inboxLabel != null)
+        {
+            RobotInboxService.Item first = pendingInbox[0];
+            string title = string.IsNullOrWhiteSpace(first.robotName) ? "Your robot" : first.robotName;
+            inboxLabel.text = pendingInbox.Count == 1
+                ? $"{title} is ready."
+                : $"{title} and {pendingInbox.Count - 1} more are ready.";
+        }
+        SetInboxNoticeVisible(true);
+    }
+
+    // Wired as a persistent onClick by the Build Home Scene tool.
+    public void OnInboxUnlockPressed()
+    {
+        int unlocked = 0;
+        foreach (RobotInboxService.Item item in pendingInbox)
+        {
+            if (RobotOwnerSettings.AddCode(item.code)) unlocked++;
+        }
+
+        pendingInbox.Clear();
+        SetInboxNoticeVisible(false);
+        RebuildModelList();
+        SetCodeStatus(unlocked == 1 ? "Unlocked 1 robot." : $"Unlocked {unlocked} robots.");
+    }
+
+    private void SetInboxNoticeVisible(bool visible)
+    {
+        if (inboxNotice != null) inboxNotice.SetActive(visible);
     }
 
     // --- Lite field ---

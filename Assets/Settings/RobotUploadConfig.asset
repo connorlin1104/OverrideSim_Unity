@@ -12,8 +12,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 70c16fc52c10e48d68b78827551f8f0e, type: 3}
   m_Name: RobotUploadConfig
   m_EditorClassIdentifier: Assembly-CSharp::RobotUploadConfig
-  storageBucket: 
-  webApiKey: 
-  maxUploadMegabytes: 250
+  storageBucket: overridesimunity.firebasestorage.app
+  webApiKey: AIzaSyAXstt5-4pFW7tZwXOC9lZvH15KBQz6zM0
+  maxUploadMegabytes: 200
   turnaroundNote: Your robot is set up by hand, so it takes a few days and arrives
     in an app update.

@@ -27,6 +27,10 @@ public class SubmitRobotScreen : MonoBehaviour
     [SerializeField] private TMP_InputField contactInput;
     [SerializeField] private TMP_InputField notesInput;
 
+    [Header("Sharing")]
+    [Tooltip("Cycles through RobotUploadService.SharingOptions; its own label shows the current choice.")]
+    [SerializeField] private Button sharingButton;
+
     [Header("File")]
     [SerializeField] private Button chooseFileButton;
     [SerializeField] private TMP_Text fileLabel;
@@ -39,6 +43,9 @@ public class SubmitRobotScreen : MonoBehaviour
     private string selectedPath;
     private bool sending;
 
+    // Index into RobotUploadService.SharingOptions. Starts at 0, the most private choice.
+    private int sharingIndex;
+
     // Device path: the inbox is cycled through rather than shown as a list, because a player almost
     // always has exactly one file in there.
     private List<string> inbox = new List<string>();
@@ -50,6 +57,7 @@ public class SubmitRobotScreen : MonoBehaviour
         sending = false;
         SetProgress(0f);
         RefreshFileLabel();
+        RefreshSharingLabel();
         RefreshSendButton();
 
         if (config == null || !config.IsConfigured)
@@ -132,6 +140,32 @@ public class SubmitRobotScreen : MonoBehaviour
         fileLabel.text = $"{Path.GetFileName(selectedPath)}  ({RobotUploadService.Format(size)})";
     }
 
+    // --- Sharing ---
+
+    // Who gets to use the robot afterwards is the uploader's decision, not one made on their behalf:
+    // it is what makes the finished catalog entry Public or Private, and guessing wrong publishes a
+    // design someone wanted kept. Wired as a persistent onClick by the Build Home Scene tool.
+    public void OnSharingPressed()
+    {
+        if (sending) return;
+        sharingIndex = (sharingIndex + 1) % RobotUploadService.SharingOptions.Length;
+        RefreshSharingLabel();
+    }
+
+    private void RefreshSharingLabel()
+    {
+        if (sharingButton == null) return; // older HomeScene built before this row existed
+
+        TMP_Text label = sharingButton.GetComponentInChildren<TMP_Text>(true);
+        if (label != null) label.text = "Who can use it:  " + CurrentSharing();
+    }
+
+    private string CurrentSharing()
+    {
+        string[] options = RobotUploadService.SharingOptions;
+        return options[Mathf.Clamp(sharingIndex, 0, options.Length - 1)];
+    }
+
     // --- Sending ---
 
     public void OnSendPressed()
@@ -164,7 +198,7 @@ public class SubmitRobotScreen : MonoBehaviour
 
         RobotUploadService.Submission info = RobotUploadService.DescribeThisDevice(
             Text(teamInput), Text(robotInput), Text(contactInput), Text(notesInput),
-            Path.GetFileName(selectedPath), bytes.LongLength,
+            CurrentSharing(), Path.GetFileName(selectedPath), bytes.LongLength,
             DateTime.UtcNow.ToString("o"));
 
         sending = true;
@@ -196,6 +230,7 @@ public class SubmitRobotScreen : MonoBehaviour
         if (sendButton != null)
             sendButton.interactable = !sending && !string.IsNullOrEmpty(selectedPath);
         if (chooseFileButton != null) chooseFileButton.interactable = !sending;
+        if (sharingButton != null) sharingButton.interactable = !sending;
     }
 
     private void SetProgress(float value)

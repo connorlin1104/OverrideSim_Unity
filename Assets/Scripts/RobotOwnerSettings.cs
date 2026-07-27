@@ -41,6 +41,38 @@ public static class RobotOwnerSettings
         return false;
     }
 
+    // A catalog entry may name SEVERAL codes that reveal it — typically its own one-off code plus the
+    // code for the team that owns it — so one team code can open every robot that team uploaded.
+    //
+    // Separators are comma, semicolon and whitespace. '-' is deliberately NOT one: codes look like
+    // "654V-8213", and splitting on the dash would turn one code into two that match nothing.
+    private static readonly char[] Separators = { ',', ';', ' ', '\t', '\n', '\r' };
+
+    // The normalized, de-duplicated codes named by `codes`. Empty for a null/blank field.
+    public static List<string> SplitCodes(string codes)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrWhiteSpace(codes)) return result;
+
+        foreach (string part in codes.Split(Separators, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string normalized = Normalize(part);
+            if (normalized.Length > 0 && !result.Contains(normalized)) result.Add(normalized);
+        }
+        return result;
+    }
+
+    // True when ANY of the codes named by `codes` is held on this device — holding the team code is
+    // as good as holding the robot's own code.
+    public static bool HasAnyCode(string codes)
+    {
+        foreach (string code in SplitCodes(codes))
+        {
+            if (HasCode(code)) return true;
+        }
+        return false;
+    }
+
     public static List<string> AllCodes()
     {
         return Load().codes;
