@@ -20,7 +20,8 @@ So the flow is: player uploads → you set it up in the editor → it ships in t
 
 ## Switching submissions on
 
-1. Create a Firebase project (the free tier is fine).
+1. Create a Firebase project. Enabling Storage requires the **Blaze** (pay-as-you-go) plan — Spark
+   no longer includes it — so read *What it can cost* below before turning it on.
 2. Enable **Authentication → Sign-in method → Anonymous**. The first uid a device is given is kept in
    PlayerPrefs and reused as the folder name for every later submission, so one player's robots stay
    together.
@@ -30,11 +31,12 @@ So the flow is: player uploads → you set it up in the editor → it ships in t
    rules_version = '2';
    service firebase.storage {
      match /b/{bucket}/o {
-       match /uploads/{uid}/{file=**} {
-         allow write: if request.auth != null;
+       match /uploads/{uid}/{file} {
+         allow write: if request.auth != null
+                      && request.resource.size < 250 * 1024 * 1024;
          allow read: if false;
        }
-       match /inbox/{file=**} {
+       match /inbox/{file} {
          allow read: if true;
          allow write: if false;
        }
@@ -48,13 +50,30 @@ So the flow is: player uploads → you set it up in the editor → it ships in t
    their own folder. Anyone can obtain an anonymous sign-in, so treat `/uploads` as untrusted input —
    which it is anyway, being arbitrary player files.
 
+   **The size cap is the only limit that is actually enforced.** `maxUploadMegabytes` in the config
+   asset is a courtesy check inside the app; the rule is what a request that skips the app runs into.
+   Keep the rule at or above the config value — if the rule is the smaller number, honest uploads
+   pass the in-app check and then fail with an unexplained 403.
+
+   **Restricting the file type here would not work, and would break your own uploads.** Rules never
+   see the bytes, only the name, the declared `Content-Type`, the size, and the token — and the first
+   two are chosen by the caller, so junk named `robot.fbx` satisfies any type rule. Meanwhile the
+   model goes up as `application/octet-stream` and the sidecar as `<file>.json`, so an fbx/urdf/zip
+   allowlist would reject both. For the same reason, don't add `resource == null` to make writes
+   create-only: filenames carry no uniquifier, so a player who fixes their CAD and resends
+   `robot.fbx` would be refused.
+
+   `{file}` rather than `{file=**}` keeps both folders flat — uploads are always one level under the
+   uid, so nobody has a reason to build a deep tree in the bucket.
+
 4. In Unity, fill in `Assets/Settings/RobotUploadConfig.asset`:
    - **Storage Bucket** — from the Storage tab, e.g. `overridesim.firebasestorage.app`
    - **Web API Key** — Project settings → General
-   - **Max Upload Megabytes** — 250 by default
+   - **Max Upload Megabytes** — 250 by default; keep the rule above in sync
 
    The web API key is not a secret. Firebase web keys are public identifiers; access is decided by
-   the rules above, not by hiding the key.
+   the rules above, not by hiding the key. It ships inside every build and is committed to this
+   repo deliberately — see *What it can cost* for what does and doesn't follow from that.
 
 Until the bucket and key are set, the screen still opens and lets a player pick a file, and then says
 submitting isn't switched on yet — it never fails halfway through an upload.
@@ -63,6 +82,34 @@ Uploads land as `uploads/<uid>/<filename>` with a `<filename>.json` sidecar next
 team, robot name, contact, notes, **who the uploader wants to be able to use it**, app version and
 timestamp. Firebase does not notify you on its own; either check the Storage tab or add a Cloud
 Function on finalize to email yourself.
+
+## What it can cost, and capping it
+
+Storage needs the Blaze plan, and Blaze is pay-as-you-go with no automatic ceiling. Since the web API
+key is public by design and anonymous sign-in is open to anyone, a person who reads this repo can
+write to the bucket without going through the app. That is inherent to the design, not a mistake in
+it — but on Blaze it is worth bounding, because there is no plan limit to stop at. Check current
+numbers in the console; pricing changes.
+
+What is already in your favour: **the expensive axis is closed.** Egress costs roughly five times
+what storage does, and `/uploads` is `allow read: if false`, so nobody can pull anything back out.
+Only accumulated storage accrues, at a couple of cents per GB-month, against a free allowance of
+several GB. Filling the bucket is slow and cheap to undo; there is no way to run up a large bill fast.
+
+Three controls, in order of how much they buy:
+
+- **A lifecycle rule on the bucket** — Google Cloud console → the bucket → Lifecycle → delete objects
+  older than 30 days. This is the one that matters. Intake is *download the file, set it up, done*,
+  so `/uploads` has no reason to retain anything; the rule makes steady-state cost flat no matter how
+  much arrives, with no code and nothing to remember.
+- **A budget alert** in Google Cloud Billing, set low — a few dollars. It emails you within a day or
+  two of anything odd, which is all the reaction time this situation needs. Note it only *notifies*;
+  the documented hard stop is a budget → Pub/Sub → Cloud Function that detaches the billing account,
+  which takes the whole project offline and is more than this is worth.
+- **App Check**, before real users. It attests that a request came from your genuine app binary — App
+  Attest on iOS, Play Integrity on Android — and rejects everything else before rules even run. It is
+  the actual answer to "anyone with the key can call this", and the only one of the three that stops
+  the writes rather than bounding their cost. It needs a debug token to keep the Editor working.
 
 ## How a player picks a file
 
