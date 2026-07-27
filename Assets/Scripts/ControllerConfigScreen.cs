@@ -135,6 +135,18 @@ public class ControllerConfigScreen : MonoBehaviour
 
         CloseAssignmentPopup(); // a popup left open from a previous robot must not carry over
         if (panel != null) panel.SetActive(true);
+
+        // The two SetActives above happen while the panel is still inactive, so the bottom row's
+        // HorizontalLayoutGroup — which is what keeps Back centred whatever subset of the row is
+        // showing — hasn't had a chance to react to them. uGUI does rebuild a layout group on
+        // enable, so this is insurance rather than the fix, but a lopsided row is exactly the bug
+        // the group was added to kill and it costs one line to be certain.
+        // Reached through a button rather than a ref of its own: the row is a pure-hierarchy
+        // container the builder creates, and every button in it shares the same parent. Works on an
+        // inactive button, which is the case that matters.
+        Button rowMember = controlStyleButton != null ? controlStyleButton : resetDefaultsButton;
+        if (rowMember != null && rowMember.transform.parent is RectTransform row)
+            LayoutRebuilder.MarkLayoutForRebuild(row);
     }
 
     public void Close()

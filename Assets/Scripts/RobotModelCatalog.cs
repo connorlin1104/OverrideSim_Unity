@@ -56,11 +56,12 @@ public class RobotModelCatalog : ScriptableObject
         [Tooltip("Optional label for whose robot this is (e.g. a team number). Shown in the picker.")]
         public string ownerLabel;
 
-        [Tooltip("The button layout a fresh install starts with for this robot. Set it from the home " +
-                 "screen: bind the controller how you want it, then Edit Models > Make These the " +
-                 "Default. Empty means the robot ships unbound, which is what every robot did before " +
-                 "this existed — the auto-assign that runs when a mechanism is built writes into the " +
-                 "EDITOR's PlayerPrefs, and those never reach a build.")]
+        [Tooltip("The button layout a fresh install starts with for this robot. Bind the controller " +
+                 "how you want it in Configure Controller, then publish it from Tools > RoboSim > " +
+                 "Robot > Model Catalog > Make Current Bindings the Default. Empty means the robot " +
+                 "ships unbound, which is what every robot did before this existed — the auto-assign " +
+                 "that runs when a mechanism is built writes into the EDITOR's PlayerPrefs, and those " +
+                 "never reach a build.")]
         public ButtonMap defaultButtonMap = new ButtonMap();
 
         public bool HasDefaultButtonMap =>

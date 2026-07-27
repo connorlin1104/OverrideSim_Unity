@@ -34,9 +34,12 @@ public class RobotChaseCamera : MonoBehaviour
     [SerializeField] private float minPitch = 5f;    // how flat you can get
     [SerializeField] private float maxPitch = 82f;   // stops short of straight down, so it can't invert
 
-    [Tooltip("Raise the aim point this far (world units) above the robot's collider center, so the " +
-             "bot sits slightly low in frame and you see where it is driving.")]
-    [SerializeField] private float focusRise = 1.5f;
+    [Tooltip("Raise the aim point above the robot's centre of mass by this fraction of the robot's " +
+             "own height, so the bot sits slightly low in frame and you see where it is driving. " +
+             "A fraction rather than an absolute distance: mass sits low in a robot, so the same " +
+             "1.5-unit rise that framed a bare drivetrain put the aim on a lifted robot's roof.")]
+    [Range(0f, 1f)]
+    [SerializeField] private float focusHeightFraction = 0.25f;
 
     [Header("Follow")]
     [Tooltip("Seconds for the camera to catch up to the robot. Small enough not to feel floaty. " +
@@ -66,8 +69,16 @@ public class RobotChaseCamera : MonoBehaviour
 
     private Transform robot;
 
-    // Aim point as an offset in the ROBOT'S local space, captured once when the robot is found.
+    // Every link of the robot, cached at acquisition: the aim point is their mass-weighted centre
+    // of mass, which needs all of them and must not re-walk a ~2700-object hierarchy every frame.
+    private ArticulationBody[] robotBodies;
+
+    // Fallback aim, as an offset in the ROBOT'S local space, for the frames before PhysX has
+    // populated worldCenterOfMass and for a hypothetical robot with no articulation at all.
     private Vector3 focusLocal;
+
+    // The robot's own height, measured once at acquisition, that focusHeightFraction scales.
+    private float robotHeight;
 
     [Tooltip("Where the camera sits around the robot before you drag it, in degrees. The robot's +Z " +
              "is its side rather than its nose on these CAD imports, so this is a quarter turn round " +
@@ -93,8 +104,13 @@ public class RobotChaseCamera : MonoBehaviour
         EnhancedTouchSupport.Enable();
         drag.BeginSession();
 
-        // Re-anchor on every switch into this view so the camera arrives already framed on the
-        // robot instead of sweeping in from wherever the free camera was left.
+        // Re-anchor AND re-acquire on every switch into this view, so the camera arrives already
+        // framed on the robot instead of sweeping in from wherever the free camera was left.
+        // Dropping `robot` is what re-measures the robot: a measurement taken at one arbitrary
+        // instant used to be permanent for the session, so a single unlucky capture framed the bot
+        // wrong until the scene was reloaded.
+        robot = null;
+        robotBodies = null;
         anchored = false;
         nextSearchTime = 0f;
     }
@@ -164,7 +180,7 @@ public class RobotChaseCamera : MonoBehaviour
 
     private void Follow()
     {
-        Vector3 focusTarget = robot.TransformPoint(focusLocal) + Vector3.up * focusRise;
+        Vector3 focusTarget = AimPoint();
         float headingTarget = RobotHeading();
 
         if (!anchored)
@@ -237,8 +253,42 @@ public class RobotChaseCamera : MonoBehaviour
         }
 
         robot = ResolveRoot(tagged.transform);
-        focusLocal = ComputeFocusLocal(robot);
+        robotBodies = robot.GetComponentsInChildren<ArticulationBody>(true);
+        MeasureFallback(robot, out focusLocal, out robotHeight);
         anchored = false; // snap onto the robot on the next Follow()
+    }
+
+    // --- Aiming ---------------------------------------------------------------------------------
+
+    // WHAT THE CAMERA POINTS AT, and why it is the centre of mass.
+    //
+    // The rendered centre is exactly this point by construction — Follow() uses one rotation for
+    // both the orbit offset and the camera's own rotation, so the view axis passes through it and
+    // nothing else in this component (orbit, pitch, zoom, the floor-clearance override) can move
+    // the robot off centre. Every off-centre pixel is an error in this one number.
+    //
+    // It used to be the midpoint of the axis-aligned bounding box of EVERY collider on the robot,
+    // captured once. Three things were wrong with that. An AABB midpoint is not a centre: a long
+    // intake hanging off one end drags it sideways, and the box's top is the highest point of the
+    // tallest thing, so the aim already sat above the robot's mass before focusRise added 1.5 more
+    // units on top. And capturing it once meant that if the player first switched to this view
+    // with a cascade lift extended, the aim was baked ~5 units above the chassis for the rest of
+    // the session, even after the lift came back down.
+    //
+    // The composite centre of mass has none of those failure modes. It is a true weighted centre,
+    // so geometry that sticks out but weighs little barely moves it; and it is safe to evaluate
+    // LIVE, which is what fixes the frozen-pose case — the chassis carries most of the robot's
+    // mass, so a fully extended lift shifts it a few tenths of a unit rather than several, and the
+    // camera drifts gently to follow the lift instead of bobbing.
+    private Vector3 AimPoint()
+    {
+        // worldCenterOfMass is PhysX state and can be unpopulated on the first frame after a
+        // spawn, so the collider-bounds measurement stays as the fallback rather than being
+        // deleted outright.
+        if (!DrivetrainTuning.TryMeasureCompositeCom(robotBodies, out Vector3 centre))
+            centre = robot.TransformPoint(focusLocal);
+
+        return centre + Vector3.up * (robotHeight * focusHeightFraction);
     }
 
     // The tag is on the wrapper AND on every articulation link, so FindGameObjectWithTag can hand
@@ -258,23 +308,45 @@ public class RobotChaseCamera : MonoBehaviour
         }
     }
 
-    // Aim at the CENTER OF THE ROBOT'S COLLIDERS rather than its transform origin: a prefab root's
-    // origin is the CAD/FBX pivot, which Fusion often puts well off the robot itself (RobotSpawner
-    // recenters the spawn for the same reason), so aiming there frames the bot badly off-center.
+    // Measured once at acquisition: the fallback aim (in the robot's local space, so it survives
+    // the robot driving away) and the robot's height, which is what focusHeightFraction scales.
     //
-    // Captured ONCE and stored in the robot's local space: re-measuring every frame would make the
-    // camera bob as a lift raises or a claw swings, and would cost a GetComponentsInChildren per
-    // frame. The framing stays locked to the chassis instead.
-    private static Vector3 ComputeFocusLocal(Transform root)
+    // Height comes from the CHASSIS only — the walk stops at any link that has its own
+    // ArticulationBody — so a lift that happens to be extended when the player switches into this
+    // view can't inflate it. The transform origin is deliberately not used for either: a prefab
+    // root's origin is the CAD/FBX pivot, which Fusion often puts well off the robot itself
+    // (RobotSpawner recentres the spawn for the same reason).
+    private static void MeasureFallback(Transform root, out Vector3 focusLocal, out float height)
     {
+        // Colliders are read straight out of PhysX's world, and this project runs with
+        // Physics.autoSyncTransforms off, so a bounds read taken between a teleport and the next
+        // simulation step would be stale — RobotSpawner documents the same trap.
+        Physics.SyncTransforms();
+
         Bounds bounds = default;
         bool has = false;
-        foreach (Collider col in root.GetComponentsInChildren<Collider>())
+        Encapsulate(root, root, ref bounds, ref has);
+
+        focusLocal = has ? root.InverseTransformPoint(bounds.center) : Vector3.zero;
+        height = has ? bounds.size.y : 0f;
+    }
+
+    private static void Encapsulate(Transform node, Transform root, ref Bounds bounds, ref bool has)
+    {
+        // Stop at a child link: everything below it can move relative to the chassis, which is
+        // exactly the geometry that must not be allowed to set the framing.
+        if (node != root && node.GetComponent<ArticulationBody>() != null) return;
+
+        foreach (Collider col in node.GetComponents<Collider>())
         {
             if (col.isTrigger) continue; // triggers (intake zones) reach well outside the robot
+            // A disabled collider has no shape in PhysX, so its bounds are a degenerate box at the
+            // origin — encapsulating one would stretch the measurement across the whole field.
+            // Robots carry hundreds of these (the DR4B's visual-only parts are all disabled).
+            if (!col.enabled || !col.gameObject.activeInHierarchy) continue;
             if (!has) { bounds = col.bounds; has = true; }
             else bounds.Encapsulate(col.bounds);
         }
-        return has ? root.InverseTransformPoint(bounds.center) : Vector3.zero;
+        foreach (Transform child in node) Encapsulate(child, root, ref bounds, ref has);
     }
 }

@@ -20,15 +20,20 @@ public static class DriveFeelValidation
 {
     private const string RobotsFolder = "Assets/Robots";
 
-    // The 654V_v3 configuration, as measured off the prefab. Everything the "shipped tune" check
-    // asserts is hand-computed from these, so the check is a real regression guard rather than the
-    // formula agreeing with itself.
-    private const float Mass = 30f;      // root 24 + 6 wheel links x 1
+    // A FIXED reference configuration, not a live reading — deliberately, because everything the
+    // "shipped tune" check asserts is hand-computed from these numbers, and re-reading them from a
+    // prefab would turn the check into the formula agreeing with itself.
+    //
+    // It is the 654V_v3 as it was when the drivetrain was tuned. If the robots are re-massed (see
+    // RobotBalanceWindow) these stop describing any real robot, and that is fine: the per-prefab
+    // assertions in ShippedPrefabs are what track the actual fleet.
+    private const float Mass = 30f;      // root 24 + 6 wheel links x 1, the pre-rebalance masses
     private const float Radius = 0.37f;  // world units (1 unit = 100 mm)
     private const int Wheels = 6;
     private const float Rpm = 240f;
     private const float Mu = 0.8f;
     private const float G = 98.1f;
+    private const float Crr = DrivetrainTuning.DefaultRollingResistance;
 
     [MenuItem("Tools/RoboSim/Testing/Validate Drive Feel", false, 16)]
     private static void RunInteractive()
@@ -229,12 +234,35 @@ public static class DriveFeelValidation
         Near(t.topSpeed, 9.30f, 0.02f, "top speed should be ~0.93 m/s for a 2.75in omni at 240 RPM");
         Near(t.motorLimitedStick, 1f / 3f, 0.005f,
             "the first third of stick travel should be motor-limited, so fine control is real");
-        // The time-based value, unclamped: at 654V speed the coast cap must NOT bind, or the
-        // headline "let go and it glides for about a second" would quietly stop being true.
-        Near(t.coastTorque, 15.64f, 0.05f, "coast torque");
+        // Coast, from rolling resistance: F = Crr*m*g = 0.086 * 30 * 98.1 = 253.1 over 6 wheels at
+        // r 0.37. The cap must NOT bind here, or the coast the feel was tuned against silently
+        // stops being the coast that ships.
+        Near(t.coastTorque, 15.61f, 0.05f, "coast torque should be Crr*m*g*r/N");
         Assert(t.coastTorque < t.stallTorque * DrivetrainTuning.MaxCoastTorqueFraction - 1e-3f,
-            "the coast cap must not bind on a 654V-speed robot — the requested coast time should " +
-            "be met exactly there");
+            "the coast cap must not bind on a 654V-speed robot — rolling resistance should be met " +
+            "exactly there");
+
+        // The numbers a human actually judges the coast by, hand-computed: a = Crr*g = 8.44 u/s^2,
+        // so 9.30 u/s takes 1.10 s over 9.30^2/(2*8.44) = 5.12 u.
+        Near(t.coastSeconds, 1.10f, 0.02f, "a 654V should coast to rest in about a second");
+        Near(t.coastDistance, 5.12f, 0.05f, "...over about half a metre");
+
+        // Braking: 0.7 of the traction budget, i.e. 0.7*2354.4 = 1648 over 6 wheels at r 0.37.
+        Near(t.brakeTorque, 101.63f, 0.2f, "per-wheel braking-quadrant torque");
+        Near(t.tractionG, 0.80f, 0.005f, "the tyres' grip is mu, so the friction cone is 0.8 g");
+        Near(t.brakeG, 0.56f, 0.01f, "braking should be 0.7 of the friction cone");
+
+        // THE invariant behind "a reversal should feel like it carries momentum": the motor, not
+        // the ground, has to be what limits it. Above the friction cone the tyres just slip, the
+        // deceleration pins at mu*g however hard the driver slams the stick, and every direction
+        // change costs the same nothing. Below it the force builds with the command.
+        Assert(t.brakeG < t.tractionG,
+            $"braking ({t.brakeG:0.00} g) must stay inside the friction cone ({t.tractionG:0.00} g) " +
+            "or a reversal is traction-limited and instantaneous again");
+
+        // And coasting must be decisively gentler than braking, or "coast" is a lie.
+        Assert(t.coastTorque < t.brakeTorque,
+            $"coast torque ({t.coastTorque:0.#}) must be well under brake torque ({t.brakeTorque:0.#})");
 
         // A wheel must be able to break traction. Below mu*m*g*r/N it cannot slip at all, and a
         // 6-wheel robot with isotropic (non-omni-modelled) wheels then cannot complete a point
@@ -249,7 +277,7 @@ public static class DriveFeelValidation
         Assert(t.motorLimitedStick > 0.15f,
             $"only the top {(1f - t.motorLimitedStick):P0} of stick travel may be traction-limited; " +
             "past that there is no fine control left");
-        return 10;
+        return 17;
     }
 
     // The two structural properties the model rests on, checked across a spread of robots rather
@@ -262,7 +290,8 @@ public static class DriveFeelValidation
             foreach (float multiple in new[] { 1.5f, 3f, 4.8f, 6f })
             {
                 DrivetrainTuning.Result t = DrivetrainTuning.Compute(
-                    Mass, Radius, Wheels, rpm, Mu, G, multiple, 1.1f);
+                    Mass, Radius, Wheels, rpm, Mu, G, multiple,
+                    DrivetrainTuning.DefaultRollingResistance);
 
                 Near(t.peakForce / t.tractionForce, multiple, 1e-3f,
                     $"peak force must be exactly the requested multiple of traction (rpm {rpm}, multiple {multiple})");
@@ -293,13 +322,22 @@ public static class DriveFeelValidation
                 Assert(t.maxJointVelocity > freeSpeed,
                     $"maxJointVelocity must exceed free speed (rpm {rpm})");
 
-                // Coast must be gentler than braking at EVERY gearing, or "coast" is a lie. The
-                // uncapped time-based torque grows with top speed and overtakes stall torque on a
-                // fast, weakly-geared robot — that's what MaxCoastTorqueFraction exists to stop.
+                // Coast must be gentler than braking at EVERY gearing, or "coast" is a lie. Under
+                // the rolling-resistance model coast torque no longer grows with gearing, so this
+                // only bites on a drivetrain too weak to overcome its own rolling resistance —
+                // which is precisely when it matters most.
                 Assert(t.coastTorque <= t.stallTorque * DrivetrainTuning.MaxCoastTorqueFraction + 1e-4f,
                     $"coast torque must stay under its share of stall torque (rpm {rpm}, multiple {multiple}): " +
                     $"got {t.coastTorque} against stall {t.stallTorque}");
-                checks += 7;
+
+                // Braking stays inside the friction cone at every gearing, so a reversal is always
+                // motor-limited rather than a skid — see ShippedTune for why that is the point.
+                Assert(t.brakeG < t.tractionG + 1e-4f,
+                    $"braking must stay inside the friction cone (rpm {rpm}, multiple {multiple}): " +
+                    $"got {t.brakeG:0.000} g against {t.tractionG:0.000} g");
+                Assert(t.brakeTorque <= t.stallTorque + 1e-4f,
+                    $"a motor cannot brake harder than it can drive (rpm {rpm}, multiple {multiple})");
+                checks += 9;
             }
         }
         return checks;
@@ -314,33 +352,49 @@ public static class DriveFeelValidation
         // Twice the mass: twice the grip, so twice the force, so the SAME acceleration curve.
         DrivetrainTuning.Result heavy = DrivetrainTuning.Compute(
             Mass * 2f, Radius, Wheels, Rpm, Mu, G,
-            DrivetrainTuning.DefaultDriveForceTractionMultiple, DrivetrainTuning.DefaultCoastStopSeconds);
+            DrivetrainTuning.DefaultDriveForceTractionMultiple, DrivetrainTuning.DefaultRollingResistance);
         Near(heavy.stallTorque, baseline.stallTorque * 2f, 0.05f, "twice the mass needs twice the torque");
         Near(heavy.secondsTo95, baseline.secondsTo95, 1e-3f, "a heavier robot must accelerate on the same curve");
         Near(heavy.topSpeed, baseline.topSpeed, 1e-3f, "mass must not change top speed");
 
+        // Rolling resistance is Crr*m*g, so twice the mass is twice the retarding force — and
+        // therefore the SAME deceleration and the same glide. Mass cancels, exactly as it does
+        // when a loaded and an empty shopping trolley roll the same distance.
+        Near(heavy.coastTorque, baseline.coastTorque * 2f, 0.05f, "twice the mass is twice the drag");
+        Near(heavy.coastDistance, baseline.coastDistance, 1e-2f, "...so it glides exactly as far");
+
         // Twice the gearing: twice the top speed, twice as long to reach it, same peak force.
         DrivetrainTuning.Result fast = DrivetrainTuning.Compute(
             Mass, Radius, Wheels, Rpm * 2f, Mu, G,
-            DrivetrainTuning.DefaultDriveForceTractionMultiple, DrivetrainTuning.DefaultCoastStopSeconds);
+            DrivetrainTuning.DefaultDriveForceTractionMultiple, DrivetrainTuning.DefaultRollingResistance);
         Near(fast.topSpeed, baseline.topSpeed * 2f, 1e-3f, "twice the RPM is twice the top speed");
         Near(fast.stallTorque, baseline.stallTorque, 1e-3f, "gearing must not change the traction-limited force");
         Near(fast.secondsTo95, baseline.secondsTo95 * 2f, 1e-3f, "a taller-geared robot takes proportionally longer");
 
-        // Coast is a TIME, so the faster robot glides for the same second over a longer distance —
-        // which needs proportionally more coast torque, not the same amount.
-        Near(fast.coastTorque, baseline.coastTorque * 2f, 0.05f,
-            "coast must stay a fixed duration regardless of gearing");
+        // THE assertion this model exists for, and it is the exact inverse of what used to be
+        // asserted here ("coast must stay a fixed duration regardless of gearing"). Coast used to
+        // be a stop TIME, which made a robot's tyres 79% draggier for no reason but a taller
+        // cartridge. Rolling resistance is a property of the wheel and the field: the drag is
+        // unchanged, so a robot that goes twice as fast takes twice as long to stop and rolls four
+        // times as far. If this ever flips back, the physics has been undone.
+        Near(fast.coastTorque, baseline.coastTorque, 1e-3f,
+            "a taller gearbox cannot make the tyres draggier — coast drag must be gearing-invariant");
+        Near(fast.coastSeconds, baseline.coastSeconds * 2f, 1e-2f,
+            "twice the top speed takes twice as long to roll off at a fixed deceleration");
+        Near(fast.coastDistance, baseline.coastDistance * 4f, 1e-1f,
+            "...and covers v^2/(2a), so four times the distance");
 
-        // ...until the cap bites. A tall-geared, weakly-driven robot would need more torque to
-        // stop in the requested time than its motors can make, so it glides for longer instead of
-        // out-braking its own brake. (This is the case that first exposed the cap's absence.)
-        DrivetrainTuning.Result tallAndWeak = DrivetrainTuning.Compute(
-            Mass, Radius, Wheels, 600f, Mu, G, 0.2f, DrivetrainTuning.DefaultCoastStopSeconds);
-        Near(tallAndWeak.coastTorque,
-            tallAndWeak.stallTorque * DrivetrainTuning.MaxCoastTorqueFraction, 0.05f,
-            "a tall-geared, weakly-driven robot's coast must be capped at its share of stall torque");
-        return 8;
+        // The cap, which now means something different: not "a tall gearbox needs more coast
+        // torque than it has", but "this drivetrain is weaker than its own rolling resistance".
+        // At 0.2x traction the motors make 29 units of stall torque against 15.6 of rolling drag,
+        // so the coast is clamped rather than out-braking the brake.
+        DrivetrainTuning.Result weak = DrivetrainTuning.Compute(
+            Mass, Radius, Wheels, Rpm, Mu, G, 0.2f, DrivetrainTuning.DefaultRollingResistance);
+        Near(weak.coastTorque,
+            weak.stallTorque * DrivetrainTuning.MaxCoastTorqueFraction, 0.05f,
+            "a drivetrain weaker than its own rolling resistance must have its coast capped at its " +
+            "share of stall torque");
+        return 12;
     }
 
     // A half-rigged robot (no wheels wired yet, colliders not generated, a placeholder mass) must
@@ -349,16 +403,17 @@ public static class DriveFeelValidation
     {
         var cases = new List<(string what, DrivetrainTuning.Result r)>
         {
-            ("no wheels", DrivetrainTuning.Compute(Mass, Radius, 0, Rpm, Mu, G, 3f, 1.1f)),
-            ("zero radius", DrivetrainTuning.Compute(Mass, 0f, Wheels, Rpm, Mu, G, 3f, 1.1f)),
-            ("zero rpm", DrivetrainTuning.Compute(Mass, Radius, Wheels, 0f, Mu, G, 3f, 1.1f)),
-            ("zero mass", DrivetrainTuning.Compute(0f, Radius, Wheels, Rpm, Mu, G, 3f, 1.1f)),
-            ("frictionless", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, 0f, G, 3f, 1.1f)),
-            ("zero gravity", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, 0f, 3f, 1.1f)),
-            ("negative gravity", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, -G, 3f, 1.1f)),
-            ("zero multiple", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, G, 0f, 1.1f)),
-            ("zero coast time", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, G, 3f, 0f)),
-            ("everything zero", DrivetrainTuning.Compute(0f, 0f, 0, 0f, 0f, 0f, 0f, 0f)),
+            ("no wheels", DrivetrainTuning.Compute(Mass, Radius, 0, Rpm, Mu, G, 3f, Crr)),
+            ("zero radius", DrivetrainTuning.Compute(Mass, 0f, Wheels, Rpm, Mu, G, 3f, Crr)),
+            ("zero rpm", DrivetrainTuning.Compute(Mass, Radius, Wheels, 0f, Mu, G, 3f, Crr)),
+            ("zero mass", DrivetrainTuning.Compute(0f, Radius, Wheels, Rpm, Mu, G, 3f, Crr)),
+            ("frictionless", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, 0f, G, 3f, Crr)),
+            ("zero gravity", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, 0f, 3f, Crr)),
+            ("negative gravity", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, -G, 3f, Crr)),
+            ("zero multiple", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, G, 0f, Crr)),
+            ("zero rolling resistance", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, G, 3f, 0f)),
+            ("zero brake fraction", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, G, 3f, Crr, 0f)),
+            ("everything zero", DrivetrainTuning.Compute(0f, 0f, 0, 0f, 0f, 0f, 0f, 0f, 0f)),
         };
 
         foreach ((string what, DrivetrainTuning.Result r) in cases)
@@ -366,8 +421,13 @@ public static class DriveFeelValidation
             Finite(r.stallTorque, $"{what}: stallTorque");
             Finite(r.damping, $"{what}: damping");
             Finite(r.coastTorque, $"{what}: coastTorque");
+            Finite(r.brakeTorque, $"{what}: brakeTorque");
             Finite(r.maxJointVelocity, $"{what}: maxJointVelocity");
             Finite(r.secondsTo95, $"{what}: secondsTo95");
+            Finite(r.coastSeconds, $"{what}: coastSeconds");
+            Finite(r.coastDistance, $"{what}: coastDistance");
+            Finite(r.brakeG, $"{what}: brakeG");
+            Finite(r.tractionG, $"{what}: tractionG");
             Assert(r.maxJointVelocity > 0f, $"{what}: maxJointVelocity must stay positive or the wheels can't turn");
         }
 
@@ -375,9 +435,9 @@ public static class DriveFeelValidation
         // Sign errors here would silently invert the whole traction budget.
         // Same arguments as Shipped() apart from the sign, so this tests the sign and nothing else.
         DrivetrainTuning.Result down = DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, -G,
-            DrivetrainTuning.DefaultDriveForceTractionMultiple, DrivetrainTuning.DefaultCoastStopSeconds);
+            DrivetrainTuning.DefaultDriveForceTractionMultiple, DrivetrainTuning.DefaultRollingResistance);
         Near(down.stallTorque, Shipped().stallTorque, 1e-3f, "gravity's sign must not change the tune");
-        return cases.Count * 6 + 1;
+        return cases.Count * 11 + 1;
     }
 
     // --- Shipped prefabs -----------------------------------------------------------------------
@@ -420,7 +480,8 @@ public static class DriveFeelValidation
                 DrivetrainTuning.MeasureFriction(wheels),
                 Physics.gravity.y,
                 motor.driveForceTractionMultiple,
-                motor.coastStopSeconds);
+                motor.wheelRollingResistanceCrr,
+                motor.brakeTractionFraction);
 
             // The two design rules, checked against each REAL robot rather than one hand-written
             // configuration — a default that's fine for the 654V can still seize a robot with
@@ -467,7 +528,7 @@ public static class DriveFeelValidation
 
     private static DrivetrainTuning.Result Shipped() => DrivetrainTuning.Compute(
         Mass, Radius, Wheels, Rpm, Mu, G,
-        DrivetrainTuning.DefaultDriveForceTractionMultiple, DrivetrainTuning.DefaultCoastStopSeconds);
+        DrivetrainTuning.DefaultDriveForceTractionMultiple, DrivetrainTuning.DefaultRollingResistance);
 
     private static void Near(float actual, float expected, float tolerance, string why)
     {

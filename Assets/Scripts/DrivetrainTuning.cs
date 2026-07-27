@@ -56,17 +56,49 @@ public static class DrivetrainTuning
     // authority at the top, which is how a real drivetrain behaves. See Result.motorLimitedStick.
     public const float DefaultDriveForceTractionMultiple = 3.0f;
 
-    // Coast is a TIME, not a torque, so it's invariant to gearing: a 360 RPM robot coasts for the
-    // same second it takes a 240 RPM robot, just over a longer distance. A fixed coast torque
-    // would make the fast robot glide 2.25x further.
-    public const float DefaultCoastStopSeconds = 1.1f;
+    // Rolling resistance of the tyre on the field, as the dimensionless coefficient Crr in
+    // F_roll = Crr * m * g. This replaces an earlier "coast stop time" constant, and the
+    // difference is the whole point:
+    //
+    //   A stop TIME makes coast deceleration proportional to top speed, so bolting a taller
+    //   cartridge into the same robot made its tyres 79% draggier (Crr_eff 0.086 at 240 RPM vs
+    //   0.154 at 360). Tyres don't know what gear ratio is behind them. Rolling resistance is a
+    //   property of the wheel and the surface, so it is a constant DECELERATION (a = Crr*g,
+    //   independent even of mass) — which means a faster robot correctly coasts longer in time
+    //   and ~v^2 further in distance, instead of always taking the same 1.1 s.
+    //
+    // The value is an ESTIMATE, not a measurement: nobody publishes Crr for a VEX plastic omni on
+    // anti-static foam tile. Nearby anchors are polyurethane industrial wheels ~0.04, wheelchair
+    // casters ~0.045 on carpet, non-pneumatic wheels 0.005-0.03 — all on firmer surfaces than 11 mm
+    // of foam, and an omni's narrow roller crown digs in harder, so the real figure should sit
+    // above them. Plausible band 0.05-0.12. 0.086 specifically is the value at which the two
+    // 654V robots coast exactly as they did under the old 1.1 s constant, so this change is a
+    // no-op for the robots the feel was eyeballed against and only the fast ones move.
+    //
+    // To measure it for real: drive to full speed on a field, let go, measure the distance.
+    // Crr = v0^2 / (2*g*d) with v0 in m/s and d in m.
+    public const float DefaultRollingResistance = 0.086f;
 
-    // ...but only up to a point. The torque needed to stop in a fixed time grows with top speed,
-    // so a tall-geared robot would eventually need MORE torque to coast to rest than its motors
-    // can produce — "coasting" would decelerate harder than the brake, which is absurd. Cap coast
-    // drag at this share of stall torque; past the cap a faster robot simply glides for longer,
-    // which is what it should do anyway. On a 654V-speed robot (~0.93 m/s) the cap never binds and
-    // the requested coast time is met exactly.
+    // Braking authority as a fraction of the tyres' grip, used when the driver commands a
+    // direction the wheels are ALREADY spinning against — a hard reversal.
+    //
+    // This is the braking quadrant, and a real motor is weakest there: driven backwards against
+    // its own rotation it is limited by its current limit and its own back-EMF, nowhere near the
+    // stall torque it makes when accelerating. The sim used to give a reversal the FULL
+    // driveForceTractionMultiple (3x the tyres' grip), so the tyres simply slipped and the robot
+    // stopped at the friction limit — 0.8 g, in ~0.12 s, with no sense of carrying any momentum.
+    //
+    // Below 1.0 on purpose, so the MOTOR is the binding constraint on a reversal instead of the
+    // ground: the force builds progressively with the command rather than saturating instantly,
+    // and the robot's own inertia is what the driver feels. 0.7 gives ~0.56 g, comfortably inside
+    // the 0.8 g friction cone.
+    public const float DefaultBrakeTractionFraction = 0.7f;
+
+    // Ceiling on coast drag, as a share of stall torque. Under the rolling-resistance model this
+    // is a near-dead safety net rather than a tuning knob: coastTorque no longer grows with
+    // gearing, so it only binds on a drivetrain whose motors are weaker than its own rolling
+    // resistance (roughly driveForceTractionMultiple below 0.12). Kept so a half-rigged robot
+    // can't end up "coasting" harder than it brakes.
     public const float MaxCoastTorqueFraction = 0.3f;
 
     // Used when a robot's colliders/materials can't be measured (a robot rigged before
@@ -80,6 +112,7 @@ public static class DrivetrainTuning
         public float stallTorque;       // ArticulationDrive.forceLimit, per wheel
         public float damping;           // velocity-tracking gain == stallTorque / freeSpeed
         public float coastTorque;       // forceLimit while coasting (idle, sticks centred)
+        public float brakeTorque;       // forceLimit while the command opposes the wheel's spin
         public float maxJointVelocity;  // rad/s
 
         // Diagnostics — not applied to anything, but they're what the validator asserts on and
@@ -97,11 +130,32 @@ public static class DrivetrainTuning
         // accelerates the same and only the target SPEED still scales. This is the number that
         // says how much fine control a driver actually has.
         public float motorLimitedStick;
+
+        // What the coast actually works out to, from the coastTorque above rather than from the
+        // constant that fed it — so the number a human cares about ("how far does it roll?") is
+        // an OUTPUT of the model instead of an input to it, and the cap above is visible when it
+        // bites. Seconds and world units (1 unit = 100 mm) from full speed to rest.
+        public float coastSeconds;
+        public float coastDistance;
+
+        // Braking deceleration as a multiple of g, and the friction cone it has to stay inside.
+        // brakeG < tractionG is the invariant that keeps a reversal motor-limited (progressive)
+        // instead of traction-limited (an instant skid).
+        public float brakeG;
+        public float tractionG;
     }
 
     public static Result Compute(float totalMass, float wheelRadius, int wheelCount,
         float maxWheelRpm, float friction, float gravity,
-        float driveForceTractionMultiple, float coastStopSeconds)
+        float driveForceTractionMultiple, float rollingResistance)
+    {
+        return Compute(totalMass, wheelRadius, wheelCount, maxWheelRpm, friction, gravity,
+            driveForceTractionMultiple, rollingResistance, DefaultBrakeTractionFraction);
+    }
+
+    public static Result Compute(float totalMass, float wheelRadius, int wheelCount,
+        float maxWheelRpm, float friction, float gravity,
+        float driveForceTractionMultiple, float rollingResistance, float brakeTractionFraction)
     {
         // Everything is clamped rather than guarded-and-returned: a half-rigged robot must still
         // produce finite, non-negative values, because these go straight into PhysX and a NaN
@@ -114,7 +168,8 @@ public static class DrivetrainTuning
         float multiple = Mathf.Max(driveForceTractionMultiple, 0f);
         float freeSpeed = Mathf.Max(maxWheelRpm * Mathf.PI * 2f / 60f, 0.01f); // rad/s — joint limits
         float freeSpeedDeg = Mathf.Max(maxWheelRpm * 6f, 0.01f);               // deg/s — drive targets
-        float coastTime = Mathf.Max(coastStopSeconds, 0.05f);
+        float crr = Mathf.Max(rollingResistance, 0f);
+        float brakeFraction = Mathf.Max(brakeTractionFraction, 0f);
 
         Result r = default;
         r.topSpeed = freeSpeed * radius;
@@ -137,12 +192,30 @@ public static class DrivetrainTuning
         // "feels wrong".
         r.damping = r.stallTorque / freeSpeedDeg;
 
-        // Coast: enough drag to stop from top speed in coastStopSeconds. Deliberately not zero —
-        // a released drive with no drag creeps forever, and this is the one knob for glide length.
-        // Capped so coasting is always decisively gentler than braking (see MaxCoastTorqueFraction).
-        float coastAccel = r.topSpeed / coastTime;
-        r.coastTorque = Mathf.Min(coastAccel * mass * radius / wheels,
+        // Coast: rolling resistance, F = Crr * m * g, shared over the wheels. Deliberately not
+        // zero — a released drive with no drag creeps forever — but now a physical quantity
+        // rather than a hand-set stop time. Because the drive's forceLimit clamps, the wheel sees
+        // a CONSTANT retarding torque over essentially the whole speed range, which is exactly
+        // the shape real rolling resistance has; only in the last few mm/s does the damping term
+        // take over and decay it smoothly to zero, which is what stops Coulomb chatter at rest.
+        r.coastTorque = Mathf.Min(crr * mass * g * radius / wheels,
             r.stallTorque * MaxCoastTorqueFraction);
+
+        // Braking quadrant: what the drive may pull when the command opposes the wheel's current
+        // spin. Sized as a fraction of the tyres' grip so the motor, not the ground, is what
+        // limits a reversal — see DefaultBrakeTractionFraction. Never above stall torque: a motor
+        // cannot brake harder than it can drive.
+        r.brakeTorque = Mathf.Min(r.tractionForce * brakeFraction * radius / wheels, r.stallTorque);
+
+        // Report the coast from the torque that will actually be applied, not from the constant
+        // that produced it, so the MaxCoastTorqueFraction cap shows up in the numbers.
+        float coastAccel = radius > 0f && mass > 0f ? r.coastTorque * wheels / (radius * mass) : 0f;
+        r.coastSeconds = coastAccel > 1e-6f ? r.topSpeed / coastAccel : 0f;
+        r.coastDistance = coastAccel > 1e-6f ? r.topSpeed * r.topSpeed / (2f * coastAccel) : 0f;
+
+        r.tractionG = g > 1e-6f && mass > 0f ? r.tractionForce / (mass * g) : 0f;
+        r.brakeG = g > 1e-6f && mass > 0f && radius > 0f
+            ? r.brakeTorque * wheels / (radius * mass * g) : 0f;
 
         // Headroom above free speed so a coasting or back-driven wheel isn't clamped by the joint
         // limit (which would read as an invisible brake).
@@ -221,5 +294,42 @@ public static class DrivetrainTuning
             }
         }
         return found > 0 && sum > 0f ? sum / found : FallbackFriction;
+    }
+
+    // --- Centre of mass -------------------------------------------------------------------------
+
+    // The whole articulation's centre of mass, in world space, mass-weighted across every link.
+    //
+    // Every shipped link serializes m_ImplicitCom: 1 (automaticCenterOfMass), so PhysX derives
+    // each link's own COM from its colliders and this aggregate is the robot's true physical
+    // centre — it rises when a lift extends, in proportion to how much of the robot's mass is
+    // actually on the lift. Nothing in the project read it before; the chase camera now aims at
+    // it, because unlike a collider bounding box it can't be dragged around by a long intake or
+    // frozen at whatever pose the robot happened to be in.
+    //
+    // RUNTIME ONLY. worldCenterOfMass is PhysX state: it is meaningless in edit mode and may be
+    // unpopulated on the very first frame after Instantiate, hence the bool return rather than a
+    // silent zero. Pass a CACHED array — GetComponentsInChildren on a robot walks thousands of
+    // transforms and allocates.
+    public static bool TryMeasureCompositeCom(IEnumerable<ArticulationBody> bodies, out Vector3 com)
+    {
+        com = Vector3.zero;
+        if (bodies == null) return false;
+
+        Vector3 weighted = Vector3.zero;
+        float total = 0f;
+        foreach (ArticulationBody body in bodies)
+        {
+            if (body == null) continue;
+            float m = body.mass;
+            if (m <= 0f) continue;
+            weighted += body.worldCenterOfMass * m;
+            total += m;
+        }
+        if (total <= 0f) return false;
+
+        com = weighted / total;
+        // A single NaN link mass would poison the whole sum and then the camera transform.
+        return !float.IsNaN(com.x) && !float.IsNaN(com.y) && !float.IsNaN(com.z);
     }
 }

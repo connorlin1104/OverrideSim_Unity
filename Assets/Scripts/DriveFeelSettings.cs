@@ -14,8 +14,6 @@ public static class DriveFeelSettings
 {
     public const string DriveSensitivityPrefKey = "DriveSensitivity";
     public const string TurnSensitivityPrefKey = "TurnSensitivity";
-    public const string SmoothAccelerationPrefKey = "SmoothAcceleration";
-    public const string CoastOnReleasePrefKey = "DriveCoastOnRelease";
 
     // Scales the throttle command. Below 1 the robot simply never commands full speed — useful on
     // a phone where a small on-screen stick makes fine control hard.
@@ -29,13 +27,6 @@ public static class DriveFeelSettings
     public const float MinTurnSensitivity = 0.3f;
     public const float MaxTurnSensitivity = 1.5f;
     public const float DefaultTurnSensitivity = 1f;
-
-    // Off restores the pre-tuning behaviour: the command jumps straight to the stick instead of
-    // ramping. Kept as an option because a few drivers liked the snap.
-    public const bool DefaultSmoothAcceleration = true;
-
-    // On: releasing the sticks RELEASES the wheels and the robot glides. Off: it brakes.
-    public const bool DefaultCoastOnRelease = true;
 
     public static float DriveSensitivity
     {
@@ -63,23 +54,22 @@ public static class DriveFeelSettings
         }
     }
 
-    public static bool SmoothAcceleration
-    {
-        get => PlayerPrefs.GetInt(SmoothAccelerationPrefKey, DefaultSmoothAcceleration ? 1 : 0) != 0;
-        set
-        {
-            PlayerPrefs.SetInt(SmoothAccelerationPrefKey, value ? 1 : 0);
-            PlayerPrefs.Save();
-        }
-    }
+    // Retired: "Smooth Acceleration" and "Coast When You Let Go" were checkboxes here, and are now
+    // unconditional — they aren't features, they're what a drivetrain does. Wipe the stored ints,
+    // because a getter's default only applies when the key is ABSENT: anyone who once unticked
+    // either box has a 0 on disk, and without this they would be silently stuck with the old
+    // snap-throttle and locked-wheel stop forever, with no control left to turn them back on.
+    // (Same DeleteKey-on-upgrade shape as ControlsLayoutSettings.)
+    private const string RetiredSmoothAccelerationKey = "SmoothAcceleration";
+    private const string RetiredCoastOnReleaseKey = "DriveCoastOnRelease";
 
-    public static bool CoastOnRelease
+    public static void ClearRetiredKeys()
     {
-        get => PlayerPrefs.GetInt(CoastOnReleasePrefKey, DefaultCoastOnRelease ? 1 : 0) != 0;
-        set
-        {
-            PlayerPrefs.SetInt(CoastOnReleasePrefKey, value ? 1 : 0);
-            PlayerPrefs.Save();
-        }
+        if (!PlayerPrefs.HasKey(RetiredSmoothAccelerationKey)
+            && !PlayerPrefs.HasKey(RetiredCoastOnReleaseKey)) return;
+
+        PlayerPrefs.DeleteKey(RetiredSmoothAccelerationKey);
+        PlayerPrefs.DeleteKey(RetiredCoastOnReleaseKey);
+        PlayerPrefs.Save();
     }
 }

@@ -159,6 +159,11 @@ public class BuildHomeScene
     // Whenever a NEW serialized ref is added to a built panel, check it here too: the committed
     // HomeScene.unity serializes it as {fileID: 0}, and without a check for it this method reports
     // "valid", the rebuild is skipped, and the new control silently never appears.
+    //
+    // The rule runs BOTH ways, and the second direction is easy to forget: a control that has been
+    // REMOVED needs an inverted check that the committed scene no longer contains it. Otherwise
+    // every remaining check still passes against the old scene, the rebuild is skipped, and the
+    // button someone asked to delete keeps shipping — now wired to a handler that no longer exists.
     private static bool HomeSceneIsValid()
     {
         if (!File.Exists(HomeScenePath)) return false;
@@ -177,6 +182,17 @@ public class BuildHomeScene
         // "valid", the rebuild would be skipped, and the redesign would silently never appear.
         if (FindDescendantRect(scene, "SettingsTabs") == null) return false;
         if (FindDescendantRect(scene, "SettingsScrollbar") == null) return false;
+        // The config screen's Back / Control Style / Reset row now lives in a layout group so it
+        // stays centred whatever subset of it is showing. No serialized ref, so check the object.
+        if (FindDescendantRect(scene, "ConfigBottomRow") == null) return false;
+
+        // Inverted checks: catalog authoring moved out of the game and into
+        // Tools > RoboSim > Robot > Model Catalog. While these objects still exist in the committed
+        // scene it is stale, however well-wired the rest of it looks.
+        if (FindDescendantRect(scene, "EditModelsButton") != null) return false;
+        if (FindDescendantRect(scene, "SaveDefaultBindingsButton") != null) return false;
+        if (FindDescendantRect(scene, "SmoothAccelerationToggle") != null) return false;
+        if (FindDescendantRect(scene, "CoastOnReleaseToggle") != null) return false;
 
         SerializedObject so = new SerializedObject(controller);
         SerializedObject configSo = new SerializedObject(configScreen);
@@ -187,11 +203,9 @@ public class BuildHomeScene
                IsRefSet(so, "submitRobot") && IsRefSet(so, "recoveryIdLabel") &&
                IsRefSet(so, "recoveryIdInput") && IsRefSet(so, "uploadConfig") &&
                IsRefSet(so, "inboxNotice") && IsRefSet(so, "inboxLabel") &&
-               IsRefSet(so, "editModelsButton") && IsRefSet(so, "saveDefaultBindingsButton") &&
                IsRefSet(so, "settingsScroll") &&
                IsArrayFilled(so, "settingsTabButtons") && IsArrayFilled(so, "settingsTabPages") &&
                IsRefSet(so, "driveSensitivitySlider") && IsRefSet(so, "turnSensitivitySlider") &&
-               IsRefSet(so, "smoothAccelerationToggle") && IsRefSet(so, "coastOnReleaseToggle") &&
                IsRefSet(configSo, "controlStyleButton") &&
                IsRefSet(configSo, "resetDefaultsButton");
     }
@@ -425,21 +439,10 @@ public class BuildHomeScene
         SetLayoutHeight(template.gameObject, 84f);
         template.gameObject.SetActive(false); // template stays inactive; controller clones it
 
-        // Edit button under the list: toggles delete mode so junk test models can be removed from the
-        // catalog. The controller flips its label to "Done" and re-tints the rows while active.
-        Button editModelsButton = CreateButton("EditModelsButton", robotPage.transform, "Edit Models", 36f, NeutralColor);
-        SetLayoutHeight(editModelsButton.gameObject, 72f);
-
-        // Publishes the selected robot's current button layout as the one every player starts with.
-        // Editor-only and only while Edit mode is on — the controller hides it otherwise, because in
-        // a build the catalog is read-only and this would appear to work and then be gone. Kept as
-        // its own button rather than a second meaning for a model row: in edit mode a row tap
-        // already deletes, and two meanings on one red widget is how you lose a robot by accident.
-        Button saveDefaultBindingsButton = CreateButton("SaveDefaultBindingsButton", robotPage.transform,
-            "Make My Buttons the Default", 30f, NeutralColor);
-        SetLayoutHeight(saveDefaultBindingsButton.gameObject, 68f);
-        saveDefaultBindingsButton.gameObject.SetActive(false);
-
+        // NOTE: an "Edit Models" button used to sit under the list, turning a row tap into a delete,
+        // plus a "Make My Buttons the Default" button beside it. Both are gone from the game — see
+        // the note in HomeScreenController. They live in Tools > RoboSim > Robot > Model Catalog,
+        // which is Editor-only by construction rather than by an #if the builder could forget.
         CreateSectionHeader(robotPage.transform, "SectionMatch", "Match");
 
         // Automatic matchloading: checkbox (persisted via MatchLoadSettings). When off, the field
@@ -492,8 +495,13 @@ public class BuildHomeScene
 
         CreateSectionHeader(drivingPage.transform, "SectionDriveFeel", "Drive feel");
 
-        // Drive/turn sensitivity and the two feel switches, all persisted via DriveFeelSettings and
-        // snapshotted by RobotMotorController.Awake — so they take effect on the next Drive.
+        // Drive/turn sensitivity, persisted via DriveFeelSettings and snapshotted by
+        // RobotMotorController.Awake — so they take effect on the next Drive.
+        //
+        // There were two checkboxes here as well, Smooth Acceleration and Coast When You Let Go.
+        // They are gone on purpose: a drivetrain that ramps its throttle and rolls when released
+        // isn't a preference, it is what a drivetrain does, and offering the alternative meant
+        // shipping a mode that was wrong. Both behaviours are now unconditional for every robot.
         CreateSliderRow(drivingPage.transform, "DriveSensitivityRow",
             "DriveSensitivityLabel", "Drive Sensitivity", "DriveSensitivitySlider",
             DriveFeelSettings.MinDriveSensitivity, DriveFeelSettings.MaxDriveSensitivity,
@@ -506,18 +514,10 @@ public class BuildHomeScene
             DriveFeelSettings.DefaultTurnSensitivity,
             out TextMeshProUGUI turnSensitivityLabel, out Slider turnSensitivitySlider);
 
-        Toggle smoothAccelerationToggle = CreateToggle("SmoothAccelerationToggle", drivingPage.transform,
-            "Smooth Acceleration", DriveFeelSettings.DefaultSmoothAcceleration);
-        SetLayoutHeight(smoothAccelerationToggle.gameObject, 64f);
-
-        Toggle coastToggle = CreateToggle("CoastOnReleaseToggle", drivingPage.transform,
-            "Coast When You Let Go", DriveFeelSettings.DefaultCoastOnRelease);
-        SetLayoutHeight(coastToggle.gameObject, 64f);
-
         TextMeshProUGUI driveFeelHint = CreateText("DriveFeelHint", drivingPage.transform,
-            "Smooth Acceleration ramps the controls instead of snapping to full. Coast lets the " +
-            "robot roll to a stop like real omni wheels; turn it off to brake instantly. Both apply " +
-            "the next time you press Drive.", 24f);
+            "How hard the sticks drive and turn. Every robot ramps its controls instead of snapping " +
+            "to full, and rolls to a stop like real omni wheels. Changes apply the next time you " +
+            "press Drive.", 24f);
         driveFeelHint.alignment = TextAlignmentOptions.TopLeft;
         SetLayoutHeight(driveFeelHint.gameObject, 96f);
 
@@ -629,8 +629,6 @@ public class BuildHomeScene
         so.FindProperty("loadingOverlay").objectReferenceValue = loadingOverlay;
         so.FindProperty("modelListParent").objectReferenceValue = modelList.transform;
         so.FindProperty("modelButtonTemplate").objectReferenceValue = template;
-        so.FindProperty("editModelsButton").objectReferenceValue = editModelsButton;
-        so.FindProperty("saveDefaultBindingsButton").objectReferenceValue = saveDefaultBindingsButton;
         so.FindProperty("settingsScroll").objectReferenceValue = settingsScroll;
         SerializedProperty tabButtonsProp = so.FindProperty("settingsTabButtons");
         SerializedProperty tabPagesProp = so.FindProperty("settingsTabPages");
@@ -645,8 +643,6 @@ public class BuildHomeScene
         so.FindProperty("driveSensitivityLabel").objectReferenceValue = driveSensitivityLabel;
         so.FindProperty("turnSensitivitySlider").objectReferenceValue = turnSensitivitySlider;
         so.FindProperty("turnSensitivityLabel").objectReferenceValue = turnSensitivityLabel;
-        so.FindProperty("smoothAccelerationToggle").objectReferenceValue = smoothAccelerationToggle;
-        so.FindProperty("coastOnReleaseToggle").objectReferenceValue = coastToggle;
         so.FindProperty("joystickSizeSlider").objectReferenceValue = joystickSlider;
         so.FindProperty("joystickSizeLabel").objectReferenceValue = joystickLabel;
         so.FindProperty("controlsOpacitySlider").objectReferenceValue = opacitySlider;
@@ -729,9 +725,6 @@ public class BuildHomeScene
         UnityEventTools.AddPersistentListener(settingsButton.onClick, controller.OnSettingsPressed);
         UnityEventTools.AddPersistentListener(backButton.onClick, controller.OnBackPressed);
         UnityEventTools.AddPersistentListener(configureButton.onClick, controller.OnConfigureControllerPressed);
-        UnityEventTools.AddPersistentListener(editModelsButton.onClick, controller.OnEditModelsPressed);
-        UnityEventTools.AddPersistentListener(saveDefaultBindingsButton.onClick,
-            controller.OnSaveDefaultBindingsPressed);
         UnityEventTools.AddPersistentListener(settingsTabs[0].onClick, controller.OnRobotTabPressed);
         UnityEventTools.AddPersistentListener(settingsTabs[1].onClick, controller.OnControlsTabPressed);
         UnityEventTools.AddPersistentListener(settingsTabs[2].onClick, controller.OnDrivingTabPressed);
@@ -886,33 +879,52 @@ public class BuildHomeScene
         parts.buttons[11] = CreateConfigButton(diagram.transform, "CfgY", "Y",
             new Vector2(140f, 60f), roundSize, true, out parts.captions[11]);
 
-        // Bottom row, three across: Back | Control Style | Reset to Default.
-        parts.backButton = CreateButton("ConfigBackButton", panel.transform, "Back", 36f, AccentColor);
-        RectTransform backRect = (RectTransform)parts.backButton.transform;
-        backRect.anchorMin = backRect.anchorMax = new Vector2(0.5f, 0f);
-        backRect.pivot = new Vector2(0.5f, 0f);
-        backRect.anchoredPosition = new Vector2(-330f, 18f);
-        backRect.sizeDelta = new Vector2(240f, 64f);
+        // Bottom row: Back | Control Style | Reset to Default, inside a layout group.
+        //
+        // The group is the point. Two of the three are hidden per robot — Control Style needs at
+        // least one mechanism, Reset to Default needs the robot to actually ship a default layout —
+        // so the row was authored at fixed x = -330 / 0 / +330 and then lost buttons at runtime,
+        // leaving whatever survived stranded at its absolute slot. On a bare drivetrain that meant
+        // a lone Back button sitting 330 units left of centre, which is what "the Back button is
+        // un-centered" is. A HorizontalLayoutGroup lays out only ACTIVE children, so the row
+        // re-centres itself for any subset, including combinations nobody enumerated.
+        //
+        // Created before AssignmentPanel below so the popup stays the last sibling and keeps
+        // drawing on top of these.
+        GameObject bottomRow = CreateUIObject("ConfigBottomRow", panel.transform);
+        RectTransform rowRect = (RectTransform)bottomRow.transform;
+        rowRect.anchorMin = new Vector2(0f, 0f);
+        rowRect.anchorMax = new Vector2(1f, 0f);
+        rowRect.pivot = new Vector2(0.5f, 0f);
+        rowRect.offsetMin = new Vector2(12f, 18f);
+        rowRect.offsetMax = new Vector2(-12f, 82f); // 18 + 64 tall
+        HorizontalLayoutGroup rowLayout = bottomRow.AddComponent<HorizontalLayoutGroup>();
+        rowLayout.spacing = 40f;
+        rowLayout.childAlignment = TextAnchor.MiddleCenter;
+        // Both false, and both load-bearing: childControlWidth would discard the per-button widths
+        // below, and childForceExpandWidth would make the children fill the row so MiddleCenter
+        // had nothing left to centre.
+        rowLayout.childControlWidth = false;
+        rowLayout.childControlHeight = false;
+        rowLayout.childForceExpandWidth = false;
+        rowLayout.childForceExpandHeight = false;
+
+        // The layout group drives each child's anchors and x position, so only the size is set
+        // here — authoring anchors as well would bake dead values that read as authoritative.
+        parts.backButton = CreateButton("ConfigBackButton", bottomRow.transform, "Back", 36f, AccentColor);
+        ((RectTransform)parts.backButton.transform).sizeDelta = new Vector2(240f, 64f);
 
         // Switches a mechanism between one- and two-button control (ControllerConfigScreen reuses
         // the assignment popup for it).
-        parts.controlStyleButton = CreateButton("ControlStyleButton", panel.transform,
+        parts.controlStyleButton = CreateButton("ControlStyleButton", bottomRow.transform,
             "Control Style", 36f, NeutralColor);
-        RectTransform styleRect = (RectTransform)parts.controlStyleButton.transform;
-        styleRect.anchorMin = styleRect.anchorMax = new Vector2(0.5f, 0f);
-        styleRect.pivot = new Vector2(0.5f, 0f);
-        styleRect.anchoredPosition = new Vector2(0f, 18f);
-        styleRect.sizeDelta = new Vector2(300f, 64f);
+        ((RectTransform)parts.controlStyleButton.transform).sizeDelta = new Vector2(300f, 64f);
 
         // Puts this robot's shipped layout back. ControllerConfigScreen hides it for a robot that
         // ships without one, so it never offers to restore something that doesn't exist.
-        parts.resetDefaultsButton = CreateButton("ResetDefaultsButton", panel.transform,
+        parts.resetDefaultsButton = CreateButton("ResetDefaultsButton", bottomRow.transform,
             "Reset to Default", 32f, NeutralColor);
-        RectTransform resetRect = (RectTransform)parts.resetDefaultsButton.transform;
-        resetRect.anchorMin = resetRect.anchorMax = new Vector2(0.5f, 0f);
-        resetRect.pivot = new Vector2(0.5f, 0f);
-        resetRect.anchoredPosition = new Vector2(330f, 18f);
-        resetRect.sizeDelta = new Vector2(300f, 64f);
+        ((RectTransform)parts.resetDefaultsButton.transform).sizeDelta = new Vector2(300f, 64f);
 
         // Assignment popup: header + scrollable option list + Clear/Cancel. Scrolls because a
         // many-motor robot yields two rows per motor.
@@ -1366,18 +1378,23 @@ public class BuildHomeScene
         }
 
         // Idempotency: never add a second button (and never touch the joystick objects). The
-        // position IS re-asserted: Home used to live in the top-left corner, which now belongs
-        // to the L1/L2 shoulder buttons (Build Drive Controls), so both tools must agree on the
-        // top-center spot.
+        // position IS re-asserted, and the comparison is made against what PlaceInTopRow actually
+        // produces rather than against constants copied from it — see PositionHomeButton.
         Transform existingHome = canvasGo.transform.Find("HomeButton");
         if (existingHome != null)
         {
             RectTransform existingRect = (RectTransform)existingHome;
-            if (existingRect.pivot == new Vector2(1f, 1f) &&
-                existingRect.anchoredPosition == new Vector2(-12f, -24f))
-                return "already present";
+            Vector2 wasPivot = existingRect.pivot;
+            Vector2 wasAnchoredPosition = existingRect.anchoredPosition;
+            Vector2 wasSize = existingRect.sizeDelta;
+
             Undo.RecordObject(existingRect, "Move Home Button");
             PositionHomeButton(existingRect);
+
+            if (existingRect.pivot == wasPivot && existingRect.anchoredPosition == wasAnchoredPosition
+                && existingRect.sizeDelta == wasSize)
+                return "already present";
+
             EditorSceneManager.MarkSceneDirty(sampleScene);
             added = true; // reuse the flag so the caller saves the scene
             return "re-positioned to the top center";
@@ -1396,14 +1413,18 @@ public class BuildHomeScene
         return "added";
     }
 
-    // Top center, in a pair with the Reset button that Build Drive Controls adds to its right.
-    private static void PositionHomeButton(RectTransform rect)
-    {
-        rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 1f);
-        rect.pivot = new Vector2(1f, 1f);
-        rect.anchoredPosition = new Vector2(-12f, -24f);
-        rect.sizeDelta = new Vector2(160f, 64f);
-    }
+    // Home is the MIDDLE slot of the field HUD's top row, with Reset to its left and the camera
+    // toggle to its right.
+    //
+    // Delegated rather than duplicated, because duplicating it is exactly how it broke. This tool
+    // used to carry its own copy of the geometry from back when Home and Reset were a pair pivoted
+    // against the centre line; Build Drive Controls then grew a three-slot row and moved on, and
+    // because step 5 here writes SampleScene unconditionally — even on runs where the HomeScene
+    // rebuild is skipped — whichever tool ran last won. Running Build Home Screen after Build Drive
+    // Controls silently shoved Home 92 px left, half of it underneath Reset, while logging that it
+    // had "re-positioned to the top center". One authority now, so they cannot drift again.
+    private static void PositionHomeButton(RectTransform rect) =>
+        BuildDriveControls.PlaceInTopRow(rect, 0f);
 
     internal static RectTransform FindDescendantRect(Scene scene, string name)
     {

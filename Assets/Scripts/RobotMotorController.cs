@@ -8,7 +8,7 @@ using UnityEngine.InputSystem;
 // so the robot's speed emerges from motor strength vs. load: it can stall against a wall, get
 // slowed by heavy pieces, and shove things with real contact forces instead of teleport-pushes.
 //
-// DRIVE FEEL. Three things shape it, and all three were missing until the drivetrain was retuned:
+// DRIVE FEEL. Four things shape it, and all four were missing until the drivetrain was retuned:
 //
 //   1. The motor curve. See DrivetrainTuning — with the old forceLimit 700 / damping 1000 the
 //      drive was a bang-bang torque source for 99.95% of every acceleration, so half stick pulled
@@ -21,7 +21,12 @@ using UnityEngine.InputSystem;
 //   3. Coast. A velocity drive held at target 0 with full stall torque is not "off" — it is a
 //      locked-wheel skid brake, which is why the robot used to stop dead the instant you released
 //      and never felt like it rolled on omni wheels. Releasing the sticks now drops the drives to
-//      a rolling-resistance-sized torque and lets it glide.
+//      a rolling-resistance-sized torque (Crr * m * g, a real coefficient) and lets it glide.
+//   4. The braking quadrant. Asking for a direction the wheels are already spinning against is
+//      not the same as accelerating: a real motor driven backwards against its own rotation is
+//      current-limited and much weaker there. Without that distinction a reversal got the full
+//      3x-traction drive force, the tyres simply slipped, and the robot changed direction with no
+//      sense of carrying any momentum at all.
 //
 // Sign convention: the rig tool aligns every wheel link's local +X with the wrapper's +X
 // (robot right), so a positive joint rotation about +X spins the tire such that its contact
@@ -53,9 +58,13 @@ public class RobotMotorController : MonoBehaviour
              "the old 1000 it saturated forceLimit for 99.7% of every acceleration; DrivetrainTuning " +
              "sets it to stallTorque/freeSpeed so torque falls off like a real motor's.")]
     public float velocityDriveDamping = 1000f;
-    [Tooltip("Rolling resistance on each wheel's spin axis (Coulomb joint friction). A real drivetrain is never frictionless — this makes the robot coast to a stop instead of gliding forever. Applied to every wheel at Awake, so it affects all robots (this is the durable knob: the rig tool bakes a value but Awake here is authoritative). 0 = frictionless.")]
+    [Tooltip("Coulomb friction on each wheel's axle (ArticulationBody.jointFriction) — bearing and " +
+             "gearbox drag, not tyre rolling resistance, which is Wheel Rolling Resistance Crr below. " +
+             "Worth a couple of percent of the coast drag; kept because a real axle isn't frictionless.")]
     public float wheelRollingResistance = 0.3f;
-    [Tooltip("Velocity-proportional spin loss on each wheel — bleeds a little top speed so a 360 RPM drivetrain doesn't feel unrealistically quick, without changing the arcade feel. Higher = slower / heavier. Dial this with wheelRollingResistance to taste.")]
+    [Tooltip("Velocity-proportional spin loss on each wheel (ArticulationBody.angularDamping). " +
+             "Measured contribution is under 1% of top speed and ~4% of coast drag, so treat it as " +
+             "trim, not a tuning knob — the coast is set by Wheel Rolling Resistance Crr.")]
     public float wheelSpinDamping = 0.5f;
     [Tooltip("How much of full wheel speed the turn stick commands. At 1 a full turn spins the wheels as fast as full throttle does, which pivots the robot faster than a driver can catch. Lower = calmer turning; straight-line speed is unaffected.")]
     [Range(0.1f, 1f)]
@@ -87,12 +96,18 @@ public class RobotMotorController : MonoBehaviour
              "at a third of stick travel: proportional below it, full authority above.")]
     [Range(1f, 6f)]
     public float driveForceTractionMultiple = DrivetrainTuning.DefaultDriveForceTractionMultiple;
-    [Tooltip("Let go and the wheels are RELEASED rather than braked. Off = the old locked-wheel " +
-             "stop. The player can also force braking for every robot in Settings > Driving.")]
-    public bool coastWhenIdle = true;
-    [Tooltip("Roughly how long the robot takes to glide to rest from full speed while coasting. A " +
-             "time rather than a torque, so a 360 RPM robot doesn't glide 2.25x further than a 240.")]
-    public float coastStopSeconds = DrivetrainTuning.DefaultCoastStopSeconds;
+    [Tooltip("Rolling resistance of the tyre on the field, as the coefficient Crr in F = Crr*m*g. " +
+             "This is what the robot coasts down against when you let go — a property of the wheel " +
+             "and the surface, so a taller-geared robot correctly rolls further rather than always " +
+             "taking the same time. Estimated; plausible band 0.05-0.12. See DrivetrainTuning.")]
+    [Range(0.01f, 0.25f)]
+    public float wheelRollingResistanceCrr = DrivetrainTuning.DefaultRollingResistance;
+    [Tooltip("How hard the motors may brake when you ask for a direction the wheels are already " +
+             "spinning against, as a fraction of the tyres' grip. Below 1 because a motor in its " +
+             "braking quadrant is current-limited, nowhere near stall torque — that is what makes a " +
+             "hard reversal feel like it carries momentum instead of stopping on a coin.")]
+    [Range(0.2f, 1.5f)]
+    public float brakeTractionFraction = DrivetrainTuning.DefaultBrakeTractionFraction;
 
     [Header("Input Shaping")]
     [Tooltip("Stick travel ignored around centre, then rescaled so full stick still reaches 1.0. " +
@@ -131,13 +146,35 @@ public class RobotMotorController : MonoBehaviour
 
     private ArticulationBody[] allWheels = new ArticulationBody[0];
     private DrivetrainTuning.Result tuning;
-    private bool coasting;
+
+    // Which authority each wheel's drive currently carries, so the per-step decision below only
+    // writes an ArticulationDrive struct when it actually changes. Same reason MotorActuator keeps
+    // its hold flag: this runs 100 times a second across every wheel.
+    private DriveAuthority[] wheelAuthority = new DriveAuthority[0];
+
+    // How many entries at the start of allWheels are left-side wheels. Awake fills allWheels left
+    // side first, and the braking-quadrant check needs to know which command each wheel was given.
+    private int leftWheelCount;
+
+    private enum DriveAuthority { Drive, Coast, Brake }
+
+    // Fixed steps the sticks must sit at neutral before the wheels are RELEASED.
+    //
+    // Without this, sweeping a stick from full forward to full reverse passes through the deadzone,
+    // the neutral test fires for those few steps, and the drivetrain both drops to coast authority
+    // and throws away the accumulated command — handing the driver a free, fully-rearmed reversal
+    // at the exact moment they should be fighting the robot's momentum.
+    //
+    // 6 steps = 60 ms at the project's 100 Hz. Long enough that no deliberate flick through an 0.08
+    // deadzone gets past it, short enough that a genuine release still feels immediate — and the
+    // cost of being wrong is small either way, because during the dwell the wheels are already in
+    // the braking quadrant (command below actual speed) and so limited to brakeTorque, not stall.
+    private const int CoastDwellSteps = 6;
+    private int neutralSteps;
 
     // Player prefs, snapshotted at Awake (see DriveFeelSettings for why they aren't read live).
     private float driveSensitivity = DriveFeelSettings.DefaultDriveSensitivity;
     private float turnSensitivity = DriveFeelSettings.DefaultTurnSensitivity;
-    private bool smoothAcceleration = DriveFeelSettings.DefaultSmoothAcceleration;
-    private bool coastOnRelease = DriveFeelSettings.DefaultCoastOnRelease;
 
     void Awake()
     {
@@ -155,12 +192,13 @@ public class RobotMotorController : MonoBehaviour
         // a change in Settings still lands on the next Drive.
         driveSensitivity = DriveFeelSettings.DriveSensitivity;
         turnSensitivity = DriveFeelSettings.TurnSensitivity;
-        smoothAcceleration = DriveFeelSettings.SmoothAcceleration;
-        coastOnRelease = DriveFeelSettings.CoastOnRelease;
 
         var wheels = new System.Collections.Generic.List<ArticulationBody>();
-        foreach (ArticulationBody wheel in AllWheels()) wheels.Add(wheel);
+        if (leftWheels != null) foreach (ArticulationBody w in leftWheels) if (w != null) wheels.Add(w);
+        leftWheelCount = wheels.Count;
+        if (rightWheels != null) foreach (ArticulationBody w in rightWheels) if (w != null) wheels.Add(w);
         allWheels = wheels.ToArray();
+        wheelAuthority = new DriveAuthority[allWheels.Length];
 
         // Measure the robot, then derive the motor model from it, so a heavier or differently
         // geared robot is tuned correctly without anyone editing a prefab. Diagnostics come back
@@ -173,7 +211,8 @@ public class RobotMotorController : MonoBehaviour
             DrivetrainTuning.MeasureFriction(allWheels),
             Physics.gravity.y,
             driveForceTractionMultiple,
-            coastStopSeconds);
+            wheelRollingResistanceCrr,
+            brakeTractionFraction);
 
         if (!autoTuneDrive)
         {
@@ -187,7 +226,7 @@ public class RobotMotorController : MonoBehaviour
         // Bake the motor model into every wheel joint's X drive. Velocity drives need
         // stiffness 0 (no position spring) and damping > 0 (the velocity gain); forceLimit
         // is what makes this behave like a torque-limited motor instead of a hard constraint.
-        coasting = false;
+        neutralSteps = 0;
         foreach (ArticulationBody wheel in allWheels)
         {
             ArticulationDrive d = wheel.xDrive;
@@ -263,32 +302,28 @@ public class RobotMotorController : MonoBehaviour
         // slew, so flipping it mid-drive ramps across instead of snapping.
         if (ReverseDriveSettings.Reversed) { throttleTarget = -throttleTarget; turnTarget = -turnTarget; }
 
-        // Neutral means RELEASE, not "drive to zero". Tested on the TARGET rather than the slewed
-        // command, so letting go coasts immediately instead of first ramping a phantom demand down.
-        if (coastWhenIdle && coastOnRelease
-            && Mathf.Abs(throttleTarget) < 1e-4f && Mathf.Abs(turnTarget) < 1e-4f)
+        // Neutral means RELEASE, not "drive to zero" — but only once the sticks have STAYED there.
+        // Tested on the TARGET rather than the slewed command so a genuine release coasts promptly
+        // instead of first ramping a phantom demand down; gated by a dwell so a stick swept from
+        // forward to reverse doesn't get a free release (and a wiped command) on the way past
+        // centre. See CoastDwellSteps.
+        bool neutralNow = Mathf.Abs(throttleTarget) < 1e-4f && Mathf.Abs(turnTarget) < 1e-4f;
+        neutralSteps = neutralNow ? Mathf.Min(neutralSteps + 1, CoastDwellSteps) : 0;
+
+        if (neutralSteps >= CoastDwellSteps)
         {
             throttleCommand = 0f;
             turnCommand = 0f;
-            EnterCoast();
+            SetAuthority(DriveAuthority.Coast);
             ApplySide(leftWheels, 0f);
             ApplySide(rightWheels, 0f);
             return;
         }
-        ExitCoast();
 
-        if (smoothAcceleration)
-        {
-            float dt = Time.fixedDeltaTime;
-            throttleCommand = Slew(throttleCommand, throttleTarget,
-                throttleRisePerSec, throttleFallPerSec, dt);
-            turnCommand = Slew(turnCommand, turnTarget, turnRisePerSec, turnFallPerSec, dt);
-        }
-        else
-        {
-            throttleCommand = throttleTarget;
-            turnCommand = turnTarget;
-        }
+        float dt = Time.fixedDeltaTime;
+        throttleCommand = Slew(throttleCommand, throttleTarget,
+            throttleRisePerSec, throttleFallPerSec, dt);
+        turnCommand = Slew(turnCommand, turnTarget, turnRisePerSec, turnFallPerSec, dt);
 
         float turn = turnCommand * turnRate;
         float left = Mathf.Clamp(throttleCommand + turn, -1f, 1f);
@@ -296,8 +331,94 @@ public class RobotMotorController : MonoBehaviour
 
         // Revolute drive target velocities are in DEGREES per second: rpm x 360/60 = rpm x 6.
         float fullStickDegPerSec = maxWheelRpm * 6f;
-        ApplySide(leftWheels, left * fullStickDegPerSec * (invertLeft ? -1f : 1f));
-        ApplySide(rightWheels, right * fullStickDegPerSec * (invertRight ? -1f : 1f));
+        float leftDegPerSec = left * fullStickDegPerSec * (invertLeft ? -1f : 1f);
+        float rightDegPerSec = right * fullStickDegPerSec * (invertRight ? -1f : 1f);
+        ApplySide(leftWheels, leftDegPerSec);
+        ApplySide(rightWheels, rightDegPerSec);
+
+        UpdateBrakingQuadrant(leftDegPerSec, rightDegPerSec);
+    }
+
+    // --- Braking quadrant ------------------------------------------------------------------------
+
+    // Give a wheel full stall torque only when it is being ACCELERATED. When the commanded
+    // direction opposes the direction it is actually spinning, the motor is being back-driven —
+    // the braking quadrant — where a real V5 is limited by its current draw and its own back-EMF
+    // and can nowhere near make stall torque. Without this the sim handed a reversal 3x the tyres'
+    // grip, the tyres slipped, and the robot stopped at the friction limit in ~0.12 m regardless of
+    // how fast it had been going: a direction change that cost the driver nothing.
+    //
+    // Gated on the wheel actually MOVING (BrakeSpeedFraction of free speed), and that gate is
+    // load-bearing rather than an optimisation. In a skid-steer point turn the inner wheels are
+    // commanded opposite to the outer ones, so they sit in the braking quadrant for the entry
+    // transient — and driveForceTractionMultiple is 3 precisely because the sim's isotropic omni
+    // wheels have to break traction laterally to turn at all. Cutting authority there would gut
+    // the turn. Below the gate the wheel keeps full torque and the turn starts normally; the brake
+    // limit only bites on a genuine reversal from speed.
+    private const float BrakeSpeedFraction = 0.15f;
+
+    private void UpdateBrakingQuadrant(float leftDegPerSec, float rightDegPerSec)
+    {
+        if (allWheels.Length == 0) return;
+        float movingDegPerSec = tuning.maxJointVelocity * Mathf.Rad2Deg * BrakeSpeedFraction;
+
+        for (int i = 0; i < allWheels.Length; i++)
+        {
+            ArticulationBody wheel = allWheels[i];
+            if (wheel == null) continue;
+
+            // allWheels is filled left-side first by Awake, so leftWheelCount is the boundary.
+            // Taking the command from here rather than reading xDrive.targetVelocity back keeps
+            // this honest about what was just asked for, with no marshalling round-trip per wheel.
+            float commandDegPerSec = i < leftWheelCount ? leftDegPerSec : rightDegPerSec;
+
+            // jointVelocity is in rad/s (joint state speaks radians); the drive target is deg/s.
+            float spinDegPerSec = wheel.jointVelocity.dofCount > 0
+                ? wheel.jointVelocity[0] * Mathf.Rad2Deg : 0f;
+
+            // Back-driven covers three cases that are all the same thing electrically: commanded
+            // into reverse, commanded to a dead stop, or simply commanded SLOWER than it is
+            // currently turning. In every one the wheel is turning the motor rather than the other
+            // way round, which is the braking quadrant. Getting the third case wrong is what would
+            // have made the release itself violent: easing off puts the command below the actual
+            // speed, and at full stall torque that alone asks for 2.4 g of retardation — the tyres
+            // just slip and the robot stops dead, which is the original complaint.
+            bool sameDirection = spinDegPerSec * commandDegPerSec > 0f;
+            bool backDriven = !sameDirection
+                              || Mathf.Abs(commandDegPerSec) < Mathf.Abs(spinDegPerSec);
+            bool moving = Mathf.Abs(spinDegPerSec) > movingDegPerSec;
+            SetAuthority(i, backDriven && moving ? DriveAuthority.Brake : DriveAuthority.Drive);
+        }
+    }
+
+    // --- Drive authority -------------------------------------------------------------------------
+    // Same struct-swap shape as MotorActuator.EnterHold/ExitHold, including the per-wheel flag that
+    // keeps it from rewriting six drives on every one of the 100 physics steps a second.
+    //
+    // Coast keeps the velocity drive rather than zeroing it, so the last of the roll still bleeds
+    // off smoothly instead of the wheel free-spinning forever; the forceLimit is what turns the
+    // drive from a motor into rolling resistance.
+
+    private void SetAuthority(DriveAuthority authority)
+    {
+        for (int i = 0; i < allWheels.Length; i++) SetAuthority(i, authority);
+    }
+
+    private void SetAuthority(int index, DriveAuthority authority)
+    {
+        if (wheelAuthority[index] == authority) return;
+        ArticulationBody wheel = allWheels[index];
+        if (wheel == null) return;
+
+        ArticulationDrive d = wheel.xDrive;
+        d.forceLimit = authority switch
+        {
+            DriveAuthority.Coast => tuning.coastTorque,
+            DriveAuthority.Brake => tuning.brakeTorque,
+            _ => tuning.stallTorque,
+        };
+        wheel.xDrive = d;
+        wheelAuthority[index] = authority;
     }
 
     // --- Input shaping -------------------------------------------------------------------------
@@ -349,41 +470,6 @@ public class RobotMotorController : MonoBehaviour
         return Mathf.MoveTowards(0f, target, leftoverSeconds * riseRate);
     }
 
-    // --- Coast ---------------------------------------------------------------------------------
-    // Same struct-swap shape as MotorActuator.EnterHold/ExitHold, including the flag that keeps it
-    // from rewriting six drives on every one of the 100 physics steps a second.
-
-    // Release the wheels: keep the velocity drive (so the last of the roll still bleeds off
-    // smoothly) but drop its authority to a rolling-resistance-sized torque. Deliberately not
-    // exactly zero — a released drive with no drag creeps forever, and this torque is the single
-    // knob for how far the robot glides.
-    private void EnterCoast()
-    {
-        if (coasting) return;
-        foreach (ArticulationBody wheel in allWheels)
-        {
-            if (wheel == null) continue;
-            ArticulationDrive d = wheel.xDrive;
-            d.forceLimit = tuning.coastTorque;
-            wheel.xDrive = d;
-        }
-        coasting = true;
-    }
-
-    // Give the motors their full authority back the moment there's something to drive.
-    private void ExitCoast()
-    {
-        if (!coasting) return;
-        foreach (ArticulationBody wheel in allWheels)
-        {
-            if (wheel == null) continue;
-            ArticulationDrive d = wheel.xDrive;
-            d.forceLimit = tuning.stallTorque;
-            wheel.xDrive = d;
-        }
-        coasting = false;
-    }
-
     // Autonomy/test hook: drive without input devices (e.g. scripted routines, play-mode tests).
     public void SetManualInput(float throttle, float turn)
     {
@@ -408,11 +494,4 @@ public class RobotMotorController : MonoBehaviour
         }
     }
 
-    private System.Collections.Generic.IEnumerable<ArticulationBody> AllWheels()
-    {
-        if (leftWheels != null)
-            foreach (ArticulationBody w in leftWheels) if (w != null) yield return w;
-        if (rightWheels != null)
-            foreach (ArticulationBody w in rightWheels) if (w != null) yield return w;
-    }
 }

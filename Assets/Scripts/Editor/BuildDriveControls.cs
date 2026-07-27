@@ -62,6 +62,13 @@ public static class BuildDriveControls
     private const float ChaseCameraFollowSmooth = 0.09f;
     private const float ChaseCameraHeadingSmooth = 0.12f;
 
+    // How far above the robot's centre of mass the camera aims, as a fraction of the robot's own
+    // height. A fraction, not the absolute 1.5 units this used to be: mass sits low in a robot, so
+    // an absolute rise that framed a bare drivetrain landed on a lifted robot's roof. 0.25 puts
+    // the aim just above the chassis's geometric centre, so the bot sits slightly low in frame and
+    // you can see where it is driving.
+    private const float ChaseCameraFocusHeightFraction = 0.25f;
+
     // The three top-of-screen buttons — Reset | Home | Camera View — laid out as one evenly spaced
     // row centred on the top edge. Each is anchored AND pivoted at top-centre and offset by a whole
     // pitch, so the row stays centred and evenly gapped at any canvas width; the earlier layout
@@ -154,7 +161,11 @@ public static class BuildDriveControls
     }
 
     // Slot one button into the top row, `slot` pitches either side of the centre line.
-    private static void PlaceInTopRow(RectTransform rect, float slotOffsetX)
+    //
+    // internal because Build Home Screen creates the Home button and must place it identically —
+    // it is the single authority for the row's geometry, and BuildHomeScene.PositionHomeButton
+    // calls straight through to it rather than keeping a second copy of these numbers.
+    internal static void PlaceInTopRow(RectTransform rect, float slotOffsetX)
     {
         rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 1f);
         rect.pivot = new Vector2(0.5f, 1f);
@@ -209,6 +220,7 @@ public static class BuildDriveControls
         chaseSo.FindProperty("startYawOffset").floatValue = ChaseCameraStartYaw;
         chaseSo.FindProperty("followSmoothTime").floatValue = ChaseCameraFollowSmooth;
         chaseSo.FindProperty("headingSmoothTime").floatValue = ChaseCameraHeadingSmooth;
+        chaseSo.FindProperty("focusHeightFraction").floatValue = ChaseCameraFocusHeightFraction;
         chaseSo.ApplyModifiedPropertiesWithoutUndo();
 
         // Tagged MainCamera so Camera.main keeps resolving while the free camera is switched off.

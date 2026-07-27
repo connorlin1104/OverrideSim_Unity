@@ -36,8 +36,16 @@ public class RigDrivetrainArticulation
     private const string AddWheelsUndo = "Add Wheels to Drivetrain";
 
     private const int ExpectedWheelClusters = 6;
-    private const float RootMass = 24f;          // chassis; each of the 6 wheel links adds 1 => ~30 total, matching the old rig
-    private const float WheelMass = 1f;
+    // Link masses, in kg, sized against the real thing: a VEX V5 robot may not exceed 25 lb
+    // (11.3 kg), and a 2.75" plastic omni with its inserts is about 0.11 kg.
+    //
+    // These were 24 and 1 — inherited from an older rig and never questioned — which put 66-68% of
+    // every robot on one low chassis link and another 6 kg of ballast at axle height. The COM was
+    // computed correctly the whole time; there was simply nothing left for a lift to move it with,
+    // so no shipped robot could tip itself by driving in any configuration. See RobotBalanceWindow,
+    // which reports the resulting tip thresholds and re-applies these to already-rigged robots.
+    internal const float RootMass = 7f;
+    internal const float WheelMass = 0.15f;
     // PROVISIONAL drive values, written while the wheel links are being built — before the
     // RobotMotorController (and therefore the robot's gearing, mass and wheel radius) is known.
     // ApplyDriveTuning re-bakes every drive from DrivetrainTuning at the end of the rig, so these
@@ -500,7 +508,8 @@ public class RigDrivetrainArticulation
             DrivetrainTuning.MeasureFriction(wheels),
             Physics.gravity.y,
             motor.driveForceTractionMultiple,
-            motor.coastStopSeconds);
+            motor.wheelRollingResistanceCrr,
+            motor.brakeTractionFraction);
 
         // Honour the per-robot escape hatch here too, or the bake and the runtime would disagree
         // for exactly the robots someone deliberately hand-tuned.
@@ -532,7 +541,9 @@ public class RigDrivetrainArticulation
            $"peak force {t.peakForce:0.} of {t.tractionForce:0.} available traction " +
            $"({(t.tractionForce > 0f ? t.peakForce / t.tractionForce : 0f):P0}), " +
            $"top speed {t.topSpeed:0.0} u/s, 95% of it in {t.secondsTo95:0.00} s, " +
-           $"coast torque {t.coastTorque:0.#}.";
+           $"coasts to rest in {t.coastSeconds:0.00} s over {t.coastDistance:0.0} u " +
+           $"({t.coastDistance / 10f:0.00} m), brakes at {t.brakeG:0.00} g inside a " +
+           $"{t.tractionG:0.00} g friction cone.";
 
     // Wires already-present wheel parts into an ALREADY-rigged drivetrain: each part becomes a
     // revolute wheel link (same torque-limited motor model as Rig) assigned to the near rail, then

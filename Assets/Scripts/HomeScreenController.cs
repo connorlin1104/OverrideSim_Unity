@@ -31,11 +31,11 @@ public class HomeScreenController : MonoBehaviour
     [SerializeField] private Transform modelListParent;
     [Tooltip("Inactive template Button under the list parent; cloned once per catalog entry.")]
     [SerializeField] private Button modelButtonTemplate;
-    [Tooltip("Toggles edit mode: while on, tapping a model removes it from the catalog instead of selecting it.")]
-    [SerializeField] private Button editModelsButton;
-    [Tooltip("Editor-only: makes the selected robot's current button layout the one every player " +
-             "starts with. Shown only while Edit Models is on, and hidden entirely in a build.")]
-    [SerializeField] private Button saveDefaultBindingsButton;
+    // Catalog AUTHORING — removing a model, and publishing a robot's default button layout — is
+    // not something a player should be able to do: the catalog is a read-only asset in a build, so
+    // an in-game delete either looked permanent and wasn't, or (in the editor) silently wrote the
+    // removal of a shipped public robot straight into the committed asset. Both live in
+    // Tools > RoboSim > Robot > Model Catalog now.
 
     [Header("Settings Tabs")]
     [Tooltip("Tab buttons across the top of the settings panel, in the same order as Settings Tab Pages.")]
@@ -53,18 +53,10 @@ public class HomeScreenController : MonoBehaviour
     [Tooltip("Scales the turn command, on top of the robot's own turn rate.")]
     [SerializeField] private Slider turnSensitivitySlider;
     [SerializeField] private TMP_Text turnSensitivityLabel;
-    [Tooltip("Ramps the drive commands instead of snapping to full — the fix for a tap of the turn " +
-             "key swinging the robot much further than intended.")]
-    [SerializeField] private Toggle smoothAccelerationToggle;
-    [Tooltip("Releases the wheels when the sticks centre, so the robot rolls to a stop instead of " +
-             "braking dead.")]
-    [SerializeField] private Toggle coastOnReleaseToggle;
 
     [Header("Selection Tint")]
     [SerializeField] private Color selectedTint = new Color(0.24f, 0.49f, 0.92f); // accent blue
     [SerializeField] private Color normalTint = new Color(0.23f, 0.25f, 0.30f);   // neutral dark
-    [Tooltip("Row tint while Edit mode is on, signalling that tapping a model deletes it.")]
-    [SerializeField] private Color deleteTint = new Color(0.72f, 0.25f, 0.25f);   // delete red
 
     [Header("Joystick Size")]
     [Tooltip("Slider that scales the on-screen controls (persisted via JoystickSettings).")]
@@ -128,9 +120,6 @@ public class HomeScreenController : MonoBehaviour
     // Guards against the field scene being loaded twice from repeated Drive taps.
     private bool isLoading;
 
-    // While true, the model list is in edit mode: tapping a row deletes that model from the catalog.
-    private bool editMode;
-
     // Inbox items that would actually reveal something on this device — see OnInboxFetched.
     private readonly List<RobotInboxService.Item> pendingInbox = new List<RobotInboxService.Item>();
 
@@ -142,9 +131,10 @@ public class HomeScreenController : MonoBehaviour
         // Before anything reads a map: give every robot that ships a default layout to a device
         // that hasn't got one. HomeScene is build index 0, so this is the normal path in a build.
         ControllerMapSettings.SeedDefaults(catalog);
+        // Coasting and smooth acceleration used to be checkboxes and are now unconditional; drop
+        // any stored "off" so an old choice can't outlive the control that set it.
+        DriveFeelSettings.ClearRetiredKeys();
         BuildModelList();
-        UpdateEditButtonLabel();
-        UpdateSaveDefaultButtonVisibility();
         InitJoystickSizeControl();
         InitControlsOpacityControl();
         InitAutomaticMatchloadControl();
@@ -293,18 +283,18 @@ public class HomeScreenController : MonoBehaviour
                 ? entry.displayName
                 : $"{entry.displayName}  ({entry.ownerLabel})";
             TMP_Text label = clone.GetComponentInChildren<TMP_Text>(true);
-            if (label != null) label.text = editMode ? "Remove  " + title : title;
+            if (label != null) label.text = title;
 
             string id = entry.id; // capture per-iteration copy for the closure
-            clone.onClick.AddListener(() => OnModelButtonPressed(id));
+            clone.onClick.AddListener(() => SelectModel(id));
             modelButtons.Add(new KeyValuePair<Button, string>(clone, id));
         }
 
         RefreshHighlight();
     }
 
-    // Destroy the current clones and rebuild the list — after a delete or an edit-mode toggle, so the
-    // labels, tints, and click behavior all reflect the current mode.
+    // Destroy the current clones and rebuild the list — after a team code is entered or forgotten,
+    // which is what changes who is in VisibleModels.
     private void RebuildModelList()
     {
         foreach (KeyValuePair<Button, string> pair in modelButtons)
@@ -317,135 +307,21 @@ public class HomeScreenController : MonoBehaviour
         BuildModelList();
     }
 
-    // A model row does one of two things depending on the mode: pick it, or (in edit mode) delete it.
-    private void OnModelButtonPressed(string id)
-    {
-        if (editMode) DeleteModel(id);
-        else SelectModel(id);
-    }
-
     private void SelectModel(string id)
     {
         catalog.SelectedModelId = id;
         RefreshHighlight();
     }
 
-    // Remove a model entry from the catalog. In the Editor (where robots are set up, including Play
-    // mode) this is persisted to the catalog asset so it stays gone across restarts; in a player build
-    // the asset is read-only, so it is an in-memory removal for the session. The selection self-heals:
-    // RobotModelCatalog.SelectedModelId / SelectedModel fall back to the first entry when the saved id
-    // is gone, and RobotSpawner falls back to the first entry with a prefab. Only the catalog entry is
-    // removed — the prefab and mesh assets on disk are left untouched.
-    private void DeleteModel(string id)
-    {
-        if (catalog == null || catalog.models == null) return;
-        int removed = catalog.models.RemoveAll(e => e != null && e.id == id);
-        if (removed == 0) return;
-
-#if UNITY_EDITOR
-        UnityEditor.EditorUtility.SetDirty(catalog);
-        UnityEditor.AssetDatabase.SaveAssets();
-#endif
-
-        RebuildModelList();
-    }
-
-    // --- Edit mode ---
-
-    // Wired as a persistent onClick by the Build Home Scene tool. Toggles whether tapping a model
-    // selects or deletes it, and rebuilds the list so the rows show the current mode.
-    public void OnEditModelsPressed()
-    {
-        if (catalog == null) return; // nothing to edit
-        editMode = !editMode;
-        UpdateEditButtonLabel();
-        UpdateSaveDefaultButtonVisibility();
-        RebuildModelList();
-    }
-
-    private void UpdateEditButtonLabel()
-    {
-        if (editModelsButton == null) return; // older HomeScene built before this button existed
-        TMP_Text label = editModelsButton.GetComponentInChildren<TMP_Text>(true);
-        if (label != null) label.text = editMode ? "Done" : "Edit Models";
-    }
-
-    // --- Shipped default bindings (Editor only) ---
-
-    // Wired as a persistent onClick by the Build Home Scene tool.
-    //
-    // Makes the SELECTED robot's current button layout the one every player starts with, by writing
-    // it onto the catalog entry — the one binding-related thing that actually ships. Until this
-    // existed there was no shipped layer at all: MechanismAutoDetect assigns buttons into the
-    // editor's own PlayerPrefs at authoring time, so a fresh install got an unbound controller.
-    //
-    // Editor-only by design. In a player build the catalog is a read-only asset, so this would
-    // appear to work and be gone on the next launch — worse than not being there at all. Hence it
-    // hides itself outside the editor rather than showing a disabled control nobody can explain.
-    public void OnSaveDefaultBindingsPressed()
-    {
-#if UNITY_EDITOR
-        if (catalog == null) return;
-        RobotModelCatalog.Entry entry = catalog.SelectedModel;
-        if (entry == null)
-        {
-            SetCodeStatus("Pick a robot first.");
-            return;
-        }
-
-        ButtonMap current = ControllerMapSettings.Load(entry.id);
-        if (current.assignments.Count == 0)
-        {
-            SetCodeStatus($"'{entry.displayName}' has no buttons bound yet — nothing to make default. " +
-                          "Set it up in Configure Controller first.");
-            return;
-        }
-
-        // Clone, don't assign: the loaded map is mutated in place by the config screen, and handing
-        // the same object to the asset would let a later edit silently rewrite the shipped default.
-        entry.defaultButtonMap = ControllerMapSettings.Clone(current);
-        // Keep this device in step with what it just published, so the seeding rule still reads it
-        // as "untouched" and a future default update lands here too.
-        UnityEngine.PlayerPrefs.SetString(ControllerMapSettings.SeedPrefKey(entry.id),
-            JsonUtility.ToJson(entry.defaultButtonMap));
-        UnityEngine.PlayerPrefs.Save();
-
-        UnityEditor.EditorUtility.SetDirty(catalog);
-        UnityEditor.AssetDatabase.SaveAssets();
-        SetCodeStatus($"'{entry.displayName}': {current.assignments.Count} button(s) are now the " +
-                      "default for every player.");
-#endif
-    }
-
-    // In edit mode the rows are all tinted delete-red and the selection highlight is gone, so the
-    // button names the robot it would act on — otherwise there is no way to tell.
-    private void UpdateSaveDefaultButtonVisibility()
-    {
-        if (saveDefaultBindingsButton == null) return; // older HomeScene built before this existed
-#if UNITY_EDITOR
-        saveDefaultBindingsButton.gameObject.SetActive(editMode);
-        RobotModelCatalog.Entry entry = catalog != null ? catalog.SelectedModel : null;
-        TMP_Text label = saveDefaultBindingsButton.GetComponentInChildren<TMP_Text>(true);
-        if (label != null)
-            label.text = entry != null
-                ? $"Make My Buttons the Default  ({entry.displayName})"
-                : "Make My Buttons the Default";
-#else
-        saveDefaultBindingsButton.gameObject.SetActive(false);
-#endif
-    }
-
-    // Tint the selected entry with the accent color so the current choice is visible; in edit mode
-    // every row takes the delete tint so it reads as "tap to remove".
+    // Tint the selected entry with the accent color so the current choice is visible.
     private void RefreshHighlight()
     {
         string selected = catalog != null ? catalog.SelectedModelId : null;
         foreach (KeyValuePair<Button, string> pair in modelButtons)
         {
             if (pair.Key == null || pair.Key.image == null) continue;
-            pair.Key.image.color = editMode ? deleteTint : (pair.Value == selected ? selectedTint : normalTint);
+            pair.Key.image.color = pair.Value == selected ? selectedTint : normalTint;
         }
-        UpdateSaveDefaultButtonVisibility(); // the label names the selected robot
     }
 
     // --- Joystick size ---
@@ -552,20 +428,6 @@ public class HomeScreenController : MonoBehaviour
             turnSensitivitySlider.SetValueWithoutNotify(DriveFeelSettings.TurnSensitivity);
             turnSensitivitySlider.onValueChanged.AddListener(OnTurnSensitivityChanged);
             UpdateTurnSensitivityLabel(DriveFeelSettings.TurnSensitivity);
-        }
-
-        if (smoothAccelerationToggle != null)
-        {
-            smoothAccelerationToggle.SetIsOnWithoutNotify(DriveFeelSettings.SmoothAcceleration);
-            smoothAccelerationToggle.onValueChanged.AddListener(
-                value => DriveFeelSettings.SmoothAcceleration = value);
-        }
-
-        if (coastOnReleaseToggle != null)
-        {
-            coastOnReleaseToggle.SetIsOnWithoutNotify(DriveFeelSettings.CoastOnRelease);
-            coastOnReleaseToggle.onValueChanged.AddListener(
-                value => DriveFeelSettings.CoastOnRelease = value);
         }
     }
 
