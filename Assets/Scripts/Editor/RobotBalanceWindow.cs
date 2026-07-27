@@ -14,8 +14,10 @@ using UnityEngine;
 //
 //   • RigDrivetrainArticulation puts a hard-coded 24 kg on the chassis link, which is 66-68% of
 //     every shipped robot, sitting low and never moving.
-//   • Each wheel link is 1 kg — 6 kg of ballast at axle height, when a real VEX 2.75" omni is
-//     about 0.11 kg.
+//   • Each wheel link is 1 kg — 6 kg at axle height. That one is left alone: a real omni is 0.11 kg,
+//     but a wheel's centre sits only one radius above the contact patch, so its mass is weak
+//     ballast, and shrinking it wrecks the mass ratio across the drive joint. See
+//     RigDrivetrainArticulation.WheelMass, which has the measurements.
 //   • Every lift link lands on MechanismBuildUtil.MinLiftMass (1.5 kg), which has won on 100% of
 //     the shipped links: the mass-from-geometry pass computes near-zero volume for thin plates, so
 //     the floor is the value, not a floor.
@@ -529,14 +531,17 @@ public class RobotBalanceWindow : EditorWindow
             if (motor.rightWheels != null) foreach (ArticulationBody w in motor.rightWheels) if (w != null) wheels.Add(w);
             if (wheels.Count == 0) return false;
 
+            // Every mass is compared, not just the root's. Checking only the chassis meant a robot
+            // whose chassis was already right but whose wheels were not reported "unchanged" and
+            // skipped the save — so a corrected wheel mass could never reach it.
             bool dirty = !Mathf.Approximately(rootBody.mass, ChassisMass);
-            rootBody.mass = ChassisMass;
             foreach (ArticulationBody wheel in wheels)
-            {
                 if (!Mathf.Approximately(wheel.mass, WheelMass)) dirty = true;
-                wheel.mass = WheelMass;
-            }
+
             if (!dirty) { log.AppendLine($"  {root.name}: unchanged"); return false; }
+
+            rootBody.mass = ChassisMass;
+            foreach (ArticulationBody wheel in wheels) wheel.mass = WheelMass;
 
             // The traction budget is mu*m*g, so every drive constant depends on the mass that just
             // changed. Re-bake in the same pass or edit-mode simulation (PhysicsSmokeTest) measures

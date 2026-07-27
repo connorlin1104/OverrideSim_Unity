@@ -45,7 +45,25 @@ public class RigDrivetrainArticulation
     // so no shipped robot could tip itself by driving in any configuration. See RobotBalanceWindow,
     // which reports the resulting tip thresholds and re-applies these to already-rigged robots.
     internal const float RootMass = 7f;
-    internal const float WheelMass = 0.15f;
+
+    // NOT the real thing, on purpose. A VEX 2.75" omni is about 0.11 kg, and dropping the wheel
+    // links to 0.15 to match made the drivetrain stop working: PhysicsSmokeTest went from turning
+    // 80 degrees to 6, and then from driving to barely moving at all, on robots whose geometry and
+    // drive tune were otherwise correct.
+    //
+    // The reason is the mass RATIO across the drive joint, which is the one joint that has to carry
+    // every newton of tractive force. Chassis 7 kg against a 0.15 kg wheel is 47:1; PhysX solves
+    // articulations iteratively and that ratio is where it stops converging. Worse, the iteration
+    // count that would help is set from RobotMotorController.Awake, which never runs in edit mode —
+    // so edit-mode simulation gets the project default of 6, and the wheels effectively stop
+    // transmitting force.
+    //
+    // 1 kg keeps the ratio at 7:1, better than the 24:1 this project ran at for its whole life, and
+    // it costs almost nothing in stability terms: a wheel's centre sits one radius above the
+    // contact patch, so it is weak ballast either way. Measured on 654V_v2 — with a raised cascade
+    // it tips at 0.69 g at 1 kg wheels versus 0.52 g at 0.15 kg, and both are inside the 0.8 g the
+    // tyres can deliver, which is the whole point. See RobotBalanceWindow.
+    internal const float WheelMass = 1f;
     // PROVISIONAL drive values, written while the wheel links are being built — before the
     // RobotMotorController (and therefore the robot's gearing, mass and wheel radius) is known.
     // ApplyDriveTuning re-bakes every drive from DrivetrainTuning at the end of the rig, so these
