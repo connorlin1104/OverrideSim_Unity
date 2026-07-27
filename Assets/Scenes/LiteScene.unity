@@ -5101,9 +5101,9 @@ MonoBehaviour:
   minPitch: 5
   maxPitch: 82
   focusRise: 1.5
-  followSmoothTime: 0.12
+  followSmoothTime: 0.09
   followRobotHeading: 1
-  headingSmoothTime: 0.25
+  headingSmoothTime: 0.12
   orbitSpeed: 0.2
   pinchZoomSpeed: 0.005
   scrollZoomSpeed: 0.12

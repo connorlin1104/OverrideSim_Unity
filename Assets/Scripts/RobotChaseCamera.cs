@@ -39,16 +39,19 @@ public class RobotChaseCamera : MonoBehaviour
     [SerializeField] private float focusRise = 1.5f;
 
     [Header("Follow")]
-    [Tooltip("Seconds for the camera to catch up to the robot. Small enough not to feel floaty.")]
-    [SerializeField] private float followSmoothTime = 0.12f;
+    [Tooltip("Seconds for the camera to catch up to the robot. Small enough not to feel floaty. " +
+             "Authored by Build Drive Controls — editing this default only reaches a NEW camera.")]
+    [SerializeField] private float followSmoothTime = 0.09f;
 
     [Tooltip("Keep the camera behind the robot as it turns, the way a driver's-eye view would. " +
              "Off = the camera holds a fixed world angle and the robot rotates within the frame.")]
     [SerializeField] private bool followRobotHeading = true;
 
     [Tooltip("Seconds for the camera to swing around to a new robot heading. Damped because a VEX " +
-             "bot can spin far faster than a camera should whip around.")]
-    [SerializeField] private float headingSmoothTime = 0.25f;
+             "bot can spin far faster than a camera should whip around — but SmoothDampAngle needs " +
+             "~2.5x this to settle, so a large value leaves the world visibly still rotating long " +
+             "after the robot has stopped. Authored by Build Drive Controls.")]
+    [SerializeField] private float headingSmoothTime = 0.12f;
 
     [Header("Input")]
     [Tooltip("Degrees of rotation per screen pixel dragged (matches the free camera).")]

@@ -48,6 +48,9 @@ public class ControllerConfigScreen : MonoBehaviour
     [Tooltip("Opens the same popup in control-style mode. Optional: a home scene built before " +
              "control styles existed has no such button and simply keeps the per-type defaults.")]
     [SerializeField] private Button controlStyleButton;
+    [Tooltip("Puts this robot's shipped layout back, discarding the player's changes. Hidden for a " +
+             "robot that ships without one. Optional: older home scenes have no such button.")]
+    [SerializeField] private Button resetDefaultsButton;
 
     [Header("Tints")]
     [SerializeField] private Color assignedTint = new Color(0.24f, 0.49f, 0.92f); // accent blue
@@ -62,6 +65,8 @@ public class ControllerConfigScreen : MonoBehaviour
 
     private string robotId;
     private string robotDisplayName;
+    // The catalog entry the screen is showing, kept so Reset to Default has something to reset TO.
+    private RobotModelCatalog.Entry currentEntry;
     private List<RobotModelCatalog.MechanismInfo> mechanisms = new List<RobotModelCatalog.MechanismInfo>();
     private ButtonMap map = new ButtonMap();
     private readonly List<GameObject> spawnedRows = new List<GameObject>();
@@ -79,6 +84,7 @@ public class ControllerConfigScreen : MonoBehaviour
         }
         if (clearButton != null) clearButton.onClick.AddListener(OnClearPressed);
         if (controlStyleButton != null) controlStyleButton.onClick.AddListener(OnControlStylePressed);
+        if (resetDefaultsButton != null) resetDefaultsButton.onClick.AddListener(OnResetDefaultsPressed);
         if (cancelButton != null)
         {
             cancelButton.onClick.AddListener(CloseAssignmentPopup);
@@ -109,6 +115,12 @@ public class ControllerConfigScreen : MonoBehaviour
             ? entry.mechanisms
             : new List<RobotModelCatalog.MechanismInfo>();
 
+        currentEntry = entry;
+        // Belt and braces: the home screen already seeds at Start, but this screen is the one place
+        // a player looks when the controller seems unbound, so it must not be the one place that
+        // shows an empty diagram because seeding was somehow skipped.
+        ControllerMapSettings.SeedDefault(entry);
+
         map = ControllerMapSettings.Load(robotId);
         PruneStaleAssignments();
 
@@ -116,6 +128,9 @@ public class ControllerConfigScreen : MonoBehaviour
         if (emptyStateLabel != null) emptyStateLabel.SetActive(mechanisms.Count == 0);
         // Style switching needs mechanisms to act on, so hide the entry point when there are none.
         if (controlStyleButton != null) controlStyleButton.gameObject.SetActive(mechanisms.Count > 0);
+        // Same rule for Reset: offering to restore a layout that doesn't exist would just look broken.
+        if (resetDefaultsButton != null)
+            resetDefaultsButton.gameObject.SetActive(entry != null && entry.HasDefaultButtonMap);
         RefreshAllButtons();
 
         CloseAssignmentPopup(); // a popup left open from a previous robot must not carry over
@@ -177,7 +192,7 @@ public class ControllerConfigScreen : MonoBehaviour
             string style = ControllerMapSettings.GetStyle(map, mechanism.id, mechanism.type);
             foreach (string mode in ControllerMapSettings.ModesFor(mechanism.type, style))
             {
-                AddRow($"{mechanism.displayName} — {FunctionLabel(mode)}",
+                AddRow($"{NameOf(mechanism)} — {FunctionLabel(mode)}",
                     mechanism.id + "_" + mode,
                     ControllerMapSettings.HasAssignment(map, button, mechanism.id, mode),
                     () => OnAssignmentRowToggled(mechanism.id, mode));
@@ -195,7 +210,7 @@ public class ControllerConfigScreen : MonoBehaviour
             if (mechanism == null || string.IsNullOrEmpty(mechanism.id)) continue;
             string style = ControllerMapSettings.GetStyle(map, mechanism.id, mechanism.type);
             // A style row is a "tap to switch" action, not a selected state, so it never tints.
-            AddRow($"{mechanism.displayName} — {StyleLabel(mechanism.type, style)}",
+            AddRow($"{NameOf(mechanism)} — {StyleLabel(mechanism.type, style)}",
                 mechanism.id + "_style", false,
                 () => OnStyleRowToggled(mechanism.id, mechanism.type, style));
         }
@@ -255,6 +270,18 @@ public class ControllerConfigScreen : MonoBehaviour
         PopulateRows(); // reflect the cleared state; keep the popup open
     }
 
+    // Throw this device's layout away and take the shipped one back. Deliberately immediate with no
+    // confirmation: the thing it discards is a button map, the button is only visible when there IS
+    // a default to return to, and re-binding is the screen you are already standing on.
+    private void OnResetDefaultsPressed()
+    {
+        if (!ControllerMapSettings.ResetToDefault(currentEntry)) return;
+        map = ControllerMapSettings.Load(robotId);
+        PruneStaleAssignments(); // a default authored before a mechanism was removed
+        RefreshAllButtons();
+        if (assignmentPanel != null && assignmentPanel.activeSelf) PopulateRows();
+    }
+
     private void CloseAssignmentPopup()
     {
         popupMode = PopupMode.Assign;
@@ -312,7 +339,7 @@ public class ControllerConfigScreen : MonoBehaviour
             if (mechanism == null) continue; // stale (mechanism gone); PruneStaleAssignments clears it
             shown++;
             if (lines.Count < MaxCaptionLines)
-                lines.Add($"{mechanism.displayName} {ControllerMapSettings.ModeCaption(assignment.mode)}");
+                lines.Add($"{NameOf(mechanism)} {ControllerMapSettings.ModeCaption(assignment.mode)}");
         }
         if (shown > lines.Count && lines.Count > 0) lines[lines.Count - 1] += $" +{shown - lines.Count}";
 
@@ -321,6 +348,11 @@ public class ControllerConfigScreen : MonoBehaviour
         if (index < buttons.Length && buttons[index] != null && buttons[index].image != null)
             buttons[index].image.color = shown > 0 ? assignedTint : unassignedTint;
     }
+
+    // A mechanism whose display name never got set would otherwise render as a bare " — Forward
+    // (hold)" row with nothing to identify it. The id is ugly but it is never empty.
+    private static string NameOf(RobotModelCatalog.MechanismInfo mechanism)
+        => string.IsNullOrWhiteSpace(mechanism.displayName) ? mechanism.id : mechanism.displayName;
 
     private RobotModelCatalog.MechanismInfo FindMechanism(string id)
     {

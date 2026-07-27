@@ -38,7 +38,11 @@ public class RigDrivetrainArticulation
     private const int ExpectedWheelClusters = 6;
     private const float RootMass = 24f;          // chassis; each of the 6 wheel links adds 1 => ~30 total, matching the old rig
     private const float WheelMass = 1f;
-    private const float WheelStallTorque = 700f; // matches RobotMotorController.wheelStallTorque
+    // PROVISIONAL drive values, written while the wheel links are being built — before the
+    // RobotMotorController (and therefore the robot's gearing, mass and wheel radius) is known.
+    // ApplyDriveTuning re-bakes every drive from DrivetrainTuning at the end of the rig, so these
+    // only have to be valid, not right. Don't tune them; tune DrivetrainTuning.
+    private const float WheelStallTorque = 700f;
     private const float WheelDriveDamping = 1000f;
     private const float WheelMaxJointVelocity = 44f; // rad/s — 360 RPM (37.7 rad/s) plus headroom
     // Drivetrain-loss knobs baked into the wheel links (a real dt is never frictionless). These
@@ -447,7 +451,10 @@ public class RigDrivetrainArticulation
         motorSo.FindProperty("rightJoystickAction").objectReferenceValue = rightActionRef;
         motorSo.ApplyModifiedProperties();
 
-        // 7) TGS solver — PhysX's recommendation for articulations + drives (PGS lets driven
+        // 7) Re-bake the drives now that the robot is knowable (mass, wheel count, gearing).
+        DrivetrainTuning.Result tuning = ApplyDriveTuning(robot, useUndo: true);
+
+        // 8) TGS solver — PhysX's recommendation for articulations + drives (PGS lets driven
         //    joints sag and jitter under load).
         string tgsState = EnableTgsSolver();
 
@@ -458,8 +465,74 @@ public class RigDrivetrainArticulation
         Debug.Log($"{UndoName}: rigged '{robot.name}' — root ArticulationBody (mass {RootMass}) + " +
                   $"{leftLinks.Count} left / {rightLinks.Count} right wheel links, tagged Player, " +
                   $"motor controller wired ({(leftActionRef != null && rightActionRef != null ? "actions restored" : "ACTIONS MISSING")}), " +
-                  $"solver: {tgsState}.\n{linkSummary}", robot);
+                  $"solver: {tgsState}.\n{DescribeTuning(tuning)}\n{linkSummary}", robot);
     }
+
+    // --- Drive tuning bake ---------------------------------------------------------------------
+
+    // Re-bake every wheel drive from DrivetrainTuning so the values SERIALIZED into the robot match
+    // what RobotMotorController.Awake computes at play.
+    //
+    // This matters for one specific reason: PhysicsSmokeTest simulates in EDIT mode, where Awake
+    // never runs, so it drives the wheels straight off the serialized xDrive. Without this the
+    // smoke test would measure a drivetrain that no player ever experiences — it would keep
+    // passing against the old 700/1000 while the shipped feel changed underneath it.
+    //
+    // Safe to run on an already-rigged robot; that's what the Apply Drive Tuning sweep uses to
+    // bring robots rigged before this existed back in line, with no re-rig.
+    internal static DrivetrainTuning.Result ApplyDriveTuning(GameObject robot, bool useUndo)
+    {
+        if (robot == null) throw new System.ArgumentNullException(nameof(robot));
+        RobotMotorController motor = robot.GetComponent<RobotMotorController>();
+        if (motor == null)
+            throw new System.InvalidOperationException(
+                $"'{robot.name}' has no RobotMotorController — rig the drivetrain first.");
+
+        var wheels = new List<ArticulationBody>();
+        if (motor.leftWheels != null) foreach (ArticulationBody w in motor.leftWheels) if (w != null) wheels.Add(w);
+        if (motor.rightWheels != null) foreach (ArticulationBody w in motor.rightWheels) if (w != null) wheels.Add(w);
+
+        DrivetrainTuning.Result tuning = DrivetrainTuning.Compute(
+            DrivetrainTuning.MeasureTotalMass(robot.GetComponent<ArticulationBody>()),
+            DrivetrainTuning.MeasureWheelRadius(wheels),
+            wheels.Count,
+            motor.maxWheelRpm,
+            DrivetrainTuning.MeasureFriction(wheels),
+            Physics.gravity.y,
+            motor.driveForceTractionMultiple,
+            motor.coastStopSeconds);
+
+        // Honour the per-robot escape hatch here too, or the bake and the runtime would disagree
+        // for exactly the robots someone deliberately hand-tuned.
+        if (!motor.autoTuneDrive)
+        {
+            tuning.stallTorque = motor.wheelStallTorque;
+            tuning.damping = motor.velocityDriveDamping;
+        }
+
+        foreach (ArticulationBody wheel in wheels)
+        {
+            if (useUndo) Undo.RecordObject(wheel, UndoName);
+            ArticulationDrive d = wheel.xDrive;
+            d.driveType = ArticulationDriveType.Velocity;
+            d.stiffness = 0f;
+            d.forceLimit = tuning.stallTorque;
+            d.damping = tuning.damping;
+            wheel.xDrive = d;
+            wheel.maxJointVelocity = tuning.maxJointVelocity;
+            wheel.jointFriction = WheelRollingResistance;
+            wheel.angularDamping = WheelSpinDamping;
+            EditorUtility.SetDirty(wheel);
+        }
+        return tuning;
+    }
+
+    internal static string DescribeTuning(DrivetrainTuning.Result t)
+        => $"drive tuned: stall {t.stallTorque:0.#} / damping {t.damping:0.##} per wheel — " +
+           $"peak force {t.peakForce:0.} of {t.tractionForce:0.} available traction " +
+           $"({(t.tractionForce > 0f ? t.peakForce / t.tractionForce : 0f):P0}), " +
+           $"top speed {t.topSpeed:0.0} u/s, 95% of it in {t.secondsTo95:0.00} s, " +
+           $"coast torque {t.coastTorque:0.#}.";
 
     // Wires already-present wheel parts into an ALREADY-rigged drivetrain: each part becomes a
     // revolute wheel link (same torque-limited motor model as Rig) assigned to the near rail, then
@@ -565,6 +638,10 @@ public class RigDrivetrainArticulation
             motor.leftWheels = left.ToArray();
             motor.rightWheels = right.ToArray();
             EditorUtility.SetDirty(motor);
+            // More wheels means more torque for the same traction budget, so every drive is
+            // re-derived — not just the new ones — or the robot would get stronger with each
+            // wheel added instead of sharing the same grip between more of them.
+            ApplyDriveTuning(robot, useUndo: true);
             EditorSceneManager.MarkSceneDirty(robot.scene);
         }
         Undo.CollapseUndoOperations(undoGroup);

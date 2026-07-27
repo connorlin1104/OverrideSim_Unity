@@ -1065,6 +1065,7 @@ MonoBehaviour:
   retractedTarget: 0
   stiffness: 20000
   damping: 500
+  travelSeconds: 0
   startExtended: 0
   toggleAction: {fileID: 0}
 --- !u!114 &5569270119866593569
@@ -1896,8 +1897,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.2418578
+    forceLimit: 435.34402
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -21605,8 +21606,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.2418578
+    forceLimit: 435.34402
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -46383,8 +46384,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.2418578
+    forceLimit: 435.34402
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -55484,6 +55485,7 @@ MonoBehaviour:
   retractedTarget: -90
   stiffness: 20000
   damping: 500
+  travelSeconds: 0
   startExtended: 1
   toggleAction: {fileID: 0}
 --- !u!1 &3363378011567288569
@@ -76324,8 +76326,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.2418578
+    forceLimit: 435.34402
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -77824,8 +77826,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.2418578
+    forceLimit: 435.34402
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -80696,8 +80698,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.2418578
+    forceLimit: 435.34402
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -140655,8 +140657,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.2418578
+    forceLimit: 435.34402
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -143008,8 +143010,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.2418578
+    forceLimit: 435.34402
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -150133,6 +150135,17 @@ MonoBehaviour:
   invertRight: 0
   solverIterations: 16
   solverVelocityIterations: 8
+  autoTuneDrive: 1
+  driveForceTractionMultiple: 3
+  coastWhenIdle: 1
+  coastStopSeconds: 1.1
+  inputDeadzone: 0.08
+  throttleExpo: 0.35
+  turnExpo: 0.55
+  throttleRisePerSec: 4
+  throttleFallPerSec: 8
+  turnRisePerSec: 3
+  turnFallPerSec: 6
 --- !u!114 &7818650201275281587
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -217,6 +217,102 @@ public static class ControllerMapSettings
         return result;
     }
 
+    // --- Shipped defaults ------------------------------------------------------------------
+    //
+    // A robot's bindings live in this device's PlayerPrefs, and nothing used to put them there: the
+    // auto-assign that runs when a mechanism is built writes into the EDITOR's prefs at authoring
+    // time, which never ships. So a fresh install picked a robot and got a completely unbound
+    // controller with no hint that it was supposed to be bound.
+    //
+    // The fix is a shipped layer on RobotModelCatalog.Entry — an asset that IS in the build —
+    // seeded into PlayerPrefs at launch. Seeding rather than a fallback inside Load() is deliberate:
+    // ButtonRouter.BuildBindings has no catalog reference and no way to get one, so a Load overload
+    // would have to be threaded through the field scene, while every caller of Load already works
+    // unchanged the moment the pref exists.
+
+    // Records WHICH default was seeded, as its JSON, so three cases stay distinguishable that a
+    // plain "seeded once" flag conflates: never seen this robot, seeded and untouched (safe to
+    // update when a new app version ships a better layout), and deliberately customised — which
+    // includes deliberately cleared, a map that a boolean flag would silently refill on next launch.
+    public static string SeedPrefKey(string robotId) => "ButtonMapSeeded_" + robotId;
+
+    // Deep copy. The catalog's ButtonMap is a live asset object: handing it straight to callers that
+    // mutate and Save() would edit the asset in the editor and leak the change into the next build.
+    public static ButtonMap Clone(ButtonMap source)
+    {
+        var copy = new ButtonMap();
+        if (source != null && source.assignments != null)
+        {
+            foreach (ButtonAssignment a in source.assignments)
+            {
+                if (a == null) continue;
+                copy.assignments.Add(new ButtonAssignment
+                {
+                    button = a.button,
+                    mechanismId = a.mechanismId,
+                    mode = a.mode,
+                });
+            }
+        }
+        if (source != null && source.styles != null)
+        {
+            foreach (MechanismStyle s in source.styles)
+            {
+                if (s == null) continue;
+                copy.styles.Add(new MechanismStyle { mechanismId = s.mechanismId, style = s.style });
+            }
+        }
+        return copy;
+    }
+
+    // Writes an entry's shipped default into PlayerPrefs when this device has no layout of its own
+    // for that robot, or still has exactly the one it was given. Returns true if it wrote.
+    // Idempotent and cheap enough to call on every launch.
+    public static bool SeedDefault(RobotModelCatalog.Entry entry)
+    {
+        if (entry == null || string.IsNullOrEmpty(entry.id) || !entry.HasDefaultButtonMap) return false;
+
+        // Both sides come from JsonUtility.ToJson(ButtonMap) and Save writes exactly that, so a
+        // plain string compare is an exact "has this been touched?" test.
+        string shipped = JsonUtility.ToJson(entry.defaultButtonMap);
+        string current = PlayerPrefs.GetString(PrefKey(entry.id), string.Empty);
+        string seeded = PlayerPrefs.GetString(SeedPrefKey(entry.id), string.Empty);
+
+        bool fresh = string.IsNullOrEmpty(current);
+        bool untouchedButStale = !fresh && current == seeded && seeded != shipped;
+        if (!fresh && !untouchedButStale) return false; // customised — never clobber
+
+        PlayerPrefs.SetString(PrefKey(entry.id), shipped);
+        PlayerPrefs.SetString(SeedPrefKey(entry.id), shipped);
+        PlayerPrefs.Save();
+        return true;
+    }
+
+    // Seeds every model in the catalog. Uses `models`, NOT VisibleModels: a private robot must have
+    // its layout waiting the moment its owner enters the code, and seeding a pref reveals nothing.
+    public static int SeedDefaults(RobotModelCatalog catalog)
+    {
+        if (catalog == null || catalog.models == null) return 0;
+        int seeded = 0;
+        foreach (RobotModelCatalog.Entry entry in catalog.models)
+        {
+            if (SeedDefault(entry)) seeded++;
+        }
+        return seeded;
+    }
+
+    // Explicit player action: throw my layout away and take the shipped one back. Unlike SeedDefault
+    // this always overwrites — that is the whole point of pressing the button.
+    public static bool ResetToDefault(RobotModelCatalog.Entry entry)
+    {
+        if (entry == null || string.IsNullOrEmpty(entry.id) || !entry.HasDefaultButtonMap) return false;
+        string shipped = JsonUtility.ToJson(entry.defaultButtonMap);
+        PlayerPrefs.SetString(PrefKey(entry.id), shipped);
+        PlayerPrefs.SetString(SeedPrefKey(entry.id), shipped);
+        PlayerPrefs.Save();
+        return true;
+    }
+
     // --- Control style ---------------------------------------------------------------------
 
     // What a mechanism uses when the player hasn't chosen: motors get hold-to-run forward/reverse on

@@ -30973,8 +30973,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.23954561
+    forceLimit: 517.4185
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -30997,8 +30997,8 @@ ArticulationBody:
     targetVelocity: 0
     driveType: 0
   m_LinearDamping: 0.05
-  m_AngularDamping: 0.05
-  m_JointFriction: 0.05
+  m_AngularDamping: 0.5
+  m_JointFriction: 0.3
   m_CenterOfMass: {x: 0, y: 0, z: 0}
   m_InertiaTensor: {x: 1, y: 1, z: 1}
   m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
@@ -32000,8 +32000,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.23954561
+    forceLimit: 517.4185
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -32024,8 +32024,8 @@ ArticulationBody:
     targetVelocity: 0
     driveType: 0
   m_LinearDamping: 0.05
-  m_AngularDamping: 0.05
-  m_JointFriction: 0.05
+  m_AngularDamping: 0.5
+  m_JointFriction: 0.3
   m_CenterOfMass: {x: 0, y: 0, z: 0}
   m_InertiaTensor: {x: 1, y: 1, z: 1}
   m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
@@ -35884,8 +35884,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.23954561
+    forceLimit: 517.4185
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -35908,8 +35908,8 @@ ArticulationBody:
     targetVelocity: 0
     driveType: 0
   m_LinearDamping: 0.05
-  m_AngularDamping: 0.05
-  m_JointFriction: 0.05
+  m_AngularDamping: 0.5
+  m_JointFriction: 0.3
   m_CenterOfMass: {x: 0, y: 0, z: 0}
   m_InertiaTensor: {x: 1, y: 1, z: 1}
   m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
@@ -53408,8 +53408,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.23954561
+    forceLimit: 517.4185
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -53432,8 +53432,8 @@ ArticulationBody:
     targetVelocity: 0
     driveType: 0
   m_LinearDamping: 0.05
-  m_AngularDamping: 0.05
-  m_JointFriction: 0.05
+  m_AngularDamping: 0.5
+  m_JointFriction: 0.3
   m_CenterOfMass: {x: 0, y: 0, z: 0}
   m_InertiaTensor: {x: 1, y: 1, z: 1}
   m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
@@ -56823,11 +56823,24 @@ MonoBehaviour:
   maxWheelRpm: 360
   wheelStallTorque: 700
   velocityDriveDamping: 1000
+  wheelRollingResistance: 0.3
+  wheelSpinDamping: 0.5
   turnRate: 0.5
   invertLeft: 0
   invertRight: 0
   solverIterations: 16
   solverVelocityIterations: 8
+  autoTuneDrive: 1
+  driveForceTractionMultiple: 3
+  coastWhenIdle: 1
+  coastStopSeconds: 1.1
+  inputDeadzone: 0.08
+  throttleExpo: 0.35
+  turnExpo: 0.55
+  throttleRisePerSec: 4
+  throttleFallPerSec: 8
+  turnRisePerSec: 3
+  turnFallPerSec: 6
 --- !u!1 &5736430081896910884
 GameObject:
   m_ObjectHideFlags: 0
@@ -59656,8 +59669,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.23954561
+    forceLimit: 517.4185
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -59680,8 +59693,8 @@ ArticulationBody:
     targetVelocity: 0
     driveType: 0
   m_LinearDamping: 0.05
-  m_AngularDamping: 0.05
-  m_JointFriction: 0.05
+  m_AngularDamping: 0.5
+  m_JointFriction: 0.3
   m_CenterOfMass: {x: 0, y: 0, z: 0}
   m_InertiaTensor: {x: 1, y: 1, z: 1}
   m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
@@ -60064,8 +60077,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.23954561
+    forceLimit: 517.4185
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -60088,8 +60101,8 @@ ArticulationBody:
     targetVelocity: 0
     driveType: 0
   m_LinearDamping: 0.05
-  m_AngularDamping: 0.05
-  m_JointFriction: 0.05
+  m_AngularDamping: 0.5
+  m_JointFriction: 0.3
   m_CenterOfMass: {x: 0, y: 0, z: 0}
   m_InertiaTensor: {x: 1, y: 1, z: 1}
   m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}

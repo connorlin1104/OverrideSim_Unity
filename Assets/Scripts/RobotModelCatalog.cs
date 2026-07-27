@@ -56,6 +56,17 @@ public class RobotModelCatalog : ScriptableObject
         [Tooltip("Optional label for whose robot this is (e.g. a team number). Shown in the picker.")]
         public string ownerLabel;
 
+        [Tooltip("The button layout a fresh install starts with for this robot. Set it from the home " +
+                 "screen: bind the controller how you want it, then Edit Models > Make These the " +
+                 "Default. Empty means the robot ships unbound, which is what every robot did before " +
+                 "this existed — the auto-assign that runs when a mechanism is built writes into the " +
+                 "EDITOR's PlayerPrefs, and those never reach a build.")]
+        public ButtonMap defaultButtonMap = new ButtonMap();
+
+        public bool HasDefaultButtonMap =>
+            defaultButtonMap != null && defaultButtonMap.assignments != null
+            && defaultButtonMap.assignments.Count > 0;
+
         // Every code that reveals this entry. Giving several entries one code in common is how a team
         // shares its robots: "654V-TEAM" on five entries means one code opens all five, with no
         // accounts and nothing to verify.

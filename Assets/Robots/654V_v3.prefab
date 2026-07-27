@@ -6262,6 +6262,17 @@ MonoBehaviour:
   invertRight: 0
   solverIterations: 16
   solverVelocityIterations: 8
+  autoTuneDrive: 1
+  driveForceTractionMultiple: 3
+  coastWhenIdle: 1
+  coastStopSeconds: 1.1
+  inputDeadzone: 0.08
+  throttleExpo: 0.35
+  turnExpo: 0.55
+  throttleRisePerSec: 4
+  throttleFallPerSec: 8
+  turnRisePerSec: 3
+  turnFallPerSec: 6
 --- !u!114 &2546226241025630511
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -21905,8 +21916,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.30235505
+    forceLimit: 435.39127
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -52658,8 +52669,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.30235505
+    forceLimit: 435.39127
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -87056,8 +87067,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.30235505
+    forceLimit: 435.39127
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -104240,8 +104251,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.30235505
+    forceLimit: 435.39127
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -127145,8 +127156,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.30235505
+    forceLimit: 435.39127
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -133054,8 +133065,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 1000
-    forceLimit: 700
+    damping: 0.30235505
+    forceLimit: 435.39127
     target: 0
     targetVelocity: 0
     driveType: 3

@@ -48,11 +48,19 @@ public static class BuildDriveControls
     // appeared to do nothing. Setting them here makes re-running this tool the way to apply a change,
     // which is what every other number in this file already does.
     //
-    // The trade: hand-tuning distance or start yaw in the Inspector is overwritten by a re-run. Tune
-    // them here instead. The feel knobs the tool doesn't author (pitch, zoom range, smoothing) are
-    // left alone.
+    // The trade: hand-tuning these in the Inspector is overwritten by a re-run. Tune them here
+    // instead. The knobs the tool doesn't author (pitch, zoom range) are left alone.
     private const float ChaseCameraDistance = 10f;   // ~1 m back, about three robot-widths
     private const float ChaseCameraStartYaw = -90f;  // quarter turn round, looking at the claw end
+
+    // Smoothing, and why it is small. Mathf.SmoothDampAngle needs roughly 2.5x its smoothTime to
+    // settle, so the old 0.25 s heading damp kept the WORLD rotating for ~0.63 s after the robot
+    // had physically stopped. Drivers read that as the robot still turning: tapping a turn key for
+    // 100 ms looked like half a second of movement, and most of the tail was this, not the
+    // drivetrain. 0.12 s settles in ~0.30 s, which still damps a fast pivot without pretending
+    // motion continues after it has ended.
+    private const float ChaseCameraFollowSmooth = 0.09f;
+    private const float ChaseCameraHeadingSmooth = 0.12f;
 
     // The three top-of-screen buttons — Reset | Home | Camera View — laid out as one evenly spaced
     // row centred on the top edge. Each is anchored AND pivoted at top-centre and offset by a whole
@@ -199,6 +207,8 @@ public static class BuildDriveControls
         SerializedObject chaseSo = new SerializedObject(chase);
         chaseSo.FindProperty("distance").floatValue = ChaseCameraDistance;
         chaseSo.FindProperty("startYawOffset").floatValue = ChaseCameraStartYaw;
+        chaseSo.FindProperty("followSmoothTime").floatValue = ChaseCameraFollowSmooth;
+        chaseSo.FindProperty("headingSmoothTime").floatValue = ChaseCameraHeadingSmooth;
         chaseSo.ApplyModifiedPropertiesWithoutUndo();
 
         // Tagged MainCamera so Camera.main keeps resolving while the free camera is switched off.

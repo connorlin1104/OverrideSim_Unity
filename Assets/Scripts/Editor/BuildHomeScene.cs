@@ -171,6 +171,13 @@ public class BuildHomeScene
             if (configScreen == null) configScreen = rootGo.GetComponentInChildren<ControllerConfigScreen>(true);
         }
         if (controller == null || configScreen == null) return false;
+
+        // Structural checks for things that have no serialized reference of their own. The tab row
+        // and the scrollbar are pure hierarchy, so without these a pre-tabs HomeScene would report
+        // "valid", the rebuild would be skipped, and the redesign would silently never appear.
+        if (FindDescendantRect(scene, "SettingsTabs") == null) return false;
+        if (FindDescendantRect(scene, "SettingsScrollbar") == null) return false;
+
         SerializedObject so = new SerializedObject(controller);
         SerializedObject configSo = new SerializedObject(configScreen);
         return IsRefSet(so, "catalog") && IsRefSet(so, "controllerConfig") &&
@@ -180,7 +187,26 @@ public class BuildHomeScene
                IsRefSet(so, "submitRobot") && IsRefSet(so, "recoveryIdLabel") &&
                IsRefSet(so, "recoveryIdInput") && IsRefSet(so, "uploadConfig") &&
                IsRefSet(so, "inboxNotice") && IsRefSet(so, "inboxLabel") &&
-               IsRefSet(configSo, "controlStyleButton");
+               IsRefSet(so, "editModelsButton") && IsRefSet(so, "saveDefaultBindingsButton") &&
+               IsRefSet(so, "settingsScroll") &&
+               IsArrayFilled(so, "settingsTabButtons") && IsArrayFilled(so, "settingsTabPages") &&
+               IsRefSet(so, "driveSensitivitySlider") && IsRefSet(so, "turnSensitivitySlider") &&
+               IsRefSet(so, "smoothAccelerationToggle") && IsRefSet(so, "coastOnReleaseToggle") &&
+               IsRefSet(configSo, "controlStyleButton") &&
+               IsRefSet(configSo, "resetDefaultsButton");
+    }
+
+    // A serialized array counts as wired only when it's non-empty AND every slot is filled — a
+    // half-populated tab list would leave a tab that does nothing.
+    private static bool IsArrayFilled(SerializedObject so, string propertyName)
+    {
+        SerializedProperty property = so.FindProperty(propertyName);
+        if (property == null || !property.isArray || property.arraySize == 0) return false;
+        for (int i = 0; i < property.arraySize; i++)
+        {
+            if (property.GetArrayElementAtIndex(i).objectReferenceValue == null) return false;
+        }
+        return true;
     }
 
     private static bool IsRefSet(SerializedObject so, string propertyName)
@@ -320,14 +346,21 @@ public class BuildHomeScene
         InputSystemUIInputModule uiModule = eventSystemGo.AddComponent<InputSystemUIInputModule>();
         AssignDefaultUiActions(uiModule);
 
-        // Title.
-        TextMeshProUGUI title = CreateText("Title", canvasGo.transform, "RoboSim", 96f);
+        // Title. "Override Simulation" is ~19 glyphs, which overflows the old 800-wide rect at 96pt,
+        // so it autosizes between 52 and 96 with wrapping off: one line on a 4:3 tablet (canvas
+        // ~1663 wide), growing back toward full size on a wide phone. ProjectSettings.productName
+        // stays "OverrideSim" — the long form is the brand, the short form is the bundle id.
+        TextMeshProUGUI title = CreateText("Title", canvasGo.transform, "Override Simulation", 88f);
         title.fontStyle = FontStyles.Bold;
+        title.textWrappingMode = TextWrappingModes.NoWrap;
+        title.enableAutoSizing = true;
+        title.fontSizeMin = 52f;
+        title.fontSizeMax = 96f;
         RectTransform titleRect = title.rectTransform;
         titleRect.anchorMin = titleRect.anchorMax = new Vector2(0.5f, 1f);
         titleRect.pivot = new Vector2(0.5f, 1f);
-        titleRect.anchoredPosition = new Vector2(0f, -60f);
-        titleRect.sizeDelta = new Vector2(800f, 120f);
+        titleRect.anchoredPosition = new Vector2(0f, -48f);
+        titleRect.sizeDelta = new Vector2(1400f, 140f);
 
         // Main panel: Drive / Settings.
         GameObject mainPanel = CreatePanel("MainPanel", canvasGo.transform, new Vector2(520f, 340f));
@@ -337,19 +370,48 @@ public class BuildHomeScene
         Button settingsButton = CreateButton("SettingsButton", mainPanel.transform, "Settings", 52f, AccentColor);
         SetLayoutHeight(settingsButton.gameObject, 110f);
 
-        // Settings panel: model picker built at runtime from the catalog by cloning an
-        // inactive template button (so catalog edits need no scene change), plus the control
-        // size/opacity sliders and the controller-config entry point. Taller than the main
-        // panel to fit everything under the list (which absorbs the leftover height).
-        GameObject settingsPanel = CreatePanel("SettingsPanel", canvasGo.transform, new Vector2(680f, 980f));
+        // Settings panel. Four tab pages instead of one flat column: the old layout was a single
+        // VerticalLayoutGroup ~2,300 units tall in a ~956 viewport — 2.4 screens of scrolling, with
+        // no scrollbar and no grouping, so the robot picker, the joystick sliders, the team codes
+        // and four sub-screen entry points all ran together and most of them were simply invisible.
+        //
+        // Each page is its own scroll content; the controller activates one and points the shared
+        // ScrollRect at it. Separate contents rather than nested layout groups because a
+        // ContentSizeFitter inside a ContentSizeFitter is a reliable source of layout thrash.
+        GameObject settingsPanel = CreatePanel("SettingsPanel", canvasGo.transform, new Vector2(900f, 980f));
+        StretchPanelHeight(settingsPanel, 900f);
 
-        GameObject content = CreateScrollingContent(settingsPanel, "Settings");
+        const float TabRowHeight = 72f;
+        const float BackRowHeight = 108f;
+        Button[] settingsTabs = CreateTabRow(settingsPanel, "SettingsTabs", TabRowHeight,
+            "Robot", "Controls", "Driving", "Account");
 
-        TextMeshProUGUI header = CreateText("HeaderLabel", content.transform, "Select Robot Model", 48f);
+        // The viewport is shared; only its content changes with the tab. Insets leave the tab row
+        // above and the Back button below outside the scrolling area, so Back is always reachable
+        // however long a page gets.
+        GameObject content = CreateScrollingContent(settingsPanel, "Settings",
+            TabRowHeight + 20f, BackRowHeight, true, out ScrollRect settingsScroll, out _);
+
+        // Back sits OUTSIDE the scroll, pinned to the panel's bottom edge.
+        Button backButton = CreateButton("BackButton", settingsPanel.transform, "Back", 40f, AccentColor);
+        RectTransform backRect = backButton.GetComponent<RectTransform>();
+        backRect.anchorMin = backRect.anchorMax = new Vector2(0.5f, 0f);
+        backRect.pivot = new Vector2(0.5f, 0f);
+        backRect.anchoredPosition = new Vector2(0f, 20f);
+        backRect.sizeDelta = new Vector2(300f, 80f);
+
+        // --- Robot page ---
+        // The scroll view's own content object IS the first page; the other three are built as its
+        // siblings and swapped in by the controller.
+        GameObject robotPage = content;
+        robotPage.name = "SettingsPage_Robot";
+
+        TextMeshProUGUI header = CreateText("HeaderLabel", robotPage.transform, "Select Robot Model", 40f);
         header.fontStyle = FontStyles.Bold;
-        SetLayoutHeight(header.gameObject, 70f);
+        header.alignment = TextAlignmentOptions.MidlineLeft;
+        SetLayoutHeight(header.gameObject, 56f);
 
-        GameObject modelList = CreateUIObject("ModelList", content.transform);
+        GameObject modelList = CreateUIObject("ModelList", robotPage.transform);
         Image listImage = modelList.AddComponent<Image>();
         listImage.sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Background.psd");
         listImage.type = Image.Type.Sliced;
@@ -365,116 +427,173 @@ public class BuildHomeScene
 
         // Edit button under the list: toggles delete mode so junk test models can be removed from the
         // catalog. The controller flips its label to "Done" and re-tints the rows while active.
-        Button editModelsButton = CreateButton("EditModelsButton", content.transform, "Edit Models", 36f, NeutralColor);
+        Button editModelsButton = CreateButton("EditModelsButton", robotPage.transform, "Edit Models", 36f, NeutralColor);
         SetLayoutHeight(editModelsButton.gameObject, 72f);
 
-        // Joystick size control: label (also the live percentage readout) + slider. The
-        // controller reads/writes JoystickSettings; the field scene's JoystickScaler applies it.
-        TextMeshProUGUI joystickLabel = CreateText("JoystickSizeLabel", content.transform, "Joystick Size", 40f);
-        joystickLabel.fontStyle = FontStyles.Bold;
-        SetLayoutHeight(joystickLabel.gameObject, 56f);
+        // Publishes the selected robot's current button layout as the one every player starts with.
+        // Editor-only and only while Edit mode is on — the controller hides it otherwise, because in
+        // a build the catalog is read-only and this would appear to work and then be gone. Kept as
+        // its own button rather than a second meaning for a model row: in edit mode a row tap
+        // already deletes, and two meanings on one red widget is how you lose a robot by accident.
+        Button saveDefaultBindingsButton = CreateButton("SaveDefaultBindingsButton", robotPage.transform,
+            "Make My Buttons the Default", 30f, NeutralColor);
+        SetLayoutHeight(saveDefaultBindingsButton.gameObject, 68f);
+        saveDefaultBindingsButton.gameObject.SetActive(false);
 
-        Slider joystickSlider = CreateSlider("JoystickSizeSlider", content.transform,
-            JoystickSettings.MinScale, JoystickSettings.MaxScale, JoystickSettings.DefaultScale);
-        SetLayoutHeight(joystickSlider.gameObject, 56f);
-
-        // Controls opacity: label (live percentage readout) + slider. Applies to joysticks AND
-        // the on-screen controller buttons (ControlsAppearance reads it in the field scene).
-        TextMeshProUGUI opacityLabel = CreateText("ControlsOpacityLabel", content.transform,
-            "Controls Opacity", 40f);
-        opacityLabel.fontStyle = FontStyles.Bold;
-        SetLayoutHeight(opacityLabel.gameObject, 56f);
-
-        Slider opacitySlider = CreateSlider("ControlsOpacitySlider", content.transform,
-            ControlsOpacitySettings.MinOpacity, ControlsOpacitySettings.MaxOpacity,
-            ControlsOpacitySettings.DefaultOpacity);
-        SetLayoutHeight(opacitySlider.gameObject, 56f);
+        CreateSectionHeader(robotPage.transform, "SectionMatch", "Match");
 
         // Automatic matchloading: checkbox (persisted via MatchLoadSettings). When off, the field
         // scene shows a Match Load button and the loaders wait for it instead of spawning on arrival.
-        Toggle autoMatchloadToggle = CreateToggle("AutomaticMatchloadToggle", content.transform,
+        Toggle autoMatchloadToggle = CreateToggle("AutomaticMatchloadToggle", robotPage.transform,
             "Automatic Matchloading", MatchLoadSettings.DefaultAutomatic);
         SetLayoutHeight(autoMatchloadToggle.gameObject, 64f);
-
-        // Reverse drive direction: checkbox (persisted via ReverseDriveSettings). Flips which end of
-        // the robot the drive controls treat as front (intake-forward vs scoring-forward).
-        Toggle reverseDriveToggle = CreateToggle("ReverseDriveToggle", content.transform,
-            "Reverse Drive Direction", ReverseDriveSettings.DefaultReversed);
-        SetLayoutHeight(reverseDriveToggle.gameObject, 64f);
 
         // Lite field: checkbox (persisted via FieldSceneSettings). Drive loads the stripped-down
         // LiteScene — one of each field feature — instead of the full field. Build it with
         // Tools > RoboSim > Scenes > Build Lite Field Scene; until then the setting falls back.
-        Toggle liteFieldToggle = CreateToggle("LiteFieldToggle", content.transform,
+        Toggle liteFieldToggle = CreateToggle("LiteFieldToggle", robotPage.transform,
             "Lite Field (faster)", FieldSceneSettings.DefaultUseLiteField);
         SetLayoutHeight(liteFieldToggle.gameObject, 64f);
 
+        // --- Controls page ---
+        GameObject controlsPage = CreateTabPage(content, "SettingsPage_Controls");
+
+        CreateSectionHeader(controlsPage.transform, "SectionOnScreen", "On-screen controls");
+
+        // Joystick size control: label (also the live percentage readout) + slider. The
+        // controller reads/writes JoystickSettings; the field scene's JoystickScaler applies it.
+        CreateSliderRow(controlsPage.transform, "JoystickSizeRow",
+            "JoystickSizeLabel", "Joystick Size", "JoystickSizeSlider",
+            JoystickSettings.MinScale, JoystickSettings.MaxScale, JoystickSettings.DefaultScale,
+            out TextMeshProUGUI joystickLabel, out Slider joystickSlider);
+
+        // Controls opacity: applies to joysticks AND the on-screen controller buttons
+        // (ControlsAppearance reads it in the field scene).
+        CreateSliderRow(controlsPage.transform, "ControlsOpacityRow",
+            "ControlsOpacityLabel", "Controls Opacity", "ControlsOpacitySlider",
+            ControlsOpacitySettings.MinOpacity, ControlsOpacitySettings.MaxOpacity,
+            ControlsOpacitySettings.DefaultOpacity,
+            out TextMeshProUGUI opacityLabel, out Slider opacitySlider);
+
+        CreateSectionHeader(controlsPage.transform, "SectionButtons", "Buttons and layout");
+
+        // Entry point to the button -> mechanism mapping screen.
+        Button configureButton = CreateButton("ConfigureControllerButton", controlsPage.transform,
+            "Configure Controller", 36f, AccentColor);
+        SetLayoutHeight(configureButton.gameObject, 80f);
+
+        // Entry point to the drag-to-reposition control layout screen.
+        Button editLayoutButton = CreateButton("EditLayoutButton", controlsPage.transform,
+            "Edit Control Layout", 36f, AccentColor);
+        SetLayoutHeight(editLayoutButton.gameObject, 80f);
+
+        // --- Driving page ---
+        GameObject drivingPage = CreateTabPage(content, "SettingsPage_Driving");
+
+        CreateSectionHeader(drivingPage.transform, "SectionDriveFeel", "Drive feel");
+
+        // Drive/turn sensitivity and the two feel switches, all persisted via DriveFeelSettings and
+        // snapshotted by RobotMotorController.Awake — so they take effect on the next Drive.
+        CreateSliderRow(drivingPage.transform, "DriveSensitivityRow",
+            "DriveSensitivityLabel", "Drive Sensitivity", "DriveSensitivitySlider",
+            DriveFeelSettings.MinDriveSensitivity, DriveFeelSettings.MaxDriveSensitivity,
+            DriveFeelSettings.DefaultDriveSensitivity,
+            out TextMeshProUGUI driveSensitivityLabel, out Slider driveSensitivitySlider);
+
+        CreateSliderRow(drivingPage.transform, "TurnSensitivityRow",
+            "TurnSensitivityLabel", "Turn Sensitivity", "TurnSensitivitySlider",
+            DriveFeelSettings.MinTurnSensitivity, DriveFeelSettings.MaxTurnSensitivity,
+            DriveFeelSettings.DefaultTurnSensitivity,
+            out TextMeshProUGUI turnSensitivityLabel, out Slider turnSensitivitySlider);
+
+        Toggle smoothAccelerationToggle = CreateToggle("SmoothAccelerationToggle", drivingPage.transform,
+            "Smooth Acceleration", DriveFeelSettings.DefaultSmoothAcceleration);
+        SetLayoutHeight(smoothAccelerationToggle.gameObject, 64f);
+
+        Toggle coastToggle = CreateToggle("CoastOnReleaseToggle", drivingPage.transform,
+            "Coast When You Let Go", DriveFeelSettings.DefaultCoastOnRelease);
+        SetLayoutHeight(coastToggle.gameObject, 64f);
+
+        TextMeshProUGUI driveFeelHint = CreateText("DriveFeelHint", drivingPage.transform,
+            "Smooth Acceleration ramps the controls instead of snapping to full. Coast lets the " +
+            "robot roll to a stop like real omni wheels; turn it off to brake instantly. Both apply " +
+            "the next time you press Drive.", 24f);
+        driveFeelHint.alignment = TextAlignmentOptions.TopLeft;
+        SetLayoutHeight(driveFeelHint.gameObject, 96f);
+
+        CreateSectionHeader(drivingPage.transform, "SectionDriveFrame", "Which way is forward");
+
+        // Reverse drive direction: checkbox (persisted via ReverseDriveSettings). Flips which end of
+        // the robot the drive controls treat as front (intake-forward vs scoring-forward).
+        Toggle reverseDriveToggle = CreateToggle("ReverseDriveToggle", drivingPage.transform,
+            "Reverse Drive Direction", ReverseDriveSettings.DefaultReversed);
+        SetLayoutHeight(reverseDriveToggle.gameObject, 64f);
+
+        // --- Account page ---
+        GameObject accountPage = CreateTabPage(content, "SettingsPage_Account");
+
+        CreateSectionHeader(accountPage.transform, "SectionTeamCode", "Team code");
+
         // Team code: reveals private robots whose owner code matches. Private models ship inside the
-        // app but stay out of the list above until their owner types the code here (RobotOwnerSettings
+        // app but stay out of the picker until their owner types the code here (RobotOwnerSettings
         // keeps the entered codes in PlayerPrefs).
-        TextMeshProUGUI teamCodeLabel = CreateText("TeamCodeLabel", content.transform, "Team Code", 40f);
-        teamCodeLabel.fontStyle = FontStyles.Bold;
-        SetLayoutHeight(teamCodeLabel.gameObject, 56f);
+        TextMeshProUGUI teamCodeLabel = CreateText("TeamCodeLabel", accountPage.transform,
+            "Enter a code to unlock a robot someone shared with you.", 24f);
+        teamCodeLabel.alignment = TextAlignmentOptions.TopLeft;
+        SetLayoutHeight(teamCodeLabel.gameObject, 44f);
 
-        TMP_InputField teamCodeInput = CreateInputField("TeamCodeInput", content.transform,
-            "Enter a code to unlock a robot", 34f);
-        SetLayoutHeight(teamCodeInput.gameObject, 72f);
+        TMP_InputField teamCodeInput = CreateInputField("TeamCodeInput", accountPage.transform,
+            "Enter a code to unlock a robot", 30f);
+        SetLayoutHeight(teamCodeInput.gameObject, 66f);
 
-        Button unlockButton = CreateButton("UnlockCodeButton", content.transform, "Unlock", 36f, AccentColor);
-        SetLayoutHeight(unlockButton.gameObject, 72f);
+        Button unlockButton = CreateButton("UnlockCodeButton", accountPage.transform, "Unlock", 32f, AccentColor);
+        SetLayoutHeight(unlockButton.gameObject, 64f);
 
-        TextMeshProUGUI teamCodeStatus = CreateText("TeamCodeStatus", content.transform, string.Empty, 30f);
+        TextMeshProUGUI teamCodeStatus = CreateText("TeamCodeStatus", accountPage.transform, string.Empty, 26f);
         teamCodeStatus.alignment = TextAlignmentOptions.Center;
-        SetLayoutHeight(teamCodeStatus.gameObject, 44f);
+        SetLayoutHeight(teamCodeStatus.gameObject, 40f);
 
-        Button forgetCodesButton = CreateButton("ForgetCodesButton", content.transform,
-            "Forget Codes", 32f, NeutralColor);
-        SetLayoutHeight(forgetCodesButton.gameObject, 60f);
+        Button forgetCodesButton = CreateButton("ForgetCodesButton", accountPage.transform,
+            "Forget Codes", 30f, NeutralColor);
+        SetLayoutHeight(forgetCodesButton.gameObject, 56f);
+
+        CreateSectionHeader(accountPage.transform, "SectionYourId", "Your ID");
 
         // Recovery ID: the id the upload service minted for this device. It is the only link between a
         // player and the robots they've sent in, it lives only in PlayerPrefs, and a reinstall wipes
         // it — so it's shown here to be written down, and can be pasted back on a new device.
-        TextMeshProUGUI recoveryHeader = CreateText("RecoveryIdHeader", content.transform, "Your ID", 40f);
-        recoveryHeader.fontStyle = FontStyles.Bold;
-        SetLayoutHeight(recoveryHeader.gameObject, 56f);
+        TextMeshProUGUI recoveryHint = CreateText("RecoveryIdHint", accountPage.transform,
+            "Keep this if you've sent a robot in — it's how a new phone finds it again.", 24f);
+        recoveryHint.alignment = TextAlignmentOptions.TopLeft;
+        SetLayoutHeight(recoveryHint.gameObject, 44f);
 
-        TextMeshProUGUI recoveryHint = CreateText("RecoveryIdHint", content.transform,
-            "Keep this if you've sent a robot in — it's how a new phone finds it again.", 26f);
-        SetLayoutHeight(recoveryHint.gameObject, 62f);
+        TextMeshProUGUI recoveryIdLabel = CreateText("RecoveryIdLabel", accountPage.transform,
+            "No ID yet", 24f);
+        SetLayoutHeight(recoveryIdLabel.gameObject, 40f);
 
-        TextMeshProUGUI recoveryIdLabel = CreateText("RecoveryIdLabel", content.transform,
-            "No ID yet", 26f);
-        SetLayoutHeight(recoveryIdLabel.gameObject, 44f);
+        Button copyRecoveryButton = CreateButton("CopyRecoveryIdButton", accountPage.transform,
+            "Copy My ID", 30f, NeutralColor);
+        SetLayoutHeight(copyRecoveryButton.gameObject, 60f);
 
-        Button copyRecoveryButton = CreateButton("CopyRecoveryIdButton", content.transform,
-            "Copy My ID", 32f, NeutralColor);
-        SetLayoutHeight(copyRecoveryButton.gameObject, 64f);
+        TMP_InputField recoveryIdInput = CreateInputField("RecoveryIdInput", accountPage.transform,
+            "Paste an ID from an old device", 28f);
+        SetLayoutHeight(recoveryIdInput.gameObject, 64f);
 
-        TMP_InputField recoveryIdInput = CreateInputField("RecoveryIdInput", content.transform,
-            "Paste an ID from an old device", 30f);
-        SetLayoutHeight(recoveryIdInput.gameObject, 68f);
+        Button restoreRecoveryButton = CreateButton("RestoreRecoveryIdButton", accountPage.transform,
+            "Restore", 30f, NeutralColor);
+        SetLayoutHeight(restoreRecoveryButton.gameObject, 60f);
 
-        Button restoreRecoveryButton = CreateButton("RestoreRecoveryIdButton", content.transform,
-            "Restore", 32f, NeutralColor);
-        SetLayoutHeight(restoreRecoveryButton.gameObject, 64f);
-
-        // Entry point to the button -> mechanism mapping screen.
-        Button configureButton = CreateButton("ConfigureControllerButton", content.transform,
-            "Configure Controller", 40f, AccentColor);
-        SetLayoutHeight(configureButton.gameObject, 84f);
-
-        // Entry point to the drag-to-reposition control layout screen.
-        Button editLayoutButton = CreateButton("EditLayoutButton", content.transform,
-            "Edit Control Layout", 40f, AccentColor);
-        SetLayoutHeight(editLayoutButton.gameObject, 84f);
+        CreateSectionHeader(accountPage.transform, "SectionSubmit", "Your own robot");
 
         // Entry point to the upload-your-own-robot screen.
-        Button submitRobotButton = CreateButton("SubmitRobotButton", content.transform,
-            "Submit a Robot", 40f, AccentColor);
-        SetLayoutHeight(submitRobotButton.gameObject, 84f);
+        Button submitRobotButton = CreateButton("SubmitRobotButton", accountPage.transform,
+            "Submit a Robot", 36f, AccentColor);
+        SetLayoutHeight(submitRobotButton.gameObject, 80f);
 
-        Button backButton = CreateButton("BackButton", content.transform, "Back", 44f, AccentColor);
-        SetLayoutHeight(backButton.gameObject, 96f);
+        // Only the first page starts visible; the controller swaps the rest in.
+        controlsPage.SetActive(false);
+        drivingPage.SetActive(false);
+        accountPage.SetActive(false);
 
         settingsPanel.SetActive(false); // controller shows it via OnSettingsPressed
 
@@ -511,6 +630,23 @@ public class BuildHomeScene
         so.FindProperty("modelListParent").objectReferenceValue = modelList.transform;
         so.FindProperty("modelButtonTemplate").objectReferenceValue = template;
         so.FindProperty("editModelsButton").objectReferenceValue = editModelsButton;
+        so.FindProperty("saveDefaultBindingsButton").objectReferenceValue = saveDefaultBindingsButton;
+        so.FindProperty("settingsScroll").objectReferenceValue = settingsScroll;
+        SerializedProperty tabButtonsProp = so.FindProperty("settingsTabButtons");
+        SerializedProperty tabPagesProp = so.FindProperty("settingsTabPages");
+        GameObject[] tabPages = { robotPage, controlsPage, drivingPage, accountPage };
+        tabButtonsProp.arraySize = settingsTabs.Length;
+        tabPagesProp.arraySize = tabPages.Length;
+        for (int i = 0; i < settingsTabs.Length; i++)
+            tabButtonsProp.GetArrayElementAtIndex(i).objectReferenceValue = settingsTabs[i];
+        for (int i = 0; i < tabPages.Length; i++)
+            tabPagesProp.GetArrayElementAtIndex(i).objectReferenceValue = tabPages[i];
+        so.FindProperty("driveSensitivitySlider").objectReferenceValue = driveSensitivitySlider;
+        so.FindProperty("driveSensitivityLabel").objectReferenceValue = driveSensitivityLabel;
+        so.FindProperty("turnSensitivitySlider").objectReferenceValue = turnSensitivitySlider;
+        so.FindProperty("turnSensitivityLabel").objectReferenceValue = turnSensitivityLabel;
+        so.FindProperty("smoothAccelerationToggle").objectReferenceValue = smoothAccelerationToggle;
+        so.FindProperty("coastOnReleaseToggle").objectReferenceValue = coastToggle;
         so.FindProperty("joystickSizeSlider").objectReferenceValue = joystickSlider;
         so.FindProperty("joystickSizeLabel").objectReferenceValue = joystickLabel;
         so.FindProperty("controlsOpacitySlider").objectReferenceValue = opacitySlider;
@@ -551,6 +687,7 @@ public class BuildHomeScene
         configSo.FindProperty("clearButton").objectReferenceValue = configParts.clearButton;
         configSo.FindProperty("cancelButton").objectReferenceValue = configParts.cancelButton;
         configSo.FindProperty("controlStyleButton").objectReferenceValue = configParts.controlStyleButton;
+        configSo.FindProperty("resetDefaultsButton").objectReferenceValue = configParts.resetDefaultsButton;
         configSo.ApplyModifiedPropertiesWithoutUndo();
 
         so.FindProperty("controllerConfig").objectReferenceValue = configScreen;
@@ -593,6 +730,12 @@ public class BuildHomeScene
         UnityEventTools.AddPersistentListener(backButton.onClick, controller.OnBackPressed);
         UnityEventTools.AddPersistentListener(configureButton.onClick, controller.OnConfigureControllerPressed);
         UnityEventTools.AddPersistentListener(editModelsButton.onClick, controller.OnEditModelsPressed);
+        UnityEventTools.AddPersistentListener(saveDefaultBindingsButton.onClick,
+            controller.OnSaveDefaultBindingsPressed);
+        UnityEventTools.AddPersistentListener(settingsTabs[0].onClick, controller.OnRobotTabPressed);
+        UnityEventTools.AddPersistentListener(settingsTabs[1].onClick, controller.OnControlsTabPressed);
+        UnityEventTools.AddPersistentListener(settingsTabs[2].onClick, controller.OnDrivingTabPressed);
+        UnityEventTools.AddPersistentListener(settingsTabs[3].onClick, controller.OnAccountTabPressed);
         UnityEventTools.AddPersistentListener(unlockButton.onClick, controller.OnUnlockCodePressed);
         UnityEventTools.AddPersistentListener(forgetCodesButton.onClick, controller.OnForgetCodesPressed);
         UnityEventTools.AddPersistentListener(configParts.backButton.onClick, controller.OnConfigBackPressed);
@@ -662,6 +805,7 @@ public class BuildHomeScene
         public Button clearButton;
         public Button cancelButton;
         public Button controlStyleButton;
+        public Button resetDefaultsButton;
         public Button backButton;
     }
 
@@ -674,6 +818,7 @@ public class BuildHomeScene
         var parts = new ControllerConfigParts();
 
         GameObject panel = CreatePanel("ControllerConfigPanel", canvas, new Vector2(1700f, 980f));
+        StretchPanelHeight(panel, 1700f); // 980 clipped off the bottom of a 20:9 canvas (~966 tall)
         parts.panel = panel;
 
         parts.header = CreateText("ConfigHeader", panel.transform, "Controller", 48f);
@@ -741,13 +886,12 @@ public class BuildHomeScene
         parts.buttons[11] = CreateConfigButton(diagram.transform, "CfgY", "Y",
             new Vector2(140f, 60f), roundSize, true, out parts.captions[11]);
 
-        // Bottom row: Back centered (where it has always been), Control Style offset to its right so
-        // the two don't overlap.
+        // Bottom row, three across: Back | Control Style | Reset to Default.
         parts.backButton = CreateButton("ConfigBackButton", panel.transform, "Back", 36f, AccentColor);
         RectTransform backRect = (RectTransform)parts.backButton.transform;
         backRect.anchorMin = backRect.anchorMax = new Vector2(0.5f, 0f);
         backRect.pivot = new Vector2(0.5f, 0f);
-        backRect.anchoredPosition = new Vector2(-180f, 18f);
+        backRect.anchoredPosition = new Vector2(-330f, 18f);
         backRect.sizeDelta = new Vector2(240f, 64f);
 
         // Switches a mechanism between one- and two-button control (ControllerConfigScreen reuses
@@ -757,8 +901,18 @@ public class BuildHomeScene
         RectTransform styleRect = (RectTransform)parts.controlStyleButton.transform;
         styleRect.anchorMin = styleRect.anchorMax = new Vector2(0.5f, 0f);
         styleRect.pivot = new Vector2(0.5f, 0f);
-        styleRect.anchoredPosition = new Vector2(180f, 18f);
+        styleRect.anchoredPosition = new Vector2(0f, 18f);
         styleRect.sizeDelta = new Vector2(300f, 64f);
+
+        // Puts this robot's shipped layout back. ControllerConfigScreen hides it for a robot that
+        // ships without one, so it never offers to restore something that doesn't exist.
+        parts.resetDefaultsButton = CreateButton("ResetDefaultsButton", panel.transform,
+            "Reset to Default", 32f, NeutralColor);
+        RectTransform resetRect = (RectTransform)parts.resetDefaultsButton.transform;
+        resetRect.anchorMin = resetRect.anchorMax = new Vector2(0.5f, 0f);
+        resetRect.pivot = new Vector2(0.5f, 0f);
+        resetRect.anchoredPosition = new Vector2(330f, 18f);
+        resetRect.sizeDelta = new Vector2(300f, 64f);
 
         // Assignment popup: header + scrollable option list + Clear/Cancel. Scrolls because a
         // many-motor robot yields two rows per motor.
@@ -915,8 +1069,11 @@ public class BuildHomeScene
         var parts = new SubmitRobotParts();
 
         GameObject panel = CreatePanel("SubmitRobotPanel", canvas, new Vector2(760f, 980f));
+        StretchPanelHeight(panel, 760f); // see ControllerConfigPanel
         parts.panel = panel;
-        GameObject content = CreateScrollingContent(panel, "Submit");
+        // Scrollbar here too: this panel's eleven rows fit at 1080 but not on a shorter canvas, and
+        // the same "nothing tells you there's more below" complaint applies.
+        GameObject content = CreateScrollingContent(panel, "Submit", 12f, 12f, true, out _, out _);
 
         TextMeshProUGUI header = CreateText("SubmitHeader", content.transform, "Submit a Robot", 48f);
         header.fontStyle = FontStyles.Bold;
@@ -1300,18 +1457,46 @@ public class BuildHomeScene
         return layout;
     }
 
+    // CreatePanel assumes a 1080-tall canvas. It isn't: the CanvasScaler matches width and height
+    // equally, so a 20:9 phone (2400x1080) gives a canvas only ~966 reference units tall and the
+    // 980-tall settings and controller panels ran off the bottom edge. Stretching vertically instead
+    // makes the height follow the canvas — sizeDelta.y is a DELTA against a stretched anchor span,
+    // so -80 means "canvas height minus a 40 margin at each end".
+    private static void StretchPanelHeight(GameObject panel, float width, float verticalMargin = 40f)
+    {
+        RectTransform rect = (RectTransform)panel.transform;
+        rect.anchorMin = new Vector2(0.5f, 0f);
+        rect.anchorMax = new Vector2(0.5f, 1f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = Vector2.zero;
+        rect.sizeDelta = new Vector2(width, -verticalMargin * 2f);
+    }
+
+    // Width reserved down the right edge of a panel for a permanent scrollbar, plus the gap between
+    // it and the content.
+    private const float ScrollbarWidth = 26f;
+    private const float ScrollbarGap = 8f;
+
     // A panel whose rows scroll. Both the settings and submit panels have more rows than fit at a
     // fixed height, and without this the layout overflows CENTERED — the lower rows (the toggles, the
     // buttons) simply end up off-screen with no scrollbar to reveal them. The viewport clips; the
     // content grows to fit. Returns the object rows should be added to.
     private static GameObject CreateScrollingContent(GameObject panel, string namePrefix)
+        => CreateScrollingContent(panel, namePrefix, 12f, 12f, false, out _, out _);
+
+    // As above, with room reserved at the top and bottom for anything pinned outside the scroll (a
+    // tab row, a Back button that must never scroll away), and optionally a visible scrollbar.
+    private static GameObject CreateScrollingContent(GameObject panel, string namePrefix,
+        float topInset, float bottomInset, bool addScrollbar,
+        out ScrollRect scroll, out Scrollbar scrollbar)
     {
         GameObject viewport = CreateUIObject(namePrefix + "Viewport", panel.transform);
         RectTransform viewportRect = (RectTransform)viewport.transform;
         viewportRect.anchorMin = Vector2.zero;
         viewportRect.anchorMax = Vector2.one;
-        viewportRect.offsetMin = new Vector2(12f, 12f);
-        viewportRect.offsetMax = new Vector2(-12f, -12f);
+        viewportRect.offsetMin = new Vector2(12f, bottomInset);
+        viewportRect.offsetMax = new Vector2(
+            addScrollbar ? -(12f + ScrollbarWidth + ScrollbarGap) : -12f, -topInset);
         // Scroll-catcher. UGUI routes a wheel event by raycasting the pointer and bubbling UP from
         // whatever graphic it hit, so with no raycast target here the only scrollable spots are the
         // rows that happen to have their own graphic — the layout padding, the gaps between rows and
@@ -1322,25 +1507,173 @@ public class BuildHomeScene
         viewportCatcher.color = Color.clear;
         viewportCatcher.raycastTarget = true;
         viewport.AddComponent<RectMask2D>();
-        ScrollRect scroll = viewport.AddComponent<ScrollRect>();
+        scroll = viewport.AddComponent<ScrollRect>();
         scroll.horizontal = false;
         scroll.vertical = true;
         scroll.movementType = ScrollRect.MovementType.Clamped;
         scroll.scrollSensitivity = 28f;
 
-        GameObject content = CreateUIObject(namePrefix + "Content", viewport.transform);
-        RectTransform contentRect = (RectTransform)content.transform;
-        contentRect.anchorMin = new Vector2(0f, 1f);
-        contentRect.anchorMax = new Vector2(1f, 1f);
-        contentRect.pivot = new Vector2(0.5f, 1f);
-        contentRect.anchoredPosition = Vector2.zero;
-        contentRect.sizeDelta = Vector2.zero; // width stretches to the viewport; height fits content
-        AddVerticalLayout(content, 24, 24f);
-        ContentSizeFitter contentFitter = content.AddComponent<ContentSizeFitter>();
-        contentFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        scrollbar = addScrollbar
+            ? CreateVerticalScrollbar(panel, namePrefix + "Scrollbar", topInset, bottomInset)
+            : null;
+        if (scrollbar != null)
+        {
+            scroll.verticalScrollbar = scrollbar;
+            // Permanent, NOT AutoHideAndExpandViewport. ScrollRect only rewrites its view rect's
+            // anchors in the expanding mode — and here the view rect IS the ScrollRect's own
+            // RectTransform (scroll.viewport is set to itself below), so that mode would have the
+            // layout system drive the rect the layout controller lives on. A permanently visible
+            // bar is also the point: the complaint was that nothing showed there was more below.
+            scroll.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.Permanent;
+        }
+
+        GameObject content = CreateScrollPage(viewport.transform, namePrefix + "Content");
         scroll.viewport = viewportRect;
-        scroll.content = contentRect;
+        scroll.content = (RectTransform)content.transform;
         return content;
+    }
+
+    // A column of rows sized to its contents, laid out for a ScrollRect to scroll.
+    //
+    // The settings panel builds SEVERAL of these as siblings — one per tab — and the controller
+    // activates one and repoints scroll.content at it. Siblings rather than nested children on
+    // purpose: a ContentSizeFitter inside a parent VerticalLayoutGroup that also controls child
+    // height is a genuine conflict (both write the same height), and the usual symptom is rows
+    // that jitter or collapse to zero on the frame a tab is switched.
+    private static GameObject CreateScrollPage(Transform viewport, string name)
+    {
+        GameObject page = CreateUIObject(name, viewport);
+        RectTransform rect = (RectTransform)page.transform;
+        rect.anchorMin = new Vector2(0f, 1f);
+        rect.anchorMax = new Vector2(1f, 1f);
+        rect.pivot = new Vector2(0.5f, 1f);
+        rect.anchoredPosition = Vector2.zero;
+        rect.sizeDelta = Vector2.zero; // width stretches to the viewport; height fits content
+        AddVerticalLayout(page, 24, 20f);
+        ContentSizeFitter fitter = page.AddComponent<ContentSizeFitter>();
+        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        return page;
+    }
+
+    // One tab's page, built alongside the scroll view's first page.
+    private static GameObject CreateTabPage(GameObject firstPage, string name)
+        => CreateScrollPage(firstPage.transform.parent, name);
+
+    // The project's first scrollbar. Lives as a SIBLING of the viewport, never a child: the
+    // viewport carries the RectMask2D that clips the rows, and a child would be clipped by it.
+    private static Scrollbar CreateVerticalScrollbar(GameObject panel, string name,
+        float topInset, float bottomInset)
+    {
+        var resources = new DefaultControls.Resources
+        {
+            standard = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd"),
+            background = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Background.psd"),
+        };
+        GameObject go = DefaultControls.CreateScrollbar(resources);
+        go.name = name;
+        go.transform.SetParent(panel.transform, false);
+        foreach (Transform child in go.GetComponentsInChildren<Transform>(true))
+            child.gameObject.layer = LayerMask.NameToLayer("UI");
+
+        Scrollbar bar = go.GetComponent<Scrollbar>();
+        bar.direction = Scrollbar.Direction.BottomToTop;
+
+        RectTransform rect = (RectTransform)go.transform;
+        rect.anchorMin = new Vector2(1f, 0f);
+        rect.anchorMax = new Vector2(1f, 1f);
+        rect.pivot = new Vector2(1f, 0.5f);
+        rect.sizeDelta = new Vector2(ScrollbarWidth, -(topInset + bottomInset));
+        rect.anchoredPosition = new Vector2(-12f, (bottomInset - topInset) * 0.5f);
+
+        // DefaultControls builds a HORIZONTAL 160x20 bar, so its Sliding Area is inset 10 per side
+        // on the axis we're about to make the long one. Left alone on a 26-wide vertical bar that
+        // leaves a 6-unit track and a handle too thin to see, let alone grab.
+        RectTransform slidingArea = (RectTransform)go.transform.Find("Sliding Area");
+        if (slidingArea != null) slidingArea.sizeDelta = new Vector2(0f, -6f);
+
+        Image track = go.GetComponent<Image>();
+        if (track != null) track.color = ListColor;
+        TintChildImage(go, "Sliding Area/Handle", new Color(0.52f, 0.56f, 0.66f, 1f));
+        return bar;
+    }
+
+    // A row of tab buttons pinned across the top of a panel. Returns them in the order given.
+    private static Button[] CreateTabRow(GameObject panel, string name, float height, params string[] labels)
+    {
+        GameObject row = CreateUIObject(name, panel.transform);
+        RectTransform rect = (RectTransform)row.transform;
+        rect.anchorMin = new Vector2(0f, 1f);
+        rect.anchorMax = new Vector2(1f, 1f);
+        rect.pivot = new Vector2(0.5f, 1f);
+        rect.offsetMin = new Vector2(12f, 0f);
+        rect.offsetMax = new Vector2(-12f, -12f);
+        rect.sizeDelta = new Vector2(rect.sizeDelta.x, height);
+
+        HorizontalLayoutGroup layout = row.AddComponent<HorizontalLayoutGroup>();
+        layout.padding = new RectOffset(0, 0, 0, 0);
+        layout.spacing = 8f;
+        layout.childAlignment = TextAnchor.MiddleCenter;
+        layout.childControlWidth = true;
+        layout.childControlHeight = true;
+        layout.childForceExpandWidth = true;
+        layout.childForceExpandHeight = true;
+
+        var buttons = new Button[labels.Length];
+        for (int i = 0; i < labels.Length; i++)
+        {
+            buttons[i] = CreateButton("SettingsTab_" + labels[i].Replace(" ", string.Empty),
+                row.transform, labels[i], 32f, NeutralColor);
+        }
+        return buttons;
+    }
+
+    // Label on the left, control on the right, in one row. Two stacked full-width rows per slider
+    // was costing 112 units of vertical space each for no gain — and vertical space is exactly what
+    // the settings screen was short of. The child objects keep their original names because
+    // HomeScreenController finds them by serialized reference.
+    private static GameObject CreateSliderRow(Transform parent, string rowName,
+        string labelName, string labelText, string sliderName, float min, float max, float value,
+        out TextMeshProUGUI label, out Slider slider)
+    {
+        GameObject row = CreateUIObject(rowName, parent);
+        HorizontalLayoutGroup layout = row.AddComponent<HorizontalLayoutGroup>();
+        layout.padding = new RectOffset(0, 0, 0, 0);
+        layout.spacing = 16f;
+        layout.childAlignment = TextAnchor.MiddleLeft;
+        layout.childControlWidth = true;
+        layout.childControlHeight = true;
+        layout.childForceExpandWidth = false;
+        layout.childForceExpandHeight = true;
+
+        label = CreateText(labelName, row.transform, labelText, 32f);
+        label.fontStyle = FontStyles.Bold;
+        label.alignment = TextAlignmentOptions.MidlineLeft;
+        LayoutElement labelElement = label.gameObject.AddComponent<LayoutElement>();
+        labelElement.preferredWidth = 340f;
+        labelElement.flexibleWidth = 0f;
+
+        slider = CreateSlider(sliderName, row.transform, min, max, value);
+        LayoutElement sliderElement = slider.gameObject.AddComponent<LayoutElement>();
+        sliderElement.flexibleWidth = 1f;
+
+        SetLayoutHeight(row, 60f);
+        return row;
+    }
+
+    // A quiet section heading with a rule under it, so related settings read as a group instead of
+    // one undifferentiated column.
+    private static void CreateSectionHeader(Transform parent, string name, string text)
+    {
+        TextMeshProUGUI label = CreateText(name, parent, text.ToUpperInvariant(), 28f);
+        label.fontStyle = FontStyles.Bold;
+        label.alignment = TextAlignmentOptions.MidlineLeft;
+        label.color = new Color(TextColor.r, TextColor.g, TextColor.b, 0.62f);
+        SetLayoutHeight(label.gameObject, 40f);
+
+        GameObject rule = CreateUIObject(name + "Rule", parent);
+        Image ruleImage = rule.AddComponent<Image>();
+        ruleImage.color = new Color(AccentColor.r, AccentColor.g, AccentColor.b, 0.55f);
+        SetLayoutHeight(rule, 2f);
     }
 
     private static void SetLayoutHeight(GameObject go, float height)

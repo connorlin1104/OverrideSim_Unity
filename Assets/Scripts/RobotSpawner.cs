@@ -123,6 +123,14 @@ public class RobotSpawner : MonoBehaviour
             return;
         }
 
+        // Put the robot's shipped button layout into PlayerPrefs BEFORE it exists. ButtonRouter
+        // reads the map in its own Awake, which runs INSIDE the Instantiate below, so seeding after
+        // the spawn is one frame too late and the robot comes up unbound for the whole session.
+        //
+        // The home screen seeds too and normally gets here first (HomeScene is build index 0); this
+        // is what makes opening the field scene directly in the Editor behave the same.
+        ControllerMapSettings.SeedDefault(entry);
+
         GameObject robot = Instantiate(entry.prefab, spawnPosition, Quaternion.Euler(spawnEuler));
         PlaceAndWatch(robot);
     }

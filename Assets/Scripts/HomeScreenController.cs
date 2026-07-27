@@ -33,6 +33,32 @@ public class HomeScreenController : MonoBehaviour
     [SerializeField] private Button modelButtonTemplate;
     [Tooltip("Toggles edit mode: while on, tapping a model removes it from the catalog instead of selecting it.")]
     [SerializeField] private Button editModelsButton;
+    [Tooltip("Editor-only: makes the selected robot's current button layout the one every player " +
+             "starts with. Shown only while Edit Models is on, and hidden entirely in a build.")]
+    [SerializeField] private Button saveDefaultBindingsButton;
+
+    [Header("Settings Tabs")]
+    [Tooltip("Tab buttons across the top of the settings panel, in the same order as Settings Tab Pages.")]
+    [SerializeField] private Button[] settingsTabButtons;
+    [Tooltip("One scroll content per tab. Exactly one is active at a time and the ScrollRect is " +
+             "pointed at it, so each page scrolls independently and none nests inside another.")]
+    [SerializeField] private GameObject[] settingsTabPages;
+    [Tooltip("The settings panel's ScrollRect. Its content is repointed at whichever page is showing.")]
+    [SerializeField] private ScrollRect settingsScroll;
+
+    [Header("Drive Feel")]
+    [Tooltip("Scales the throttle command (persisted via DriveFeelSettings).")]
+    [SerializeField] private Slider driveSensitivitySlider;
+    [SerializeField] private TMP_Text driveSensitivityLabel;
+    [Tooltip("Scales the turn command, on top of the robot's own turn rate.")]
+    [SerializeField] private Slider turnSensitivitySlider;
+    [SerializeField] private TMP_Text turnSensitivityLabel;
+    [Tooltip("Ramps the drive commands instead of snapping to full — the fix for a tap of the turn " +
+             "key swinging the robot much further than intended.")]
+    [SerializeField] private Toggle smoothAccelerationToggle;
+    [Tooltip("Releases the wheels when the sticks centre, so the robot rolls to a stop instead of " +
+             "braking dead.")]
+    [SerializeField] private Toggle coastOnReleaseToggle;
 
     [Header("Selection Tint")]
     [SerializeField] private Color selectedTint = new Color(0.24f, 0.49f, 0.92f); // accent blue
@@ -113,13 +139,19 @@ public class HomeScreenController : MonoBehaviour
         if (mainPanel != null) mainPanel.SetActive(true);
         if (settingsPanel != null) settingsPanel.SetActive(false);
         if (loadingOverlay != null) loadingOverlay.SetActive(false);
+        // Before anything reads a map: give every robot that ships a default layout to a device
+        // that hasn't got one. HomeScene is build index 0, so this is the normal path in a build.
+        ControllerMapSettings.SeedDefaults(catalog);
         BuildModelList();
         UpdateEditButtonLabel();
+        UpdateSaveDefaultButtonVisibility();
         InitJoystickSizeControl();
         InitControlsOpacityControl();
         InitAutomaticMatchloadControl();
         InitReverseDriveControl();
         InitLiteFieldControl();
+        InitDriveFeelControls();
+        SetTab(0);
         ShowHeldCodeCount();
         ShowRecoveryId();
         CheckInbox();
@@ -197,6 +229,45 @@ public class HomeScreenController : MonoBehaviour
     {
         if (submitRobot != null) submitRobot.Close();
         if (settingsPanel != null) settingsPanel.SetActive(true);
+    }
+
+    // --- Settings tabs ---
+
+    // Wired as persistent onClicks by the Build Home Scene tool.
+    public void OnRobotTabPressed() => SetTab(0);
+    public void OnControlsTabPressed() => SetTab(1);
+    public void OnDrivingTabPressed() => SetTab(2);
+    public void OnAccountTabPressed() => SetTab(3);
+
+    // Show one page and point the shared ScrollRect at it.
+    //
+    // The pages are siblings rather than one long column because the settings screen was ~2.4
+    // screens tall with no scrollbar, so most of it was simply invisible. Guarded throughout so an
+    // older HomeScene built before the tabs still runs.
+    private void SetTab(int index)
+    {
+        if (settingsTabPages == null || settingsTabPages.Length == 0) return;
+        index = Mathf.Clamp(index, 0, settingsTabPages.Length - 1);
+
+        for (int i = 0; i < settingsTabPages.Length; i++)
+        {
+            if (settingsTabPages[i] != null) settingsTabPages[i].SetActive(i == index);
+        }
+
+        if (settingsScroll != null && settingsTabPages[index] != null)
+        {
+            settingsScroll.content = (RectTransform)settingsTabPages[index].transform;
+            // Without this the new page opens wherever the previous one was scrolled to, which
+            // looks like a page with its heading missing.
+            settingsScroll.verticalNormalizedPosition = 1f;
+        }
+
+        if (settingsTabButtons == null) return;
+        for (int i = 0; i < settingsTabButtons.Length; i++)
+        {
+            if (settingsTabButtons[i] != null && settingsTabButtons[i].image != null)
+                settingsTabButtons[i].image.color = i == index ? selectedTint : normalTint;
+        }
     }
 
     // --- Model list ---
@@ -288,6 +359,7 @@ public class HomeScreenController : MonoBehaviour
         if (catalog == null) return; // nothing to edit
         editMode = !editMode;
         UpdateEditButtonLabel();
+        UpdateSaveDefaultButtonVisibility();
         RebuildModelList();
     }
 
@@ -296,6 +368,71 @@ public class HomeScreenController : MonoBehaviour
         if (editModelsButton == null) return; // older HomeScene built before this button existed
         TMP_Text label = editModelsButton.GetComponentInChildren<TMP_Text>(true);
         if (label != null) label.text = editMode ? "Done" : "Edit Models";
+    }
+
+    // --- Shipped default bindings (Editor only) ---
+
+    // Wired as a persistent onClick by the Build Home Scene tool.
+    //
+    // Makes the SELECTED robot's current button layout the one every player starts with, by writing
+    // it onto the catalog entry — the one binding-related thing that actually ships. Until this
+    // existed there was no shipped layer at all: MechanismAutoDetect assigns buttons into the
+    // editor's own PlayerPrefs at authoring time, so a fresh install got an unbound controller.
+    //
+    // Editor-only by design. In a player build the catalog is a read-only asset, so this would
+    // appear to work and be gone on the next launch — worse than not being there at all. Hence it
+    // hides itself outside the editor rather than showing a disabled control nobody can explain.
+    public void OnSaveDefaultBindingsPressed()
+    {
+#if UNITY_EDITOR
+        if (catalog == null) return;
+        RobotModelCatalog.Entry entry = catalog.SelectedModel;
+        if (entry == null)
+        {
+            SetCodeStatus("Pick a robot first.");
+            return;
+        }
+
+        ButtonMap current = ControllerMapSettings.Load(entry.id);
+        if (current.assignments.Count == 0)
+        {
+            SetCodeStatus($"'{entry.displayName}' has no buttons bound yet — nothing to make default. " +
+                          "Set it up in Configure Controller first.");
+            return;
+        }
+
+        // Clone, don't assign: the loaded map is mutated in place by the config screen, and handing
+        // the same object to the asset would let a later edit silently rewrite the shipped default.
+        entry.defaultButtonMap = ControllerMapSettings.Clone(current);
+        // Keep this device in step with what it just published, so the seeding rule still reads it
+        // as "untouched" and a future default update lands here too.
+        UnityEngine.PlayerPrefs.SetString(ControllerMapSettings.SeedPrefKey(entry.id),
+            JsonUtility.ToJson(entry.defaultButtonMap));
+        UnityEngine.PlayerPrefs.Save();
+
+        UnityEditor.EditorUtility.SetDirty(catalog);
+        UnityEditor.AssetDatabase.SaveAssets();
+        SetCodeStatus($"'{entry.displayName}': {current.assignments.Count} button(s) are now the " +
+                      "default for every player.");
+#endif
+    }
+
+    // In edit mode the rows are all tinted delete-red and the selection highlight is gone, so the
+    // button names the robot it would act on — otherwise there is no way to tell.
+    private void UpdateSaveDefaultButtonVisibility()
+    {
+        if (saveDefaultBindingsButton == null) return; // older HomeScene built before this existed
+#if UNITY_EDITOR
+        saveDefaultBindingsButton.gameObject.SetActive(editMode);
+        RobotModelCatalog.Entry entry = catalog != null ? catalog.SelectedModel : null;
+        TMP_Text label = saveDefaultBindingsButton.GetComponentInChildren<TMP_Text>(true);
+        if (label != null)
+            label.text = entry != null
+                ? $"Make My Buttons the Default  ({entry.displayName})"
+                : "Make My Buttons the Default";
+#else
+        saveDefaultBindingsButton.gameObject.SetActive(false);
+#endif
     }
 
     // Tint the selected entry with the accent color so the current choice is visible; in edit mode
@@ -308,6 +445,7 @@ public class HomeScreenController : MonoBehaviour
             if (pair.Key == null || pair.Key.image == null) continue;
             pair.Key.image.color = editMode ? deleteTint : (pair.Value == selected ? selectedTint : normalTint);
         }
+        UpdateSaveDefaultButtonVisibility(); // the label names the selected robot
     }
 
     // --- Joystick size ---
@@ -387,6 +525,72 @@ public class HomeScreenController : MonoBehaviour
 
         reverseDriveToggle.SetIsOnWithoutNotify(ReverseDriveSettings.Reversed);
         reverseDriveToggle.onValueChanged.AddListener(value => ReverseDriveSettings.Reversed = value);
+    }
+
+    // --- Drive feel ---
+
+    // Same guarded pattern as the other settings controls. RobotMotorController snapshots these at
+    // Awake rather than reading them live at 100 Hz, so a change lands on the next Drive — the same
+    // contract Joystick Size and Lite Field already have.
+    private void InitDriveFeelControls()
+    {
+        if (driveSensitivitySlider != null)
+        {
+            driveSensitivitySlider.minValue = DriveFeelSettings.MinDriveSensitivity;
+            driveSensitivitySlider.maxValue = DriveFeelSettings.MaxDriveSensitivity;
+            driveSensitivitySlider.wholeNumbers = false;
+            driveSensitivitySlider.SetValueWithoutNotify(DriveFeelSettings.DriveSensitivity);
+            driveSensitivitySlider.onValueChanged.AddListener(OnDriveSensitivityChanged);
+            UpdateDriveSensitivityLabel(DriveFeelSettings.DriveSensitivity);
+        }
+
+        if (turnSensitivitySlider != null)
+        {
+            turnSensitivitySlider.minValue = DriveFeelSettings.MinTurnSensitivity;
+            turnSensitivitySlider.maxValue = DriveFeelSettings.MaxTurnSensitivity;
+            turnSensitivitySlider.wholeNumbers = false;
+            turnSensitivitySlider.SetValueWithoutNotify(DriveFeelSettings.TurnSensitivity);
+            turnSensitivitySlider.onValueChanged.AddListener(OnTurnSensitivityChanged);
+            UpdateTurnSensitivityLabel(DriveFeelSettings.TurnSensitivity);
+        }
+
+        if (smoothAccelerationToggle != null)
+        {
+            smoothAccelerationToggle.SetIsOnWithoutNotify(DriveFeelSettings.SmoothAcceleration);
+            smoothAccelerationToggle.onValueChanged.AddListener(
+                value => DriveFeelSettings.SmoothAcceleration = value);
+        }
+
+        if (coastOnReleaseToggle != null)
+        {
+            coastOnReleaseToggle.SetIsOnWithoutNotify(DriveFeelSettings.CoastOnRelease);
+            coastOnReleaseToggle.onValueChanged.AddListener(
+                value => DriveFeelSettings.CoastOnRelease = value);
+        }
+    }
+
+    private void OnDriveSensitivityChanged(float value)
+    {
+        DriveFeelSettings.DriveSensitivity = value;
+        UpdateDriveSensitivityLabel(value);
+    }
+
+    private void UpdateDriveSensitivityLabel(float value)
+    {
+        if (driveSensitivityLabel != null)
+            driveSensitivityLabel.text = $"Drive Sensitivity — {Mathf.RoundToInt(value * 100f)}%";
+    }
+
+    private void OnTurnSensitivityChanged(float value)
+    {
+        DriveFeelSettings.TurnSensitivity = value;
+        UpdateTurnSensitivityLabel(value);
+    }
+
+    private void UpdateTurnSensitivityLabel(float value)
+    {
+        if (turnSensitivityLabel != null)
+            turnSensitivityLabel.text = $"Turn Sensitivity — {Mathf.RoundToInt(value * 100f)}%";
     }
 
     // --- Team code (private robots) ---
