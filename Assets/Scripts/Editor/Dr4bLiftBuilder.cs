@@ -703,11 +703,10 @@ public static class Dr4bLiftSetup
         IntakePull pull = registry.GetComponentInChildren<IntakePull>(true);
         if (pull == null) return "no intake found (lift carries nothing until Add Intake is run)";
 
-        // Interlock: intake off while raised, Score (A button) drops the stack only while raised; hide markers.
+        // Interlock: intake off while raised, Score (A button) drops the stack only while raised.
         if (useUndo) Undo.RecordObject(pull, UndoName);
         pull.lift = lift;
         pull.scoreAction = UrdfPostProcessor.LoadActionReference("A");
-        pull.showRuntimeMarkers = false;
 
         Transform existing = MechanismBuildUtil.FindChild(chassis, "Dr4bCarriage");
         GameObject carriage;

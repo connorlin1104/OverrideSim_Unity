@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
-using UnityEngine.Rendering;
 
 // Kinematic-glide intake with a capacity cap and lock-to-bot storage.
 //
@@ -30,21 +29,24 @@ using UnityEngine.Rendering;
 // default (keepHeldWhenIdle off): releasing the button drops what's held; turn it on to keep the stack
 // while you drive (then reverse to eject).
 //
-// As pieces come in they're rotated so they stop tumbling and stack cleanly. By default (autoUpright) each
-// piece is stood UPRIGHT by geometry — its longest mesh axis is aligned to the slot's up, measured per
-// instance, so pins that are each baked at a different child tilt all end up vertical (the field's pins
-// share ONE mesh but sit at ~a dozen different rotations, so no single per-type angle could fix them).
+// As pieces come in they're rotated so they stop tumbling and stack cleanly, IN THE SLOT ANCHOR'S
+// FRAME: rotate a slot marker and the piece in that slot rotates with it — tilt it and the piece
+// tilts, twist it and the piece twists. By default (autoUpright) each piece is also stood UP by
+// geometry — its longest mesh axis is aligned to the slot's up, measured per instance, so pins that
+// are each baked at a different child tilt all end up standing (the field's pins share ONE mesh but
+// sit at ~a dozen different rotations, so no single per-type angle could fix them). The attitude is
+// solved ONCE at capture and replayed anchor-relative from then on — re-solving each step made the
+// shortest-arc answer jump around as the bot moved (the same bug ClawGrab's header documents).
 // Stack slots default to a straight line (stackAxis × slotSpacing) but can be overridden per slot by
-// slotAnchors — draggable/rotatable Transforms that place AND angle each slot. (With autoUpright off,
-// orientation comes from the slot rotation + holdEulerOffset + per-type pieceOrientations instead — only
-// usable when every piece of a type shares one baked tilt, which these pins do not.)
+// slotAnchors — draggable/rotatable Transforms that place AND angle each slot.
 //
 // THE HOLD POINT MUST NOT SPIN. It (and the mouth) belong on the rigid chassis, not the spinning roller
-// link — otherwise the target whirls around at Play and pieces are dragged to random points. The Add
+// link — otherwise the target whirls around at Play and pieces are dragged to random points. The Build
 // Intake tool anchors them to the chassis, and this component also SELF-HEALS at play start: if the
 // mouth/hold point hang off a moving articulation link it re-anchors them to the chassis and warns
-// (stabilizeHoldPoint). Turn on showRuntimeMarkers to see the hold point + slots at runtime. World is
-// 10x scale, gravity ~-98, pieces mass 1 — but slot spacing and glide speed are all in WORLD units.
+// (stabilizeHoldPoint). Select the mouth to see the editor-only gizmos; the Build Intake window adds
+// full drag/rotate handles. World is 10x scale, gravity ~-98, pieces mass 1 — but slot spacing and
+// glide speed are all in WORLD units.
 //
 // Pieces are aimed by their CENTER OF MASS, not their transform pivot. The field's Cup*/Pin* pieces were
 // split from one field FBX without re-centering, so each keeps the CAD origin as its pivot — ~9-15 world
@@ -53,18 +55,6 @@ using UnityEngine.Rendering;
 // PhysX recompute the COM back to the pivot) is the pivot→center offset we use to place the mesh exactly.
 public class IntakePull : MonoBehaviour
 {
-    // Per-piece-type orientation fix: the field pieces (Cup*/Pin*) were split from one FBX on different
-    // local axes, so a single rotation can't stand them all up. Each entry adds a rotation for pieces whose
-    // name starts with namePrefix, applied on top of the slot orientation.
-    [System.Serializable]
-    public class PieceOrientation
-    {
-        [Tooltip("Piece name prefix this applies to, e.g. 'Cup' or 'Pin' (matched at the START of the piece's name).")]
-        public string namePrefix;
-        [Tooltip("Extra rotation (Euler degrees) for this type, on top of the slot orientation — dial it until this type stands up right.")]
-        public Vector3 euler;
-    }
-
     [Tooltip("The intake's motor. Its CurrentInput drives the intake: forward = grab/pull in, reverse = eject. Auto-found on this object's parents if empty.")]
     public MotorActuator intakeMotor;
 
@@ -76,7 +66,7 @@ public class IntakePull : MonoBehaviour
     [Tooltip("Button that DROPS the held stack to SCORE (only while the lift is raised). Set by Build DR4B Lift.")]
     public InputActionReference scoreAction;
 
-    [Tooltip("Where captured pieces glide to and stack. The Add Intake tool creates an IntakeHoldPoint you can drag; if empty it falls back to this object's position.")]
+    [Tooltip("Where captured pieces glide to and stack. The Build Intake tool creates an IntakeHoldPoint you can drag AND rotate (its rotation sets how the seated piece sits); if empty it falls back to this object's position.")]
     public Transform holdPoint;
 
     [Header("Direction")]
@@ -92,7 +82,7 @@ public class IntakePull : MonoBehaviour
     public float slotSpacing = 1.5f;
     [Tooltip("Direction (local to the hold point) that stored pieces stack along. Spacing is scale-independent.")]
     public Vector3 stackAxis = Vector3.up;
-    [Tooltip("Optional per-slot anchors — drag one Transform per stack position to lay out THIS model's stack exactly (angled or flat). Slot 0 is the hold point; ROTATING an anchor also sets how the piece in that slot sits. Empty/missing entries fall back to the stackAxis line. The Add Intake tool creates these as draggable IntakeSlot points.")]
+    [Tooltip("Optional per-slot anchors — drag one Transform per stack position to lay out THIS model's stack exactly (angled or flat). Slot 0 is the hold point; ROTATING an anchor also sets how the piece in that slot sits. Empty/missing entries fall back to the stackAxis line. The Build Intake tool creates these as draggable IntakeSlot points.")]
     public Transform[] slotAnchors;
 
     [Header("Hold behavior")]
@@ -104,18 +94,14 @@ public class IntakePull : MonoBehaviour
     [Header("Glide (all in WORLD units — world is 10x scale)")]
     [Tooltip("How fast a captured piece glides to its slot (world units/sec). It's kinematic, so this can't overshoot; higher = snappier. Reverse-eject reuses this speed to glide pieces back out the mouth.")]
     public float glideSpeed = 24f;
-    [Tooltip("Also rotate a captured piece to match the hold point's orientation as it comes in, so it stops tumbling.")]
+    [Tooltip("Also rotate a captured piece to its slot's seated orientation as it comes in, so it stops tumbling. Rotating a slot anchor rotates how its piece sits.")]
     public bool rotateToHold = true;
-    [Tooltip("How fast a captured piece rotates to the hold orientation (degrees/sec).")]
+    [Tooltip("How fast a captured piece rotates to its seated orientation (degrees/sec).")]
     public float rotateSpeed = 720f;
-    [Tooltip("RECOMMENDED. Stand each captured piece upright automatically by aligning its longest mesh axis to the slot's up — computed PER PIECE from geometry, so it handles pieces whose tilt is baked differently into every instance (e.g. the field's pins: they share one mesh but each sits at a different child rotation). Overrides the manual Hold Euler Offset / Piece Orientations below.")]
+    [Tooltip("RECOMMENDED. Additionally stand each captured piece UP along its slot's up axis by aligning its longest mesh axis — computed PER PIECE from geometry, so it handles pieces whose tilt is baked differently into every instance (e.g. the field's pins: they share one mesh but each sits at a different child rotation). Off = the piece keeps the attitude it was caught at, still riding the slot's frame.")]
     public bool autoUpright = true;
     [Tooltip("Advanced: which axis of the MESH is the piece's 'up' (its long/standing axis). Leave (0,0,0) to auto-pick the longest mesh-bounds axis. Set e.g. (0,1,0) if auto-pick stands a piece up the wrong way.")]
     public Vector3 uprightMeshAxis = Vector3.zero;
-    [Tooltip("Used only when Auto Upright is OFF. Extra rotation (Euler degrees, LOCAL to the hold point) applied to EVERY held piece — a global stacking tweak. Needs 'Rotate To Hold' on.")]
-    public Vector3 holdEulerOffset = Vector3.zero;
-    [Tooltip("Used only when Auto Upright is OFF. Per-piece-TYPE orientation fix by name prefix — only works when each type shares a single baked orientation. (The pins DON'T: each instance is tilted differently, which is why Auto Upright exists.)")]
-    public List<PieceOrientation> pieceOrientations = new List<PieceOrientation>();
 
     [Header("Eject")]
     [Tooltip("Seconds between ejecting one piece and the next while reverse is held — pieces come out ONE AT A TIME (bottom of the stack first) so they don't clump together, overlap and jam. Tap reverse to eject just one. Set 0 to dump the whole stack at once.")]
@@ -130,17 +116,13 @@ public class IntakePull : MonoBehaviour
     [Header("Stability & debug")]
     [Tooltip("At play start, if the mouth/hold point hang off a spinning or moving articulation link, re-anchor them to the rigid chassis so the hold point can't whirl around. Also logs a warning telling you to fix the prefab.")]
     public bool stabilizeHoldPoint = true;
-    [Tooltip("Spawn visible in-world markers at the hold point, each stack slot, and the mouth zone (with a connecting line) so you can watch where pieces are being pulled at runtime.")]
-    public bool showRuntimeMarkers = true;
-    [Tooltip("World-space diameter of the hold-point marker sphere (slot markers are smaller). World is 10x scale.")]
-    public float markerSize = 0.5f;
     [Tooltip("Log a startup diagnostic (where the hold point actually is + its hierarchy path) and one line per capture/arrive/release/eject. Turn off once it's working.")]
     public bool logEvents = true;
 
     // One held piece: its stack slot, whether it has finished gliding in, its pre-capture kinematic state
-    // (so a piece that was somehow kinematic before is restored correctly on release), and its measured
-    // standing axis (for Auto Upright).
-    private class Held { public Rigidbody rb; public int slot; public bool arrived; public bool wasKinematic; public Vector3 localCom; public Vector3 localUpAxis; }
+    // (so a piece that was somehow kinematic before is restored correctly on release), and its seat
+    // attitude relative to the slot anchor — solved once at capture, replayed every step.
+    private class Held { public Rigidbody rb; public int slot; public bool arrived; public bool wasKinematic; public Vector3 localCom; public Quaternion anchorLocalRot; }
 
     // A piece ejected and flying out as a ghosted projectile, re-solidified once it has travelled clear of
     // the mouth. Kept OUT of `held` so the intake can grab again immediately.
@@ -153,9 +135,6 @@ public class IntakePull : MonoBehaviour
     private readonly List<Rigidbody> scratch = new List<Rigidbody>();
     private readonly List<Held> heldScratch = new List<Held>();
     private float lastEjectTime;   // when the last piece was launched, for the eject-one-at-a-time spacing
-
-    private readonly List<Transform> slotMarkers = new List<Transform>();  // [0] = hold point, [i] = slot i
-    private LineRenderer markerLine;
 
     private Transform HoldTf => holdPoint != null ? holdPoint : transform;
     private Vector3 StackDir => stackAxis.sqrMagnitude > 1e-6f ? stackAxis.normalized : Vector3.up;
@@ -173,63 +152,17 @@ public class IntakePull : MonoBehaviour
         return HoldTf.position + HoldTf.rotation * (StackDir * (slot * slotSpacing));
     }
 
-    // Orientation a piece in this slot is eased to: the slot anchor's rotation if set (so you can angle or
-    // flatten each slot per model), else the hold point's rotation — both times the holdEulerOffset.
-    private Quaternion SlotWorldRot(int slot)
+    // The frame a piece in this slot is seated in: the slot anchor's rotation if set (so rotating
+    // an anchor rotates its piece), else the hold point's.
+    private Quaternion SlotAnchorRot(int slot)
     {
         Transform a = SlotAnchor(slot);
-        Quaternion baseRot = a != null ? a.rotation : HoldTf.rotation;
-        return baseRot * Quaternion.Euler(holdEulerOffset);
+        return a != null ? a.rotation : HoldTf.rotation;
     }
 
-    // The direction a piece should STAND in this slot (world), used by Auto Upright — the slot anchor's up,
-    // else the hold point's up. Deliberately excludes holdEulerOffset (that's for the manual mode); tilt a
-    // slot anchor if you want the stack to lean.
-    private Vector3 SlotUpDir(int slot)
-    {
-        Transform a = SlotAnchor(slot);
-        return (a != null ? a.rotation : HoldTf.rotation) * Vector3.up;
-    }
-
-    // Extra per-type rotation for a held piece, matched by name prefix (longest match wins, so a more
-    // specific prefix overrides a shorter one). Identity if nothing matches.
-    private Quaternion PieceTypeRot(Rigidbody rb)
-    {
-        if (rb == null || pieceOrientations == null) return Quaternion.identity;
-        PieceOrientation best = null;
-        foreach (PieceOrientation po in pieceOrientations)
-        {
-            if (po == null || string.IsNullOrEmpty(po.namePrefix) || !rb.name.StartsWith(po.namePrefix)) continue;
-            if (best == null || po.namePrefix.Length > best.namePrefix.Length) best = po;
-        }
-        return best != null ? Quaternion.Euler(best.euler) : Quaternion.identity;
-    }
-
-    // The piece's "standing" axis expressed in its RIGIDBODY-local frame, for Auto Upright. It's the
-    // explicit uprightMeshAxis, or the longest axis of the mesh's local bounds, mapped through the mesh
-    // child's rotation into the root's frame — so it's fixed no matter how we later rotate the piece.
+    // The piece's "standing" axis expressed in its RIGIDBODY-local frame, for Auto Upright.
     // Returns zero if there's no mesh to measure (Auto Upright then leaves that piece's rotation alone).
-    private Vector3 ComputeUpAxis(Rigidbody rb)
-    {
-        MeshFilter mf = rb.GetComponentInChildren<MeshFilter>();
-        Transform meshTf = mf != null ? mf.transform : null;
-        Mesh mesh = mf != null ? mf.sharedMesh : null;
-        if (meshTf == null) return Vector3.zero;
-
-        Vector3 axisMeshLocal;
-        if (uprightMeshAxis.sqrMagnitude > 1e-6f)
-            axisMeshLocal = uprightMeshAxis.normalized;
-        else if (mesh != null)
-        {
-            Vector3 s = mesh.bounds.size;                                   // longest local bounds axis
-            axisMeshLocal = (s.x >= s.y && s.x >= s.z) ? Vector3.right
-                          : (s.y >= s.z) ? Vector3.up : Vector3.forward;
-        }
-        else return Vector3.zero;
-
-        Vector3 world = meshTf.rotation * axisMeshLocal;                    // the standing axis in world now
-        return (Quaternion.Inverse(rb.rotation) * world).normalized;       // → rigidbody-local (rotation-stable)
-    }
+    private Vector3 ComputeUpAxis(Rigidbody rb) => PieceGeometry.MeasureUpAxis(rb, uprightMeshAxis);
 
     // Mouth (grab-zone) center in world — the trigger box's center, i.e. where the yellow mouth marker is.
     // Reverse-eject glides pieces back out through this point before shoving them clear.
@@ -257,13 +190,6 @@ public class IntakePull : MonoBehaviour
         // motor's parent chain). Then stabilize so the hold point can never whirl with the roller.
         if (stabilizeHoldPoint) StabilizeAnchors();
         if (logEvents) LogStartupDiagnostics();
-    }
-
-    void Start()
-    {
-        // Markers are built in Start, after RobotSpawner.RecenterFootprint has run in Awake, so their
-        // (already collider-free) geometry can never perturb the spawn footprint scan.
-        if (showRuntimeMarkers) BuildMarkers();
     }
 
     void OnEnable()
@@ -405,20 +331,17 @@ public class IntakePull : MonoBehaviour
         }
     }
 
-    // Carry one held piece toward a target CENTER-OF-MASS position, easing it to the held orientation
-    // (hold rotation + holdEulerOffset). Works in center-of-mass space so the visible mesh — not the
-    // off-center pivot — lands on the target: the pivot is placed from the SAME rotation we apply, so
-    // rotating the piece can't swing the mesh off, even though the pivot is 9-15u away. Returns the
-    // piece's center after this step. Shared by the intake hold loop and the parked pieces mid-eject.
+    // Carry one held piece toward a target CENTER-OF-MASS position, easing it to its seated
+    // orientation — the slot anchor's frame times the attitude solved at capture, so tilting or
+    // twisting a slot marker carries the piece with it. Works in center-of-mass space so the
+    // visible mesh — not the off-center pivot — lands on the target: the pivot is placed from the
+    // SAME rotation we apply, so rotating the piece can't swing the mesh off, even though the
+    // pivot is 9-15u away. Returns the piece's center after this step. Shared by the intake hold
+    // loop and the parked pieces mid-eject.
     private Vector3 CarryTo(Held h, Vector3 targetCom, bool glide, float dt)
     {
         Rigidbody rb = h.rb;
-        // Auto Upright: rotate the ROOT so the piece's measured standing axis points along the slot's up —
-        // per instance, so every differently-tilted pin ends up vertical. Fall back to the manual per-slot /
-        // per-type rotation when it's off (or when there was no mesh to measure).
-        Quaternion target = (autoUpright && h.localUpAxis.sqrMagnitude > 1e-6f)
-            ? Quaternion.FromToRotation(h.localUpAxis, SlotUpDir(h.slot))
-            : SlotWorldRot(h.slot) * PieceTypeRot(rb);
+        Quaternion target = SlotAnchorRot(h.slot) * h.anchorLocalRot;
         Quaternion desiredRot = rotateToHold
             ? Quaternion.RotateTowards(rb.rotation, target, rotateSpeed * dt)
             : rb.rotation;
@@ -427,20 +350,6 @@ public class IntakePull : MonoBehaviour
         rb.MovePosition(nextCom - desiredRot * h.localCom);   // pivot placed so the center hits nextCom
         if (rotateToHold) rb.MoveRotation(desiredRot);
         return nextCom;
-    }
-
-    void LateUpdate()
-    {
-        // Keep the markers pinned to the live slot/hold positions (the same math the pieces use), so
-        // what you see is exactly where a piece will go — independent of any parent scale.
-        for (int i = 0; i < slotMarkers.Count; i++)
-            if (slotMarkers[i] != null) slotMarkers[i].position = SlotWorldPos(i);
-
-        if (markerLine != null)
-        {
-            markerLine.SetPosition(0, MouthWorldPos());
-            markerLine.SetPosition(1, HoldTf.position);
-        }
     }
 
     // Begin holding a piece: make it kinematic (so it glides cleanly, immune to gravity/knocks) and ghost
@@ -472,14 +381,31 @@ public class IntakePull : MonoBehaviour
         // matter how its mesh happens to be tilted (every field pin is baked at a different child rotation).
         Vector3 localUpAxis = autoUpright ? ComputeUpAxis(rb) : Vector3.zero;
 
+        // Seat attitude, solved ONCE and stored relative to the slot anchor: in any slot the piece
+        // then rides at SlotAnchorRot(slot) * anchorLocalRot, so tilting/twisting a slot marker
+        // carries the piece with it, and a stack shift re-expresses the same attitude in the new
+        // slot's frame. autoUpright composes the SMALLEST arc that stands the measured axis along
+        // the slot's up without discarding the caught pose — the ClawGrab.StandUpRotation recipe,
+        // end-flip guard included, so a pin grabbed nose-down doesn't seat upside-down.
+        Quaternion anchorRot = SlotAnchorRot(0);   // bottom-fed: a capture always enters slot 0
+        Quaternion seatedWorld = rb.rotation;
+        if (autoUpright && localUpAxis.sqrMagnitude > 1e-6f)
+        {
+            Vector3 up = anchorRot * Vector3.up;
+            Vector3 worldAxis = rb.rotation * localUpAxis;
+            if (Vector3.Dot(worldAxis, up) < 0f) worldAxis = -worldAxis;   // stand on the end already uppermost
+            seatedWorld = Quaternion.FromToRotation(worldAxis, up) * rb.rotation;
+        }
+        Quaternion anchorLocalRot = Quaternion.Inverse(anchorRot) * seatedWorld;
+
         bool wasKinematic = rb.isKinematic;
         rb.isKinematic = true;
         rb.interpolation = RigidbodyInterpolation.Interpolate;   // smooth the glide/carry between physics steps
         if (passThroughWhileHeld) SetPieceColliders(rb, false);
 
-        held.Add(new Held { rb = rb, slot = slot, arrived = false, wasKinematic = wasKinematic, localCom = localCom, localUpAxis = localUpAxis });
+        held.Add(new Held { rb = rb, slot = slot, arrived = false, wasKinematic = wasKinematic, localCom = localCom, anchorLocalRot = anchorLocalRot });
         if (logEvents) Debug.Log($"IntakePull: captured '{rb.name}' → slot {slot} (holding {held.Count}/{maxHeld}); gliding its center (pivot→center offset {localCom.magnitude:0.#}u) to {SlotWorldPos(slot)}." +
-                                 (autoUpright ? (localUpAxis.sqrMagnitude > 1e-6f ? " Auto-upright ON." : " Auto-upright ON but NO MESH found to measure — piece won't be re-oriented.") : ""), this);
+                                 (autoUpright ? (localUpAxis.sqrMagnitude > 1e-6f ? " Auto-upright ON." : " Auto-upright ON but NO MESH found to measure — piece keeps its caught attitude.") : ""), this);
     }
 
     // Restore one piece's dynamics and colliders (no list change). Shared by Release and OnDisable.
@@ -711,116 +637,32 @@ public class IntakePull : MonoBehaviour
         return path;
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Runtime markers: real (collider-free) renderers so you can SEE the hold point/slots/mouth in the
-    // Game view at play, not just Scene-view gizmos. Positions are refreshed each LateUpdate.
-    // ---------------------------------------------------------------------------------------------
-
-    private void BuildMarkers()
-    {
-        Color holdColor = new Color(0.15f, 0.95f, 1f, 1f);   // bright cyan = the hold point (slot 0)
-        Color slotColor = new Color(0.15f, 0.95f, 1f, 0.7f); // fainter = the other stack slots
-
-        slotMarkers.Clear();
-        for (int i = 0; i < Mathf.Max(1, maxHeld); i++)
-        {
-            float dia = i == 0 ? markerSize : markerSize * 0.6f;
-            GameObject s = MakeSphere(dia, i == 0 ? holdColor : slotColor,
-                i == 0 ? "IntakeHoldMarker" : $"IntakeSlotMarker{i}");
-            slotMarkers.Add(s.transform);
-        }
-
-        // Mouth (grab zone) as a translucent box matching the trigger.
-        BoxCollider box = GetComponent<Collider>() as BoxCollider;
-        if (box != null)
-        {
-            GameObject m = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            m.name = "IntakeMouthMarker";
-            StripCollider(m);
-            m.transform.SetParent(transform, false);
-            m.transform.localPosition = box.center;
-            m.transform.localRotation = Quaternion.identity;
-            m.transform.localScale = box.size;               // rides the trigger's own (scaled) space
-            Paint(m, new Color(1f, 0.85f, 0.15f, 0.15f));
-        }
-
-        // A line from the mouth to the hold point, updated each LateUpdate.
-        GameObject lineGo = new GameObject("IntakeMarkerLine");
-        lineGo.transform.SetParent(transform, false);
-        markerLine = lineGo.AddComponent<LineRenderer>();
-        markerLine.useWorldSpace = true;
-        markerLine.positionCount = 2;
-        markerLine.numCornerVertices = 0;
-        markerLine.startWidth = markerLine.endWidth = markerSize * 0.15f;
-        markerLine.material = UnlitMaterial(new Color(0.15f, 0.95f, 1f, 0.8f), true);
-        markerLine.SetPosition(0, MouthWorldPos());
-        markerLine.SetPosition(1, HoldTf.position);
-    }
-
-    // A sphere marker of a given WORLD diameter, parented to the mouth (so it's cleaned up with the
-    // robot) but with its localScale un-scaled by the parent's (~10x) lossyScale. Its world position is
-    // (re)set each LateUpdate to the live slot position.
-    private GameObject MakeSphere(float worldDiameter, Color color, string goName)
-    {
-        GameObject go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        go.name = goName;
-        StripCollider(go);
-        go.transform.SetParent(transform, false);
-        Vector3 ls = transform.lossyScale;
-        go.transform.localScale = new Vector3(worldDiameter / Nz(ls.x), worldDiameter / Nz(ls.y), worldDiameter / Nz(ls.z));
-        Paint(go, color);
-        return go;
-    }
-
-    private static float Nz(float v) => Mathf.Abs(v) < 1e-4f ? 1f : v;
-
-    private static void StripCollider(GameObject go)
-    {
-        Collider col = go.GetComponent<Collider>();
-        if (col != null) Destroy(col);   // markers must never touch physics or the spawn footprint
-    }
-
-    private static void Paint(GameObject go, Color color)
-    {
-        MeshRenderer r = go.GetComponent<MeshRenderer>();
-        r.sharedMaterial = UnlitMaterial(color, color.a < 0.99f);
-        r.shadowCastingMode = ShadowCastingMode.Off;
-        r.receiveShadows = false;
-    }
-
-    // A URP-unlit material (falls back to built-in unlit), transparent when the color has alpha < 1.
-    private static Material UnlitMaterial(Color color, bool transparent)
-    {
-        Shader sh = Shader.Find("Universal Render Pipeline/Unlit");
-        if (sh == null) sh = Shader.Find("Unlit/Color");
-        if (sh == null) sh = Shader.Find("Sprites/Default");
-        Material m = new Material(sh);
-        if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", color);
-        if (m.HasProperty("_Color")) m.SetColor("_Color", color);
-        if (transparent)
-        {
-            if (m.HasProperty("_Surface")) m.SetFloat("_Surface", 1f);   // URP: 0=opaque, 1=transparent
-            if (m.HasProperty("_SrcBlend")) m.SetFloat("_SrcBlend", (float)BlendMode.SrcAlpha);
-            if (m.HasProperty("_DstBlend")) m.SetFloat("_DstBlend", (float)BlendMode.OneMinusSrcAlpha);
-            if (m.HasProperty("_ZWrite")) m.SetFloat("_ZWrite", 0f);
-            m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-            m.renderQueue = (int)RenderQueue.Transparent;
-        }
-        return m;
-    }
-
 #if UNITY_EDITOR
-    // Always-on Scene-view gizmos (in addition to the runtime markers), so the hold point and slots are
-    // visible while debugging even when the object isn't selected.
-    void OnDrawGizmos()
+    // Editor-only preview — gizmos never render in the Game view (unless its Gizmos toggle is
+    // forced on) or in a build, so nothing shows during Play. Drawn when the mouth is selected:
+    // each slot at piece scale (world is 10x; a cup is ~1.6u), the direction the piece in that
+    // slot will STAND (rotates with the slot anchor — that is the editable seating orientation),
+    // the mouth trigger box, and the pull line. The Build Intake window adds drag/rotate handles
+    // on top of these.
+    void OnDrawGizmosSelected()
     {
         for (int i = 0; i < Mathf.Max(1, maxHeld); i++)
         {
             Gizmos.color = new Color(0.2f, 0.9f, 1f, i == 0 ? 0.9f : 0.5f);
-            Gizmos.DrawWireSphere(SlotWorldPos(i), i == 0 ? 0.2f : 0.12f);
+            Vector3 pos = SlotWorldPos(i);
+            Gizmos.DrawWireSphere(pos, i == 0 ? 0.4f : 0.25f);
+            Gizmos.DrawRay(pos, SlotAnchorRot(i) * Vector3.up * 1.2f);
         }
         Gizmos.color = new Color(0.2f, 0.9f, 1f, 0.6f);
         Gizmos.DrawLine(transform.position, HoldTf.position);
+
+        if (GetComponent<Collider>() is BoxCollider box)
+        {
+            Gizmos.color = new Color(1f, 0.85f, 0.15f, 0.9f);
+            Gizmos.matrix = transform.localToWorldMatrix;
+            Gizmos.DrawWireCube(box.center, box.size);
+            Gizmos.matrix = Matrix4x4.identity;
+        }
     }
 #endif
 }
