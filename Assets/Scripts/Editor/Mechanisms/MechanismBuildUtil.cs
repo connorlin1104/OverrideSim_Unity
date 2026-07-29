@@ -247,6 +247,122 @@ internal static class MechanismBuildUtil
     // infinity, so treat it as 1.
     public static float Nz(float v) => Mathf.Abs(v) < 1e-4f ? 1f : v;
 
+    // --- The robot's existing mechanisms ----------------------------------------------------------
+    //
+    // Both the joint tool and the starting-pose tool open on the same question — "which of the
+    // things already on this robot am I changing?" — and neither could answer it: you had to know
+    // the part's name, find it in a 1260-node hierarchy, and drag it in. This is that list.
+
+    // The robot a mechanism window should work on, from a form field, else the selection, else the
+    // one robot that is open. The last fallback is what makes the roster appear the moment the
+    // window opens in Prefab Mode, with nothing filled in and nothing selected.
+    public static RobotMechanisms ResolveRobot(GameObject hint)
+    {
+        if (hint != null)
+        {
+            RobotMechanisms fromHint = hint.GetComponentInParent<RobotMechanisms>();
+            if (fromHint != null) return fromHint;
+        }
+        if (Selection.activeGameObject != null)
+        {
+            RobotMechanisms fromSelection = Selection.activeGameObject.GetComponentInParent<RobotMechanisms>();
+            if (fromSelection != null) return fromSelection;
+        }
+        UnityEditor.SceneManagement.PrefabStage stage =
+            UnityEditor.SceneManagement.PrefabStageUtility.GetCurrentPrefabStage();
+        if (stage != null && stage.prefabContentsRoot != null)
+            return stage.prefabContentsRoot.GetComponentInChildren<RobotMechanisms>(true);
+        return null;
+    }
+
+    // The link a registry record drives, whichever kind of actuator it uses.
+    public static GameObject MechanismLink(RobotMechanisms.Mechanism m)
+    {
+        if (m == null) return null;
+        if (m.motor != null) return m.motor.gameObject;
+        return m.pneumatic != null ? m.pneumatic.gameObject : null;
+    }
+
+    // What the joint can do and WHERE THE CAD SITS IN IT. The second half is the whole reason this
+    // string exists: a mechanism's rest pose is always joint angle 0, so which end of the travel the
+    // part was modelled at is just where 0 falls between the limits — and that is exactly the fact
+    // you need when a part was modelled extended and has to start folded up to be in size.
+    public static string DescribeJointTravel(ArticulationBody body)
+    {
+        if (body == null) return "no joint";
+        ArticulationDrive d = body.xDrive;
+        switch (body.jointType)
+        {
+            case ArticulationJointType.RevoluteJoint:
+                if (body.twistLock == ArticulationDofLock.FreeMotion) return "spins freely";
+                return $"hinge {d.lowerLimit:0.#}° … {d.upperLimit:0.#}° — {DescribeRestWithin(d)}";
+            case ArticulationJointType.PrismaticJoint:
+                return $"slides {d.lowerLimit:0.##} … {d.upperLimit:0.##} u — {DescribeRestWithin(d)}";
+            case ArticulationJointType.FixedJoint:
+                return "welded (no mechanism)";
+            default:
+                return body.jointType.ToString();
+        }
+    }
+
+    // Where rest (joint 0) falls in a limited joint's window, in words.
+    private static string DescribeRestWithin(ArticulationDrive d)
+    {
+        float span = d.upperLimit - d.lowerLimit;
+        if (span <= 1e-4f) return "no travel at all";
+        float fraction = Mathf.Clamp01((0f - d.lowerLimit) / span);
+        if (fraction <= 0.02f) return "starts at the BOTTOM";
+        if (fraction >= 0.98f) return "starts at the TOP";
+        return $"starts {fraction:P0} up";
+    }
+
+    // One row per mechanism on the robot: its name, what its joint does, where it currently starts,
+    // and a button that loads it into the calling window. Returns the link whose button was pressed,
+    // or null. `current` is highlighted so it's obvious what the form is showing.
+    public static GameObject DrawMechanismRoster(RobotMechanisms registry, GameObject current, string pickLabel)
+    {
+        if (registry == null) return null;
+
+        int count = registry.mechanisms != null ? registry.mechanisms.Count : 0;
+        EditorGUILayout.LabelField(new GUIContent($"On '{registry.gameObject.name}' ({count})",
+            "Everything already set up as a mechanism on this robot. Pick one to work on it instead " +
+            "of hunting for the part in the hierarchy."), EditorStyles.miniBoldLabel);
+
+        if (count == 0)
+        {
+            EditorGUILayout.HelpBox("This robot has no mechanisms yet.", MessageType.None);
+            return null;
+        }
+
+        GameObject picked = null;
+        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+        {
+            foreach (RobotMechanisms.Mechanism m in registry.mechanisms)
+            {
+                GameObject link = MechanismLink(m);
+                if (m == null) continue;
+
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    // A record whose actuator went missing is worth SHOWING rather than hiding —
+                    // that is a broken mechanism, and the config UI will still offer it a button.
+                    if (link == null)
+                    {
+                        EditorGUILayout.LabelField($"{m.displayName} — actuator missing", EditorStyles.miniLabel);
+                        continue;
+                    }
+                    if (GUILayout.Button(pickLabel, GUILayout.Width(52))) picked = link;
+
+                    bool isCurrent = link == current;
+                    string label = $"{m.displayName}  ·  {DescribeJointTravel(link.GetComponent<ArticulationBody>())}";
+                    EditorGUILayout.LabelField(isCurrent ? $"▸ {label}" : label,
+                        isCurrent ? EditorStyles.boldLabel : EditorStyles.miniLabel);
+                }
+            }
+        }
+        return picked;
+    }
+
     // Never strip the drivetrain or another registered mechanism's body out from under it — the guard
     // every builder's delete path needs before destroying an ArticulationBody.
     public static bool IsProtected(ArticulationBody body, RobotMechanisms registry)

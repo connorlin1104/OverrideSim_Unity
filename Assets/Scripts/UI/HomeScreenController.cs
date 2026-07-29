@@ -79,6 +79,8 @@ public class HomeScreenController : MonoBehaviour
     [SerializeField] private Toggle reverseDriveToggle;
     [Tooltip("Checkbox for the lite field (persisted via FieldSceneSettings). Loads the stripped-down LiteScene instead of the full field — far cheaper to run.")]
     [SerializeField] private Toggle liteFieldToggle;
+    [Tooltip("Checkbox for traction wheels (persisted via WheelTypeSettings). Off = all omni, which rolls on when you let go; on = the motors may brake hard enough to pull the robot up and hold it.")]
+    [SerializeField] private Toggle tractionWheelsToggle;
 
     [Header("Team Code")]
     [Tooltip("Where the player types an owner code to reveal a private robot (RobotOwnerSettings).")]
@@ -141,6 +143,7 @@ public class HomeScreenController : MonoBehaviour
         InitReverseDriveControl();
         InitLiteFieldControl();
         InitDriveFeelControls();
+        InitTractionWheelsControl();
         SetTab(0);
         ShowHeldCodeCount();
         ShowRecoveryId();
@@ -401,6 +404,19 @@ public class HomeScreenController : MonoBehaviour
 
         reverseDriveToggle.SetIsOnWithoutNotify(ReverseDriveSettings.Reversed);
         reverseDriveToggle.onValueChanged.AddListener(value => ReverseDriveSettings.Reversed = value);
+    }
+
+    // --- Wheel type ---
+
+    // Same guarded pattern as the other toggles. RobotMotorController snapshots this at Awake along
+    // with the sensitivities, so it lands on the next Drive rather than mid-match — which is right:
+    // nobody swaps their wheels while driving.
+    private void InitTractionWheelsControl()
+    {
+        if (tractionWheelsToggle == null) return;
+
+        tractionWheelsToggle.SetIsOnWithoutNotify(WheelTypeSettings.TractionWheels);
+        tractionWheelsToggle.onValueChanged.AddListener(value => WheelTypeSettings.TractionWheels = value);
     }
 
     // --- Drive feel ---

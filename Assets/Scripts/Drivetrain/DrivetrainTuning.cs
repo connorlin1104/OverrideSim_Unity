@@ -68,9 +68,28 @@ public static class DrivetrainTuning
     //
     // Below 1.0 on purpose, so the MOTOR is the binding constraint on a stop instead of the
     // ground: the force builds progressively with the command rather than saturating instantly,
-    // and the robot's own inertia is what the driver feels. 0.7 gives ~0.56 g, comfortably inside
-    // the 0.8 g friction cone.
-    public const float DefaultBrakeTractionFraction = 0.7f;
+    // and the robot's own inertia is what the driver feels.
+    //
+    // WHY THERE ARE TWO — the wheels. This is the one number where "what is the robot built from"
+    // changes the answer more than any tuning taste does:
+    //
+    //   ALL OMNI (0.2 -> 0.16 g) is the default, because that is what almost every robot runs.
+    //   An omni's rollers give it no sideways grip at all and a small, hard contact patch
+    //   forwards, so it cannot put a hard stop down: releasing the sticks rolls a 240 RPM robot on
+    //   for about 0.28 m (0.62 m on a 360 RPM drive), and one that was mid-turn keeps swinging.
+    //   That roll-out IS the drift an all-omni drive has, and pretending otherwise is what made
+    //   the old single 0.7 read as "the brake is too powerful".
+    //
+    //   A SET OF TRACTION WHEELS (0.7 -> 0.56 g) bites. Rubber, a real contact patch, and grip in
+    //   every direction, so the motors can hand the ground most of what they have: the same robot
+    //   pulls up in 0.08 m and stays put. This is exactly the number the drivetrain shipped with
+    //   before the split, so ticking the box restores the old firm stop — 3.5x shorter.
+    //
+    // Both stay under the 0.8 g friction cone, so a stop is always motor-limited (progressive)
+    // rather than traction-limited (an instant skid). The player picks which one applies — see
+    // WheelTypeSettings and RobotMotorController's two brake-fraction fields.
+    public const float DefaultOmniBrakeFraction = 0.2f;
+    public const float DefaultTractionBrakeFraction = 0.7f;
 
     // Used when a robot's colliders/materials can't be measured (a robot rigged before
     // GeneratePartColliders, or a unit test with no scene). These are the 654V numbers.
@@ -110,7 +129,7 @@ public static class DrivetrainTuning
 
     public static Result Compute(float totalMass, float wheelRadius, int wheelCount,
         float maxWheelRpm, float friction, float gravity,
-        float driveForceTractionMultiple, float brakeTractionFraction = DefaultBrakeTractionFraction)
+        float driveForceTractionMultiple, float brakeTractionFraction = DefaultOmniBrakeFraction)
     {
         // Everything is clamped rather than guarded-and-returned: a half-rigged robot must still
         // produce finite, non-negative values, because these go straight into PhysX and a NaN
@@ -148,9 +167,9 @@ public static class DrivetrainTuning
 
         // Braking quadrant: what the drive may pull when the command opposes or trails the
         // wheel's current spin — which, with centre-stick as the brake pedal, is also every stop.
-        // Sized as a fraction of the tyres' grip so the motor, not the ground, is what limits it
-        // — see DefaultBrakeTractionFraction. Never above stall torque: a motor cannot brake
-        // harder than it can drive.
+        // Sized as a fraction of the tyres' grip so the motor, not the ground, is what limits it,
+        // and which fraction depends on what the wheels ARE — see DefaultOmniBrakeFraction. Never
+        // above stall torque: a motor cannot brake harder than it can drive.
         r.brakeTorque = Mathf.Min(r.tractionForce * brakeFraction * radius / wheels, r.stallTorque);
 
         r.tractionG = g > 1e-6f && mass > 0f ? r.tractionForce / (mass * g) : 0f;

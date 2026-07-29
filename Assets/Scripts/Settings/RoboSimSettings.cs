@@ -126,6 +126,32 @@ public static class DriveFeelSettings
     }
 }
 
+// What the robot's wheels are made of — which is the one thing about a drivetrain the sim cannot
+// read off the model. Every wheel is a sphere collider with one friction coefficient, so omni and
+// traction are physically identical in there; only the driver knows which their robot runs.
+//
+// It matters because it decides how hard the motors are allowed to brake. An all-omni drive can't
+// put a hard stop down, so it rolls on when you let go — the drift an all-omni robot really has.
+// A set of traction wheels bites. See DrivetrainTuning's two brake fractions.
+//
+// Deliberately NOT a feel slider, and deliberately not the retired "Coast When You Let Go"
+// checkbox in a new hat: this is a statement about the hardware, and it has one right answer per
+// robot. Snapshotted at Awake with the rest of the drive feel, so it lands on the next Drive.
+public static class WheelTypeSettings
+{
+    public const string TractionWheelsPrefKey = "TractionWheels";
+
+    // Off by default because almost every robot is all-omni; the box is for the minority that
+    // isn't. That also makes the default the drifty one, which is the honest default.
+    public const bool DefaultTractionWheels = false;
+
+    public static bool TractionWheels
+    {
+        get => SettingsPrefs.GetBool(TractionWheelsPrefKey, DefaultTractionWheels);
+        set => SettingsPrefs.SetBool(TractionWheelsPrefKey, value);
+    }
+}
+
 // Which field scene Drive loads: the full competition field, or the stripped-down "lite" field.
 //
 // The full field is ~4,000 GameObjects and ~1,400 shadow-casting renderers, and its 45 stack magnets

@@ -103,6 +103,7 @@ public class AddMechanismJointWindow : EditorWindow
     [SerializeField] private bool showAxisPreview = true;
     // The shaft/rod the part turns on, when the axis is defined by pointing at a part (FromAxle).
     [SerializeField] private GameObject axlePart;
+    [SerializeField] private Vector2 scroll;
 
     [MenuItem("Tools/RoboSim/Robot/Mechanisms/Add or Fix Mechanism Joint", false, 1)]
     private static void ShowWindow()
@@ -122,6 +123,27 @@ public class AddMechanismJointWindow : EditorWindow
 
     private void OnGUI()
     {
+        // Scrolled because the roster plus the form is now taller than the window on a robot with a
+        // handful of mechanisms, and IMGUI silently clips instead of scrolling on its own.
+        scroll = EditorGUILayout.BeginScrollView(scroll);
+        DrawBody();
+        EditorGUILayout.EndScrollView();
+    }
+
+    private void DrawBody()
+    {
+        // Everything already on this robot, first — "which of these am I fixing?" is the question
+        // this window opens with, and until now the only way to answer it was to know the part's
+        // name and find it yourself in the hierarchy.
+        RobotMechanisms robot = MechanismBuildUtil.ResolveRobot(childLink);
+        GameObject pickedMechanism = MechanismBuildUtil.DrawMechanismRoster(robot, childLink, "Edit");
+        if (pickedMechanism != null)
+        {
+            LoadFrom(pickedMechanism);
+            SceneView.RepaintAll();
+        }
+        EditorGUILayout.Space();
+
         EditorGUILayout.HelpBox(
             "Turn one part into a controllable mechanism (or fix/remove one). The robot must already be " +
             "set up (Set Up Imported Robot).\n\n" +
@@ -327,6 +349,10 @@ public class AddMechanismJointWindow : EditorWindow
             }
             Undo.CollapseUndoOperations(group);
 
+            // Re-read the form from the joint that now exists, so the fields describe reality and
+            // pressing Apply twice is a no-op instead of re-inferring the axis from scratch.
+            if (!isFixed) LoadFrom(childLink);
+
             EditorUtility.DisplayDialog(Title,
                 $"'{childLink.name}' is now set up as: {KindLabels[(int)mechKind]}" +
                 (isFixed ? " (mechanism removed)." : ".") +
@@ -338,6 +364,63 @@ public class AddMechanismJointWindow : EditorWindow
             EditorUtility.DisplayDialog(Title, e.Message, "OK");
             Debug.LogException(e, childLink);
         }
+    }
+
+    // Fills the form from a joint that already exists, so an existing mechanism can be ADJUSTED
+    // rather than re-described from scratch.
+    //
+    // The axis and pivot come back as Custom/typed values read straight off the ArticulationBody
+    // rather than as the preset that originally produced them. That is deliberate and it is the
+    // whole safety property of the edit path: a preset would be RE-RESOLVED on Apply against
+    // today's geometry — "Auto" in particular re-guesses from the part's shape — and a driver who
+    // opened this to change a limit by 5 degrees would have the hinge silently move. Reading the
+    // joint back means Apply reproduces the joint it found unless the user changed a field.
+    private void LoadFrom(GameObject link)
+    {
+        childLink = link;
+        if (link == null) return;
+
+        ArticulationBody body = link.GetComponent<ArticulationBody>();
+        if (body == null) return;
+
+        ArticulationDrive d = body.xDrive;
+        bool toggle = link.GetComponent<PneumaticActuator>() != null;
+        switch (body.jointType)
+        {
+            case ArticulationJointType.PrismaticJoint:
+                mechKind = MechanismKind.LinearPiston;
+                break;
+            case ArticulationJointType.RevoluteJoint:
+                mechKind = body.twistLock == ArticulationDofLock.FreeMotion ? MechanismKind.SpinningMotor
+                    : toggle ? MechanismKind.RotatingPiston : MechanismKind.ArmMotor;
+                break;
+            default:
+                mechKind = MechanismKind.Fixed;
+                break;
+        }
+
+        lowerLimit = d.lowerLimit;
+        upperLimit = d.upperLimit;
+        axisPreset = AxisPreset.Custom;
+        customAxis = JointAxisLocal(body);
+        autoPivot = false;
+        anchor = body.anchorPosition;
+        axlePart = null;
+        alsoMove.Clear();   // already folded into the link; re-listing them would be a no-op at best
+
+        MotorActuator motor = link.GetComponent<MotorActuator>();
+        reverseDirection = motor != null && motor.invert;
+    }
+
+    // The user-facing axis a configured joint was built from — the exact inverse of the
+    // anchorRotation ConfigureJointLink writes. A revolute's twist runs along the anchor frame's X,
+    // which that code deliberately points down MINUS the chosen axis (matching the URDF importer),
+    // so recovering the axis means negating it back.
+    private static Vector3 JointAxisLocal(ArticulationBody body)
+    {
+        Vector3 anchorX = body.anchorRotation * Vector3.right;
+        Vector3 axis = body.jointType == ArticulationJointType.PrismaticJoint ? anchorX : -anchorX;
+        return axis.sqrMagnitude > 1e-8f ? axis.normalized : Vector3.up;
     }
 
     // The link-local axis + anchor the current form describes — the exact pair Apply feeds the joint
@@ -459,13 +542,27 @@ public class AddMechanismJointWindow : EditorWindow
         }
 
         // Revolute: shade the swept range low..high about the current (rest) pose, mark both ends.
+        //
+        // About the TWIST axis, which is minus the chosen axis — ConfigureJointLink points the
+        // anchor frame's X down -axis to match the URDF importer, and the joint's positive angle is
+        // a right-handed rotation about that frame's X. Drawing these arcs about +axisW instead (as
+        // this did until 2026-07-29) mirrored them: a 0..90 arm was previewed sweeping the opposite
+        // way from where it would actually go, which is exactly the thing this preview exists to
+        // stop being a surprise. Symmetric limits hid it.
+        Vector3 twistW = -axisW;
         Handles.color = new Color(color.r, color.g, color.b, 0.18f);
-        Handles.DrawSolidArc(pivotW, axisW, Quaternion.AngleAxis(lowerLimit, axisW) * arm,
+        Handles.DrawSolidArc(pivotW, twistW, Quaternion.AngleAxis(lowerLimit, twistW) * arm,
             upperLimit - lowerLimit, arm.magnitude);
         Handles.color = color;
         Handles.DrawAAPolyLine(2f, pivotW, pivotW + arm);                                   // rest pose
-        Handles.DrawDottedLine(pivotW, pivotW + Quaternion.AngleAxis(lowerLimit, axisW) * arm, 3f);
-        Handles.DrawDottedLine(pivotW, pivotW + Quaternion.AngleAxis(upperLimit, axisW) * arm, 3f);
+        Vector3 lowArm = Quaternion.AngleAxis(lowerLimit, twistW) * arm;
+        Vector3 highArm = Quaternion.AngleAxis(upperLimit, twistW) * arm;
+        Handles.DrawDottedLine(pivotW, pivotW + lowArm, 3f);
+        Handles.DrawDottedLine(pivotW, pivotW + highArm, 3f);
+        // Naming the ends in the view is what makes "should it start down or up?" answerable by
+        // looking, which is the question Set Starting Pose then acts on.
+        Handles.Label(pivotW + lowArm * 1.06f, $"{lowerLimit:0}° (lower)");
+        Handles.Label(pivotW + highArm * 1.06f, $"{upperLimit:0}° (upper)");
         Handles.Label(pivotW + arm * 1.12f, $"{childLink.name}: swings {lowerLimit:0}°..{upperLimit:0}°");
     }
 }

@@ -48,6 +48,7 @@ public static class DriveFeelValidation
         checks += MixPreservesTurn();
         checks += AuthorityDecision();
         checks += ShippedTune();
+        checks += WheelTypeBrakes();
         checks += TuningInvariants();
         checks += ScaleInvariance();
         checks += DegenerateInputs();
@@ -316,11 +317,12 @@ public static class DriveFeelValidation
         ValidationUtil.Near(t.motorLimitedStick, 1f / 3f, 0.005f,
             "the first third of stick travel should be motor-limited, so fine control is real");
 
-        // Braking: 0.7 of the traction budget, i.e. 0.7*2354.4 = 1648 over 6 wheels at r 0.37.
-        // With centre-stick now the brake pedal, this is also the deceleration a release commands.
-        ValidationUtil.Near(t.brakeTorque, 101.63f, 0.2f, "per-wheel braking-quadrant torque");
+        // Braking: the all-omni default, 0.2 of the traction budget — 0.2*2354.4 = 471 over 6
+        // wheels at r 0.37. With centre-stick as the brake pedal this is also the deceleration a
+        // release commands, which is why it is the number the wheel type gets to change.
+        ValidationUtil.Near(t.brakeTorque, 29.04f, 0.1f, "per-wheel braking-quadrant torque");
         ValidationUtil.Near(t.tractionG, 0.80f, 0.005f, "the tyres' grip is mu, so the friction cone is 0.8 g");
-        ValidationUtil.Near(t.brakeG, 0.56f, 0.01f, "braking should be 0.7 of the friction cone");
+        ValidationUtil.Near(t.brakeG, 0.16f, 0.005f, "an all-omni robot should brake at 0.2 of the friction cone");
 
         // THE invariant behind "a stop should feel progressive, not a skid": the motor, not the
         // ground, has to be what limits it. Above the friction cone the tyres just slip, the
@@ -344,6 +346,75 @@ public static class DriveFeelValidation
             $"only the top {(1f - t.motorLimitedStick):P0} of stick travel may be traction-limited; " +
             "past that there is no fine control left");
         return 12;
+    }
+
+    // The wheel-type split — the difference between "the brake is too powerful" and a drivetrain
+    // that rolls on the way an all-omni drive really does.
+    //
+    // Asserted as ROLL-OUT DISTANCE, not as torque, because distance is the thing the driver
+    // actually feels and the only form in which "considerable drift" is a checkable claim. Constant
+    // deceleration is the right model here: the brake clamp binds from full speed all the way down
+    // to the moving gate (brakeTorque is 6.7% of stall against a drive that reaches stall at free
+    // speed), so the wheel decelerates at brakeG for essentially the whole stop.
+    private static int WheelTypeBrakes()
+    {
+        DrivetrainTuning.Result omni = WithBrake(DrivetrainTuning.DefaultOmniBrakeFraction);
+        DrivetrainTuning.Result traction = WithBrake(DrivetrainTuning.DefaultTractionBrakeFraction);
+
+        // brakeG is exactly mu * fraction, which is what makes these two numbers predictable from
+        // the constants rather than emergent. Pinned so nobody re-tunes the feel by accident.
+        ValidationUtil.Near(omni.brakeG, 0.16f, 0.005f, "all-omni braking should be 0.2 of the 0.8 g cone");
+        ValidationUtil.Near(traction.brakeG, 0.56f, 0.005f, "traction-wheel braking should be 0.7 of it");
+
+        float omniRollout = RolloutUnits(omni);
+        float tractionRollout = RolloutUnits(traction);
+
+        // The felt numbers for the reference 240 RPM robot: ~0.28 m of roll versus ~0.08 m.
+        ValidationUtil.Near(omniRollout, 2.754f, 0.02f, "an all-omni robot's roll-out from full speed");
+        ValidationUtil.Near(tractionRollout, 0.787f, 0.02f, "a traction-wheel robot's roll-out");
+
+        // The point of the checkbox: it has to change the stop by enough to see. Below ~2x the
+        // player would tick it, feel nothing, and conclude the setting is broken.
+        ValidationUtil.Assert(omniRollout > tractionRollout * 3f,
+            $"the traction-wheel stop ({tractionRollout:0.00} u) must be at least 3x shorter than the " +
+            $"all-omni one ({omniRollout:0.00} u), or the checkbox does nothing a driver can feel");
+
+        // ...and the other side of it, which is the failure mode of tuning drift by feel: a robot
+        // that rolls for two thirds of a metre on a 240 RPM drive has stopped being drifty and
+        // started ignoring the driver. The old coast-on-release model died of exactly this.
+        ValidationUtil.Assert(omniRollout < 6f,
+            $"an all-omni robot rolls {omniRollout:0.0} units ({omniRollout * 0.1f:0.00} m) after the " +
+            "sticks are released — past this it reads as 'the brake does nothing', not as drift");
+
+        // Both stops stay inside the friction cone, so the MOTOR is what limits them and the force
+        // builds with the command. Above the cone the tyres just slip and every stop costs the
+        // driver the same nothing, whichever wheels are declared.
+        ValidationUtil.Assert(omni.brakeG < omni.tractionG && traction.brakeG < traction.tractionG,
+            $"both stops must stay under the {omni.tractionG:0.00} g friction cone " +
+            $"(omni {omni.brakeG:0.00} g, traction {traction.brakeG:0.00} g)");
+
+        // A motor cannot brake harder than it can drive, on either setting.
+        ValidationUtil.Assert(traction.brakeTorque <= traction.stallTorque + 1e-4f,
+            "the traction-wheel brake must not exceed stall torque");
+
+        // Ordering, pinned against the consts themselves rather than their consequences: swapping
+        // the two defaults would make the drifty setting the firm one and pass everything above.
+        ValidationUtil.Assert(
+            DrivetrainTuning.DefaultOmniBrakeFraction < DrivetrainTuning.DefaultTractionBrakeFraction,
+            "omnis must be the weaker brake — they are the default, and they are the drifty one");
+
+        // The checkbox defaults to off, i.e. to omnis, because that is what almost every robot runs.
+        ValidationUtil.Assert(!WheelTypeSettings.DefaultTractionWheels,
+            "the traction-wheels box must default to OFF, so an unconfigured robot drifts like the omnis it has");
+
+        return 10;
+    }
+
+    // Distance to a standstill from top speed under a constant brakeG, in world units.
+    private static float RolloutUnits(DrivetrainTuning.Result t)
+    {
+        float decel = t.brakeG * G;
+        return decel > 1e-6f ? t.topSpeed * t.topSpeed / (2f * decel) : float.PositiveInfinity;
     }
 
     // The two structural properties the model rests on, checked across a spread of robots rather
@@ -509,7 +580,7 @@ public static class DriveFeelValidation
                 DrivetrainTuning.MeasureFriction(wheels),
                 Physics.gravity.y,
                 motor.driveForceTractionMultiple,
-                motor.brakeTractionFraction);
+                motor.omniBrakeFraction);
 
             // The two design rules, checked against each REAL robot rather than one hand-written
             // configuration — a default that's fine for the 654V can still seize a robot with
@@ -543,7 +614,20 @@ public static class DriveFeelValidation
                     $"({d.damping:0.###}, expected {expected.damping:0.###}). Run " +
                     "Tools > RoboSim > Robot > Advanced > Apply Drive Tuning (All Prefabs).");
             }
-            checked_ += 4 + wheels.Count * 2;
+            // Whichever wheels this robot is declared to run, the stop has to stay motor-limited,
+            // and the traction option has to actually be the firmer one. A prefab that carried a
+            // hand-tuned pair the wrong way round would make the checkbox stop the robot LESS.
+            ValidationUtil.Assert(motor.omniBrakeFraction < motor.tractionBrakeFraction,
+                $"'{name}' has Omni Brake Fraction ({motor.omniBrakeFraction}) at or above Traction " +
+                $"Brake Fraction ({motor.tractionBrakeFraction}) — ticking 'My Robot Has Traction " +
+                "Wheels' would then make the robot stop more slowly, not faster.");
+            float mu = DrivetrainTuning.MeasureFriction(wheels);
+            ValidationUtil.Assert(motor.tractionBrakeFraction < 1f,
+                $"'{name}': a brake fraction of {motor.tractionBrakeFraction} is at or past the " +
+                $"friction cone (mu {mu:0.##}), so a stop skids at the traction limit instead of " +
+                "building progressively with the command.");
+
+            checked_ += 6 + wheels.Count * 2;
         }
 
         if (checked_ == 0)
@@ -557,4 +641,8 @@ public static class DriveFeelValidation
     private static DrivetrainTuning.Result Shipped() => DrivetrainTuning.Compute(
         Mass, Radius, Wheels, Rpm, Mu, G,
         DrivetrainTuning.DefaultDriveForceTractionMultiple);
+
+    private static DrivetrainTuning.Result WithBrake(float brakeFraction) => DrivetrainTuning.Compute(
+        Mass, Radius, Wheels, Rpm, Mu, G,
+        DrivetrainTuning.DefaultDriveForceTractionMultiple, brakeFraction);
 }

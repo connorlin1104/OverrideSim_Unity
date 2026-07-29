@@ -204,6 +204,7 @@ public class BuildHomeScene
                IsRefSet(so, "settingsScroll") &&
                IsArrayFilled(so, "settingsTabButtons") && IsArrayFilled(so, "settingsTabPages") &&
                IsRefSet(so, "driveSensitivitySlider") && IsRefSet(so, "turnSensitivitySlider") &&
+               IsRefSet(so, "tractionWheelsToggle") &&
                IsRefSet(configSo, "controlStyleButton") &&
                IsRefSet(configSo, "resetDefaultsButton");
     }
@@ -514,10 +515,25 @@ public class BuildHomeScene
 
         TextMeshProUGUI driveFeelHint = CreateText("DriveFeelHint", drivingPage.transform,
             "How hard the sticks drive and turn. Every robot ramps its controls instead of snapping " +
-            "to full, and rolls to a stop like real omni wheels. Changes apply the next time you " +
-            "press Drive.", 24f);
+            "to full. Changes apply the next time you press Drive.", 24f);
         driveFeelHint.alignment = TextAlignmentOptions.TopLeft;
         SetLayoutHeight(driveFeelHint.gameObject, 96f);
+
+        CreateSectionHeader(drivingPage.transform, "SectionWheels", "Your wheels");
+
+        // The one thing about a drivetrain the sim can't read off the model: every wheel is a sphere
+        // collider with one friction number, so only the driver knows whether their robot runs omnis
+        // or traction. It decides how hard the motors may brake — see WheelTypeSettings.
+        Toggle tractionWheelsToggle = CreateToggle("TractionWheelsToggle", drivingPage.transform,
+            "My Robot Has Traction Wheels", WheelTypeSettings.DefaultTractionWheels);
+        SetLayoutHeight(tractionWheelsToggle.gameObject, 64f);
+
+        TextMeshProUGUI wheelTypeHint = CreateText("WheelTypeHint", drivingPage.transform,
+            "Leave this off for an all-omni drive: letting go of the sticks rolls the robot on, and a " +
+            "turn keeps swinging, the way omnis really do. Tick it if you run a set of traction " +
+            "wheels — then the robot pulls up hard and stays put.", 24f);
+        wheelTypeHint.alignment = TextAlignmentOptions.TopLeft;
+        SetLayoutHeight(wheelTypeHint.gameObject, 110f);
 
         CreateSectionHeader(drivingPage.transform, "SectionDriveFrame", "Which way is forward");
 
@@ -647,6 +663,7 @@ public class BuildHomeScene
         so.FindProperty("controlsOpacityLabel").objectReferenceValue = opacityLabel;
         so.FindProperty("automaticMatchloadToggle").objectReferenceValue = autoMatchloadToggle;
         so.FindProperty("reverseDriveToggle").objectReferenceValue = reverseDriveToggle;
+        so.FindProperty("tractionWheelsToggle").objectReferenceValue = tractionWheelsToggle;
         so.FindProperty("liteFieldToggle").objectReferenceValue = liteFieldToggle;
         so.FindProperty("teamCodeInput").objectReferenceValue = teamCodeInput;
         so.FindProperty("teamCodeStatusLabel").objectReferenceValue = teamCodeStatus;

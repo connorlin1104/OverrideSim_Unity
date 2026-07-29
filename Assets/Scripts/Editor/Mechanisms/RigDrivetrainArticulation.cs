@@ -502,7 +502,11 @@ public class RigDrivetrainArticulation
             DrivetrainTuning.MeasureFriction(wheels),
             Physics.gravity.y,
             motor.driveForceTractionMultiple,
-            motor.brakeTractionFraction);
+            // The ALL-OMNI fraction, deliberately: the bake must not depend on a PlayerPrefs
+            // checkbox on whichever machine ran the tool, and brakeTorque isn't baked into the
+            // drive anyway (the forceLimit swap is a runtime decision) — this only shapes the
+            // diagnostics below.
+            motor.omniBrakeFraction);
 
         // Honour the per-robot escape hatch here too, or the bake and the runtime would disagree
         // for exactly the robots someone deliberately hand-tuned.
@@ -534,7 +538,8 @@ public class RigDrivetrainArticulation
            $"peak force {t.peakForce:0.} of {t.tractionForce:0.} available traction " +
            $"({(t.tractionForce > 0f ? t.peakForce / t.tractionForce : 0f):P0}), " +
            $"top speed {t.topSpeed:0.0} u/s, 95% of it in {t.secondsTo95:0.00} s, " +
-           $"brakes at {t.brakeG:0.00} g inside a {t.tractionG:0.00} g friction cone.";
+           $"brakes at {t.brakeG:0.00} g on omni wheels (a robot with traction wheels stops harder) " +
+           $"inside a {t.tractionG:0.00} g friction cone.";
 
     // Wires already-present wheel parts into an ALREADY-rigged drivetrain: each part becomes a
     // revolute wheel link (same torque-limited motor model as Rig) assigned to the near rail, then
