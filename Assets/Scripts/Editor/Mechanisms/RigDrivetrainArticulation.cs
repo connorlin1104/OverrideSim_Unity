@@ -378,16 +378,27 @@ public class RigDrivetrainArticulation
             int sideIndex = isLeft ? leftLinks.Count : rightLinks.Count;
             string linkName = $"WheelLink_{(isLeft ? "LS" : "RS")}{sideIndex}";
 
-            // Direct child of the wrapper, rotated so its local +X is the detected axle: the revolute
-            // joint spins about the ANCHOR's X axis (Unity PhysicsModule: "Revolute joint allows
-            // rotational movement around the X axis of the parent's anchor"), and with anchorRotation
-            // forced to identity below, that anchor X is the link's local +X — the axle. So the wheel
-            // rolls about its real axle regardless of how the FBX was oriented.
+            // Rotated so its local +X is the detected axle: the revolute joint spins about the
+            // ANCHOR's X axis (Unity PhysicsModule: "Revolute joint allows rotational movement
+            // around the X axis of the parent's anchor"), and with anchorRotation forced to identity
+            // below, that anchor X is the link's local +X — the axle. So the wheel rolls about its
+            // real axle regardless of how the FBX was oriented.
+            //
+            // Created IN PLACE — beside the wheel it is about to swallow, rather than as a direct
+            // child of the wrapper. A wheel is usually buried several CAD folders deep, and hoisting
+            // its new link to the top level both littered the root with six WheelLink_* empties and
+            // tore the geometry out of the structure the model was drawn with. See WheelMount for
+            // why it can still only ever joint to the chassis.
+            Transform mount = WheelMount(cluster.topmost, wrapper);
             GameObject link = new GameObject(linkName);
             Undo.RegisterCreatedObjectUndo(link, UndoName);
-            link.transform.SetParent(wrapper, false);
+            link.transform.SetParent(mount, false);
             link.transform.SetPositionAndRotation(cluster.Center, linkRotation);
-            link.transform.localScale = Vector3.one;
+            // World scale pinned to the wrapper's, whatever the folders above contribute — CAD nodes
+            // in these imports carry a 1/2.54 inch conversion, so inheriting the chain would leave
+            // the link's own frame at 0.39 and every future anchor coordinate in it a puzzle. The
+            // wheel geometry keeps its own world scale regardless (it reparents world-pose-stays).
+            link.transform.localScale = InverseScale(mount, wrapper.lossyScale);
 
             // Move the cluster's nodes (and their WS-B SphereColliders) under the link. Only
             // reparent nodes whose ancestors aren't also cluster members, so any internal
@@ -425,8 +436,20 @@ public class RigDrivetrainArticulation
             d.stiffness = 0f;
             ab.xDrive = d;
 
+            // Belt and braces on WheelMount's guard, because the failure it prevents is both
+            // catastrophic and silent: a wheel jointed to a MECHANISM instead of the chassis is a
+            // drivetrain that drives the lift around, and nothing in the editor shows it.
+            ArticulationBody jointedTo = null;
+            for (Transform t = link.transform.parent; t != null && jointedTo == null; t = t.parent)
+                jointedTo = t.GetComponent<ArticulationBody>();
+            if (jointedTo == null || jointedTo.transform != wrapper)
+                throw new System.InvalidOperationException(
+                    $"{linkName} would joint to '{(jointedTo != null ? jointedTo.name : "nothing")}' " +
+                    $"instead of the chassis. '{cluster.topmost.name}' sits inside another " +
+                    "articulation link, so it can't be rigged as a drivetrain wheel from there.");
+
             (isLeft ? leftLinks : rightLinks).Add(ab);
-            linkSummary.AppendLine($"  {linkName}: nodes {cluster.nodes.Count}");
+            linkSummary.AppendLine($"  {linkName}: nodes {cluster.nodes.Count}, under '{mount.name}'");
         }
 
         // 4) Tag the wrapper AND every link "Player" — the match loaders identify the robot by
@@ -533,6 +556,36 @@ public class RigDrivetrainArticulation
         return tuning;
     }
 
+    // Where a new wheel link is created: right where the wheel already lives, so the CAD hierarchy
+    // survives being rigged and the robot root doesn't collect six loose WheelLink_* empties.
+    //
+    // THE GUARD is the whole reason this is a function. An articulation link joints to the nearest
+    // ArticulationBody ABOVE it, so nesting the wheel link under a folder that happens to sit inside
+    // another link (a wheel drawn under a lift stage, say) would silently joint that wheel to the
+    // lift instead of the chassis — a drivetrain that drives the lift around. When anything between
+    // the mount and the wrapper carries its own body, fall back to the wrapper, which is where these
+    // always used to go.
+    internal static Transform WheelMount(Transform wheelNode, Transform wrapper)
+    {
+        Transform mount = wheelNode != null ? wheelNode.parent : null;
+        if (mount == null || wrapper == null) return wrapper;
+        if (mount != wrapper && !mount.IsChildOf(wrapper)) return wrapper;   // not under this robot
+        for (Transform t = mount; t != null && t != wrapper; t = t.parent)
+            if (t.GetComponent<ArticulationBody>() != null) return wrapper;
+        return mount;
+    }
+
+    // The localScale that gives a child of `parent` the world scale `desired`. Keeps a wheel link's
+    // own frame at the wrapper's scale however many inch-conversion folders it now sits under, so
+    // nesting the link changes WHERE it is in the hierarchy and nothing else.
+    internal static Vector3 InverseScale(Transform parent, Vector3 desired)
+    {
+        if (parent == null) return desired;
+        Vector3 p = parent.lossyScale;
+        return new Vector3(desired.x / MechanismBuildUtil.Nz(p.x),
+            desired.y / MechanismBuildUtil.Nz(p.y), desired.z / MechanismBuildUtil.Nz(p.z));
+    }
+
     internal static string DescribeTuning(DrivetrainTuning.Result t)
         => $"drive tuned: stall {t.stallTorque:0.#} / damping {t.damping:0.##} per wheel — " +
            $"peak force {t.peakForce:0.} of {t.tractionForce:0.} available traction " +
@@ -600,14 +653,15 @@ public class RigDrivetrainArticulation
             int sideIndex = isLeft ? left.Count : right.Count;
             string linkName = $"WheelLink_{(isLeft ? "LS" : "RS")}{sideIndex}_added";
 
-            // Direct child of the wrapper, rotated to match the existing wheels' axle, with the anchor
+            // In place beside the wheel, rotated to match the existing wheels' axle, with the anchor
             // forced to identity so the revolute twist axis is the link's +X (the axle) — the same setup
-            // Rig uses (see the axis note in this file's header).
+            // Rig uses (see the axis note in this file's header, and WheelMount).
+            Transform mount = WheelMount(part.transform, wrapper);
             GameObject link = new GameObject(linkName);
             Undo.RegisterCreatedObjectUndo(link, AddWheelsUndo);
-            link.transform.SetParent(wrapper, false);
+            link.transform.SetParent(mount, false);
             link.transform.SetPositionAndRotation(bounds.center, linkRotation);
-            link.transform.localScale = Vector3.one;
+            link.transform.localScale = InverseScale(mount, wrapper.lossyScale);
             Undo.SetTransformParent(part.transform, link.transform, AddWheelsUndo); // keeps world placement
 
             ArticulationBody ab = Undo.AddComponent<ArticulationBody>(link);

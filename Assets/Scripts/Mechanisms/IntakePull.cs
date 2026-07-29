@@ -25,9 +25,10 @@ using UnityEngine.InputSystem;
 // flying outward in WORLD space as a free dynamic body (so it separates from the bot instead of clinging
 // as you drive). A launched piece stays ghosted just long enough to travel ejectClearance clear of the
 // rollers, then turns solid in the air. Because it leaves `held` immediately, its slot frees up right away
-// (the intake can grab again at once) and it can never get stuck back on the stack. Hold is MOMENTARY by
-// default (keepHeldWhenIdle off): releasing the button drops what's held; turn it on to keep the stack
-// while you drive (then reverse to eject).
+// (the intake can grab again at once) and it can never get stuck back on the stack. An intake KEEPS what
+// it has picked up: letting go of the button stops it grabbing more, it doesn't dump the stack on the
+// floor — reverse to eject, which is the deliberate act. (dropWhenIdle turns the old momentary behaviour
+// back on for a mechanism that really should spill when you let go.)
 //
 // As pieces come in they're rotated so they stop tumbling and stack cleanly, IN THE SLOT ANCHOR'S
 // FRAME: rotate a slot marker and the piece in that slot rotates with it — tilt it and the piece
@@ -86,8 +87,13 @@ public class IntakePull : MonoBehaviour
     public Transform[] slotAnchors;
 
     [Header("Hold behavior")]
-    [Tooltip("OFF (default): momentary — release the button and held pieces drop. ON: keep the stack while you drive; reverse to eject.")]
-    public bool keepHeldWhenIdle = false;
+    // A NEW field name on purpose, and inverted. The old flag was keepHeldWhenIdle, default OFF, and
+    // both shipped robots have `keepHeldWhenIdle: 0` in their YAML — a prefab's saved value always
+    // beats a changed C# default, so flipping the default would have reached no existing intake. A
+    // field that isn't in the prefab's YAML at all deserializes to its C# default, which is what lets
+    // this land on every robot without touching a prefab. (Same trick as the drive-feel retune.)
+    [Tooltip("OFF (default): the intake keeps what it has picked up when you let go of the button — reverse to eject. ON: momentary, so releasing the button drops the stack on the floor.")]
+    public bool dropWhenIdle = false;
     [Tooltip("While a piece is held, switch OFF its colliders so it passes through the wheels/frame and can't shove the bot. Restored on release.")]
     public bool passThroughWhileHeld = true;
 
@@ -297,7 +303,7 @@ public class IntakePull : MonoBehaviour
             }
         }
 
-        bool holding = intaking || keepHeldWhenIdle;
+        bool holding = intaking || !dropWhenIdle;
         if (!holding) { ReleaseAll(); return; }   // momentary: idle drops everything (committed ejects still finish)
         if (held.Count == 0) return;
 
@@ -623,7 +629,7 @@ public class IntakePull : MonoBehaviour
 
         Debug.Log(
             $"IntakePull[{name}] ready. Hold point = '{HierarchyPath(h)}' at world {h.position}. " +
-            $"maxHeld={maxHeld}, glideSpeed={glideSpeed}, slotSpacing={slotSpacing}, keepHeldWhenIdle={keepHeldWhenIdle}. " +
+            $"maxHeld={maxHeld}, glideSpeed={glideSpeed}, slotSpacing={slotSpacing}, dropWhenIdle={dropWhenIdle}. " +
             (intakeCount > 1 ? $"NOTE: {intakeCount} IntakePull components on this robot. " : "") +
             "If this world position isn't where you dragged the hold point, your edit didn't reach the spawned PREFAB " +
             "(RobotSpawner instantiates the prefab, not the scene object).", this);

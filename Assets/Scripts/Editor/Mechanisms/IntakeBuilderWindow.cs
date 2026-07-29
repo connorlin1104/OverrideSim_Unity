@@ -10,11 +10,17 @@ using UnityEngine.Rendering;
 // support, re-open-to-edit, and a Remove path. It replaces a bare menu item whose entire
 // documentation was one 17-line modal dialog.
 //
-// What it builds (all parented to the chassis, the robot's non-spinning root — NOT the roller
-// link, which spins and would whirl them around):
+// What it builds:
 //   • IntakeMouth     — a trigger box (the grab zone) carrying the IntakePull behavior,
 //   • IntakeHoldPoint — slot 0, where a captured piece seats,
 //   • IntakeSlot1..n  — the rest of the stack.
+//
+// WHERE they go: alongside the roller link, under whatever the roller is mounted on. They must not
+// be children of the roller ITSELF — that spins, and would whirl them around — but they used to be
+// dumped on the robot ROOT instead, which put five loose empties at the top of a 1200-node hierarchy
+// next to the chassis. One step up from the roller is as close as they can get while still being
+// still, it keeps the CAD's own structure readable, and it means an intake mounted on a lift stage
+// has its hold points ride the lift for free.
 // Rotating a hold/slot marker rotates how the piece in that slot SITS — tilt the marker and the
 // piece tilts, twist it and the piece twists (IntakePull seats pieces in the anchor's frame).
 //
@@ -252,7 +258,7 @@ internal static class IntakeSetup
     }
 
     // Create or update the intake. Re-runnable: existing mouth/hold/slot objects are kept where
-    // the user dragged them (only re-parented to the chassis if they would spin), the trigger box
+    // the user dragged them (only re-parented if they would spin with the roller), the trigger box
     // is only seeded on first creation, and slots beyond the new Max Held are pruned.
     public static IntakePull Build(MotorActuator motor, int maxHeld, float slotSpacing, bool useUndo)
     {
@@ -260,6 +266,9 @@ internal static class IntakeSetup
 
         GameObject link = motor.gameObject;
         Transform chassis = ResolveChassis(motor);
+        // Where new markers are created, and where a spinning one is rescued to. Searching still
+        // starts at the robot root, so markers an older build left up there are found and re-homed.
+        Transform mount = MarkerMount(link.transform, chassis);
 
         // World bounds of the intake link's meshes → default mouth size + hold-point guess.
         Bounds bounds;
@@ -279,8 +288,8 @@ internal static class IntakeSetup
             group = Undo.GetCurrentGroup();
         }
 
-        // --- Mouth (grab zone), parented to the chassis so it doesn't spin with the roller ------
-        GameObject mouth = FindOrCreate(chassis, MouthName, useUndo, out bool newMouth);
+        // --- Mouth (grab zone), mounted beside the roller so it does not spin with it ------------
+        GameObject mouth = FindOrCreate(chassis, mount, link.transform, MouthName, useUndo, out bool newMouth);
         if (newMouth)
             mouth.transform.SetPositionAndRotation(bounds.center, Quaternion.identity);
 
@@ -299,8 +308,8 @@ internal static class IntakeSetup
                 world.y / MechanismBuildUtil.Nz(lossy.y), world.z / MechanismBuildUtil.Nz(lossy.z));
         }
 
-        // --- Hold point (slot 0), also on the chassis --------------------------------------------
-        GameObject holdGo = FindOrCreate(chassis, HoldName, useUndo, out bool newHold);
+        // --- Hold point (slot 0), on the same mount ----------------------------------------------
+        GameObject holdGo = FindOrCreate(chassis, mount, link.transform, HoldName, useUndo, out bool newHold);
         if (newHold)
             holdGo.transform.SetPositionAndRotation(
                 bounds.center + Vector3.up * (bounds.size.y * 0.5f + 0.5f), Quaternion.identity);
@@ -315,7 +324,7 @@ internal static class IntakeSetup
         pull.slotSpacing = slotSpacing;
 
         // --- Stack slot anchors -------------------------------------------------------------------
-        // Slot 0 IS the hold point; slots 1..n-1 are chassis children seeded along the stack axis
+        // Slot 0 IS the hold point; slots 1..n-1 sit on the same mount, seeded along the stack axis
         // FROM THE HOLD POINT'S OWN FRAME, so a rotated hold point seeds a rotated stack. Existing
         // slots keep their pose; surplus ones (Max Held reduced) are deleted.
         int slots = pull.maxHeld;
@@ -324,7 +333,7 @@ internal static class IntakeSetup
         anchors[0] = holdGo.transform;
         for (int i = 1; i < slots; i++)
         {
-            GameObject sgo = FindOrCreate(chassis, SlotPrefix + i, useUndo, out bool newSlot);
+            GameObject sgo = FindOrCreate(chassis, mount, link.transform, SlotPrefix + i, useUndo, out bool newSlot);
             if (newSlot)
                 sgo.transform.SetPositionAndRotation(
                     holdGo.transform.position + holdGo.transform.rotation * (dir * (i * slotSpacing)),
@@ -349,7 +358,11 @@ internal static class IntakeSetup
     public static void Remove(IntakePull pull, bool useUndo)
     {
         if (pull == null) return;
-        Transform chassis = pull.transform.parent;
+        // Swept from the ROBOT ROOT, not from the mouth's parent: markers built before they moved
+        // next to the roller are still sitting up there, and a Remove that misses them leaves
+        // IntakeSlot2 orphaned on the robot forever.
+        RobotMechanisms registry = pull.GetComponentInParent<RobotMechanisms>();
+        Transform chassis = registry != null ? registry.transform : pull.transform.root;
         UnityEngine.SceneManagement.Scene scene = pull.gameObject.scene;
 
         if (pull.holdPoint != null && pull.holdPoint.gameObject != pull.gameObject)
@@ -369,6 +382,19 @@ internal static class IntakeSetup
         if (scene.IsValid()) EditorSceneManager.MarkSceneDirty(scene);
     }
 
+    // Where the mouth/hold/slot markers live: one step up from the roller, so they sit with the
+    // intake in the CAD's own structure instead of loose on the robot root, and ride whatever the
+    // intake is bolted to. Falls back to the chassis for a roller that has no parent (or one parked
+    // outside the robot).
+    public static Transform MarkerMount(Transform rollerLink, Transform chassis)
+    {
+        Transform parent = rollerLink != null ? rollerLink.parent : null;
+        if (parent == null) return chassis;
+        // Only inside the robot: a roller dragged out from under the chassis would otherwise scatter
+        // markers into whatever else is in the scene. (IsChildOf is true for the chassis itself.)
+        return chassis != null && !parent.IsChildOf(chassis) ? chassis : parent;
+    }
+
     // The robot's non-spinning frame: the RobotMechanisms holder (lives on the root), else the
     // root ArticulationBody, else the top of the hierarchy.
     public static Transform ResolveChassis(MotorActuator motor)
@@ -380,24 +406,31 @@ internal static class IntakeSetup
         return motor.transform.root;
     }
 
-    // Find an existing marker anywhere on the robot (it may be stuck under the roller from an
-    // older run) and re-home it to the chassis, else create it there. World pose is preserved.
-    private static GameObject FindOrCreate(Transform chassis, string name, bool useUndo, out bool created)
+    // Find an existing marker anywhere on the robot, else create it on `mount`. World pose is
+    // preserved either way.
+    //
+    // An existing marker is re-homed ONLY if it sits inside the roller link, where it would spin.
+    // Anywhere else is somebody's decision — the DR4B builder deliberately re-parents these onto its
+    // carriage so the stack rides the lift, and a rebuild that dragged them back would silently undo
+    // that. (The old code re-homed anything whose parent wasn't the chassis, which did exactly that.)
+    private static GameObject FindOrCreate(Transform searchRoot, Transform mount, Transform rollerLink,
+        string name, bool useUndo, out bool created)
     {
-        Transform t = MechanismBuildUtil.FindChild(chassis, name);
+        Transform t = MechanismBuildUtil.FindChild(searchRoot, name);
         created = t == null;
         GameObject go;
         if (created)
         {
             go = new GameObject(name);
             if (useUndo) Undo.RegisterCreatedObjectUndo(go, UndoName);
-            go.transform.SetParent(chassis, true);
+            go.transform.SetParent(mount, true);
         }
         else
         {
             go = t.gameObject;
             if (useUndo) Undo.RegisterFullObjectHierarchyUndo(go, UndoName);
-            if (go.transform.parent != chassis) MechanismBuildUtil.EnsureChildOf(go.transform, chassis, useUndo);
+            if (rollerLink != null && go.transform.IsChildOf(rollerLink))
+                MechanismBuildUtil.EnsureChildOf(go.transform, mount, useUndo);
         }
         return go;
     }
