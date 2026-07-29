@@ -3,8 +3,8 @@ using UnityEngine.InputSystem;
 
 // Motor-torque drivetrain controller for the ArticulationBody-rigged robot.
 //
-// Unlike RobotDriveController — which force-sets Rigidbody velocities and never yields to
-// contacts — this drives the wheel links' revolute joints with torque-limited velocity drives,
+// Unlike a velocity-teleport controller — which force-sets Rigidbody velocities and never yields
+// to contacts — this drives the wheel links' revolute joints with torque-limited velocity drives,
 // so the robot's speed emerges from motor strength vs. load: it can stall against a wall, get
 // slowed by heavy pieces, and shove things with real contact forces instead of teleport-pushes.
 //

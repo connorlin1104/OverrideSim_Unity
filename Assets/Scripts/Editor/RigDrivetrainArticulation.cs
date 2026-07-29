@@ -5,10 +5,10 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
 
-// One-click conversion of the driving robot from the old "teleport-velocity" Rigidbody stack
-// to a proper ArticulationBody rig with torque-driven wheels.
+// One-click conversion of the driving robot from a plain Rigidbody stack to a proper
+// ArticulationBody rig with torque-driven wheels.
 //
-// The old RobotDriveController force-sets linear/angular velocity every step, which can never
+// A velocity-teleport controller force-sets linear/angular velocity every step, which can never
 // stall, slip, or push with honest contact forces. This tool rebuilds the robot as an
 // articulation: the wrapper becomes the root ArticulationBody, each wheel cluster (found by
 // RobotPartClassifier) becomes a revolute-jointed link child carrying its WS-B SphereColliders,
@@ -194,16 +194,11 @@ public class RigDrivetrainArticulation
     {
         Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
 
-        GameObject robot = null;
-        // Unity 6000.5 deprecated the FindObjectsSortMode overload; FindObjectsInactive.Exclude
-        // matches the old SortMode.None behavior (active objects only).
-        foreach (RobotDriveController drive in Object.FindObjectsByType<RobotDriveController>(FindObjectsInactive.Exclude))
-        {
-            if (robot == null || drive.gameObject.name == "Robot") robot = drive.gameObject;
-        }
+        GameObject robot = GameObject.FindWithTag("Player");
+        if (robot == null) robot = GameObject.Find("Robot");
         if (robot == null)
             throw new System.InvalidOperationException(
-                $"{UndoName}: no GameObject with a RobotDriveController found in {ScenePath}.");
+                $"{UndoName}: no Player-tagged GameObject and no 'Robot' found in {ScenePath}.");
 
         Rig(robot);
 
@@ -308,36 +303,18 @@ public class RigDrivetrainArticulation
     {
         Transform wrapper = robot.transform;
 
-        // A RobotDriveController is only present on the ORIGINAL velocity-driven robot; we lift its
-        // joystick action references before deleting it. A freshly imported/cleaned robot has none,
-        // which is fine — the actions are then loaded straight from the input asset.
-        RobotDriveController drive = robot.GetComponent<RobotDriveController>();
-
         // --- Mutations (one collapsed undo group) -----------------------------------------
 
         Undo.IncrementCurrentGroup();
         Undo.SetCurrentGroupName(UndoName);
         int undoGroup = Undo.GetCurrentGroup();
 
-        // 1) Capture the input action references off the old controller, then remove the old
-        //    stack. The controller must go FIRST: its [RequireComponent(typeof(Rigidbody))]
-        //    blocks destroying the Rigidbody while the controller still exists. When there is no
-        //    old controller (a fresh import), take the actions straight from the input asset.
-        Object leftActionRef, rightActionRef;
-        if (drive != null)
-        {
-            SerializedObject driveSo = new SerializedObject(drive);
-            leftActionRef = driveSo.FindProperty("leftJoystickAction").objectReferenceValue;
-            rightActionRef = driveSo.FindProperty("rightJoystickAction").objectReferenceValue;
-        }
-        else
-        {
-            leftActionRef = UrdfPostProcessor.LoadActionReference("LeftStick");
-            rightActionRef = UrdfPostProcessor.LoadActionReference("RightStick");
-        }
+        // 1) Remove the old Rigidbody stack (an ArticulationBody root replaces it) and take the
+        //    joystick actions straight from the input asset.
+        Object leftActionRef = UrdfPostProcessor.LoadActionReference("LeftStick");
+        Object rightActionRef = UrdfPostProcessor.LoadActionReference("RightStick");
 
         Rigidbody oldBody = robot.GetComponent<Rigidbody>();
-        if (drive != null) Undo.DestroyObjectImmediate(drive);
         if (oldBody != null) Undo.DestroyObjectImmediate(oldBody);
 
         // 2) Root ArticulationBody on the wrapper — the free-floating chassis base. Same

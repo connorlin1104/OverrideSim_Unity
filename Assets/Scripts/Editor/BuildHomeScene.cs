@@ -464,7 +464,7 @@ public class BuildHomeScene
         CreateSectionHeader(controlsPage.transform, "SectionOnScreen", "On-screen controls");
 
         // Joystick size control: label (also the live percentage readout) + slider. The
-        // controller reads/writes JoystickSettings; the field scene's JoystickScaler applies it.
+        // controller reads/writes JoystickSettings; the field scene's ControlsAppearance applies it.
         CreateSliderRow(controlsPage.transform, "JoystickSizeRow",
             "JoystickSizeLabel", "Joystick Size", "JoystickSizeSlider",
             JoystickSettings.MinScale, JoystickSettings.MaxScale, JoystickSettings.DefaultScale,

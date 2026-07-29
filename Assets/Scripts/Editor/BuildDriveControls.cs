@@ -480,8 +480,7 @@ public static class BuildDriveControls
     // --- ControlsAppearance wiring --------------------------------------------------------------
 
     // (Re)wires the ControlsAppearance component on the field Canvas: joystick + cluster scale
-    // targets and the CanvasGroups that carry the opacity setting, replacing the legacy
-    // size-only JoystickScaler. Shared with Build Home Screen.
+    // targets and the CanvasGroups that carry the opacity setting. Shared with Build Home Screen.
     internal static string EnsureControlsAppearance(Scene sampleScene, out bool changed)
     {
         changed = false;
@@ -491,15 +490,6 @@ public static class BuildDriveControls
         RectTransform left = BuildHomeScene.FindDescendantRect(sampleScene, "LeftJoystick_BG");
         RectTransform right = BuildHomeScene.FindDescendantRect(sampleScene, "RightJoystick_BG");
         if (left == null || right == null) return "skipped (joystick objects not found)";
-
-        // The legacy size-only scaler is superseded — remove it so the two components never
-        // fight over the joysticks' localScale.
-        JoystickScaler legacy = canvasGo.GetComponent<JoystickScaler>();
-        if (legacy != null)
-        {
-            Object.DestroyImmediate(legacy);
-            changed = true;
-        }
 
         // CanvasGroups carry the opacity; the authored image alphas must be normalized to 1 so
         // the group value is the single opacity authority (they multiply otherwise).

@@ -342,7 +342,7 @@ public class HomeScreenController : MonoBehaviour
 
     private void OnJoystickSizeChanged(float value)
     {
-        JoystickSettings.Scale = value; // JoystickScaler reads this when the field scene loads
+        JoystickSettings.Scale = value; // ControlsAppearance applies this when the field scene loads
         UpdateJoystickSizeLabel(value);
     }
 

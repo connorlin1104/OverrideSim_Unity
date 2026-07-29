@@ -5,7 +5,7 @@ using UnityEngine;
 // The joysticks in SampleScene are authored at a fixed pixel size that reads fine on a large
 // editor Game view but feels cramped on a physically small phone, since the canvas scales by
 // screen size and keeps them the same *proportion* everywhere. This setting lets the player
-// scale them up (or down) from the home screen; JoystickScaler applies the value in the field
+// scale them up (or down) from the home screen; ControlsAppearance applies the value in the field
 // scene.
 //
 // Stored in PlayerPrefs — not on any asset — so changing it never dirties the project and the

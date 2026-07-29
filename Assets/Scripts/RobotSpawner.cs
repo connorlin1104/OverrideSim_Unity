@@ -39,7 +39,7 @@ public class RobotSpawner : MonoBehaviour
 
     [Tooltip("Field floor surface Y. The robot is dropped so its LOWEST collider starts just above this " +
              "(then settles under gravity), so a bot whose FBX pivot sits anywhere still lands on the floor " +
-             "instead of clipping into it. Matches the field floor used elsewhere (RobotDriveController / MinHeightClamp).")]
+             "instead of clipping into it. Matches the field floor used elsewhere (MinHeightClamp).")]
     [SerializeField] private float floorY = 0.72f;
 
     [Tooltip("How far above the floor the robot's lowest point starts before it settles.")]

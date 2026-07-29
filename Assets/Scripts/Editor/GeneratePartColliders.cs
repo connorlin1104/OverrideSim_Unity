@@ -26,10 +26,6 @@ public static class GeneratePartColliders
     private const string UndoName = "Generate Part Colliders";
     private const string ScenePath = "Assets/Scenes/SampleScene.unity";
 
-    // Major sub-assemblies used for the RobotDriveController turn pivots.
-    private const string LeftGroup = "Drivetrain LS";
-    private const string RightGroup = "Drivetrain RS";
-
     private const float RobotMass = 30f;
     private const int ExpectedWheelClusters = 6;
 
@@ -217,7 +213,6 @@ public static class GeneratePartColliders
         // The whole robot? Send them to the whole-robot tool — this one is for a single part and would
         // strip every collider under the selection then rebuild only what it re-detects.
         if (part.GetComponent<RobotMotorController>() != null ||
-            part.GetComponent<RobotDriveController>() != null ||
             part.GetComponent<RobotMechanisms>() != null)
         {
             EditorUtility.DisplayDialog("Rebuild Selected Part Colliders",
@@ -327,8 +322,6 @@ public static class GeneratePartColliders
         if (reg != null) return reg.gameObject;
         RobotMotorController motor = sel.GetComponentInParent<RobotMotorController>();
         if (motor != null) return motor.gameObject;
-        RobotDriveController drive = sel.GetComponentInParent<RobotDriveController>();
-        if (drive != null) return drive.gameObject;
         ArticulationBody ab = sel.GetComponentInParent<ArticulationBody>();
         if (ab != null)
         {
@@ -418,18 +411,13 @@ public static class GeneratePartColliders
     {
         var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
 
-        // The robot is the tag-Player object carrying the drive controller; fall back to the
-        // plain name in case a previous step has not tagged it yet.
-        GameObject robot = null;
-        foreach (RobotDriveController drive in Object.FindObjectsByType<RobotDriveController>(
-                     FindObjectsInactive.Include))
-        {
-            if (robot == null || drive.CompareTag("Player")) robot = drive.gameObject;
-        }
+        // The robot is the tag-Player object; fall back to the plain name in case a previous
+        // step has not tagged it yet.
+        GameObject robot = GameObject.FindWithTag("Player");
         if (robot == null) robot = GameObject.Find("Robot");
         if (robot == null)
             throw new System.InvalidOperationException(
-                $"Generate Part Colliders: no GameObject 'Robot' with RobotDriveController in {ScenePath}.");
+                $"Generate Part Colliders: no Player-tagged GameObject and no 'Robot' in {ScenePath}.");
 
         Report report = Generate(robot);
 
@@ -526,38 +514,15 @@ public static class GeneratePartColliders
         BuildStructuralColliders(root, root, consumed, chassisMat, hullConcaveStructural, report);
         AssetDatabase.SaveAssets(); // flush any hull meshes written above
 
-        // 4) Drive setup — all conditional, so the tool also runs cleanly on URDF/ArticulationBody
+        // 4) Drive setup — conditional, so the tool also runs cleanly on URDF/ArticulationBody
         //    hierarchies that have none of these components.
-        RobotDriveController drive = root.GetComponent<RobotDriveController>();
-        if (drive != null)
-        {
-            // Legacy RobotDriveController path: drivetrain rail centers are the turn pivots,
-            // whole-robot center is the straight-drive pivot; missing groups fall back to it.
-            Vector3 overallCenter = Vector3.zero;
-            if (RobotPartClassifier.TryGetGroupLocalBounds(root, null, out Vector3 allCenter, out _))
-                overallCenter = allCenter;
-            Vector3 leftPivot = RobotPartClassifier.TryGetGroupLocalBounds(root, LeftGroup, out Vector3 leftCenter, out _)
-                ? leftCenter : overallCenter;
-            Vector3 rightPivot = RobotPartClassifier.TryGetGroupLocalBounds(root, RightGroup, out Vector3 rightCenter, out _)
-                ? rightCenter : overallCenter;
-
-            SerializedObject so = new SerializedObject(drive);
-            so.FindProperty("leftPivotOffset").vector3Value = leftPivot;
-            so.FindProperty("rightPivotOffset").vector3Value = rightPivot;
-            so.FindProperty("centerOffset").vector3Value = overallCenter;
-            so.ApplyModifiedProperties();
-        }
-
         Rigidbody rb = root.GetComponent<Rigidbody>();
         if (rb != null)
         {
             // Heavier robot pushes light pieces (mass 1) instead of riding up over them.
             Undo.RecordObject(rb, UndoName);
             rb.mass = RobotMass;
-        }
 
-        if (drive != null || rb != null)
-        {
             // Tag so the match loaders can filter for the driving robot (not URDF imports).
             Undo.RecordObject(root, UndoName);
             root.tag = "Player";

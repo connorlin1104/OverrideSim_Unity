@@ -4,7 +4,7 @@ using UnityEngine;
 // Applies the player's on-screen control settings — size (JoystickSettings.Scale), opacity
 // (ControlsOpacitySettings.Opacity), and per-group position (ControlsLayoutSettings) — to the
 // field scene's joysticks and controller buttons.
-// Supersedes the old JoystickScaler (size-only, sticks-only). Lives on the field scene's
+// Applies the player's size and opacity settings to the on-screen controls. Lives on the field scene's
 // Canvas; the Build Drive Controls tool wires the joystick backgrounds, the four button
 // cluster roots, and the CanvasGroups that carry the opacity.
 //

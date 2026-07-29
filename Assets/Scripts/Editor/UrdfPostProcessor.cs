@@ -1150,7 +1150,7 @@ public class UrdfPostProcessor : EditorWindow
     // The InputActionImporter creates one visible InputActionReference sub-asset per action
     // (plus a hidden legacy duplicate that LoadAllAssetRepresentationsAtPath skips), and
     // referencing that existing sub-asset serializes as a stable {fileID, guid} pair — the
-    // same wiring the scene's RobotDriveController uses. InputActionReference.Create would
+    // same wiring the drive controller uses. InputActionReference.Create would
     // instead make a NEW in-memory ScriptableObject that persists nowhere and goes null on
     // the next domain reload.
     // Public because the drivetrain rig tool needs the same wiring when it rigs a freshly
