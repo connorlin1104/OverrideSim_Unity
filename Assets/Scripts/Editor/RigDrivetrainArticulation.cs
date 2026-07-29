@@ -502,7 +502,6 @@ public class RigDrivetrainArticulation
             DrivetrainTuning.MeasureFriction(wheels),
             Physics.gravity.y,
             motor.driveForceTractionMultiple,
-            motor.wheelRollingResistanceCrr,
             motor.brakeTractionFraction);
 
         // Honour the per-robot escape hatch here too, or the bake and the runtime would disagree
@@ -535,9 +534,7 @@ public class RigDrivetrainArticulation
            $"peak force {t.peakForce:0.} of {t.tractionForce:0.} available traction " +
            $"({(t.tractionForce > 0f ? t.peakForce / t.tractionForce : 0f):P0}), " +
            $"top speed {t.topSpeed:0.0} u/s, 95% of it in {t.secondsTo95:0.00} s, " +
-           $"coasts to rest in {t.coastSeconds:0.00} s over {t.coastDistance:0.0} u " +
-           $"({t.coastDistance / 10f:0.00} m), brakes at {t.brakeG:0.00} g inside a " +
-           $"{t.tractionG:0.00} g friction cone.";
+           $"brakes at {t.brakeG:0.00} g inside a {t.tractionG:0.00} g friction cone.";
 
     // Wires already-present wheel parts into an ALREADY-rigged drivetrain: each part becomes a
     // revolute wheel link (same torque-limited motor model as Rig) assigned to the near rail, then
