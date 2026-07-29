@@ -17,11 +17,7 @@ using Scene = UnityEngine.SceneManagement.Scene;
 // Usage: Tools > RoboSim > Robot > Build Robot Prefabs & Spawner.
 public static class BuildRobotPrefabs
 {
-    private const string RobotsFolder = "Assets/Robots";
-    private const string CatalogPath = "Assets/Settings/RobotModelCatalog.asset";
-    private const string SampleScenePath = "Assets/Scenes/SampleScene.unity";
-
-    private const string DrivetrainPrefabPath = RobotsFolder + "/360RpmDrivetrain.prefab";
+    private const string DrivetrainPrefabPath = RoboSimPaths.RobotsFolder + "/360RpmDrivetrain.prefab";
     private const string DrivetrainCatalogId = "360rpm-drivetrain";
 
     // Fallback spawn pose (the inline robot's authored pose) for the case where there is neither
@@ -53,9 +49,9 @@ public static class BuildRobotPrefabs
     private static void Build()
     {
         EnsureRobotsFolder();
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
 
-        Scene scene = EditorSceneManager.OpenScene(SampleScenePath, OpenSceneMode.Single);
+        Scene scene = EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
         GameObject inlineRobot = FindRobotRoot(scene);
         GameObject existingPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(DrivetrainPrefabPath);
         bool changed = false;
@@ -66,7 +62,7 @@ public static class BuildRobotPrefabs
             if (inlineRobot == null)
                 throw new System.InvalidOperationException(
                     $"No {DrivetrainPrefabPath} and no inline robot (RobotMotorController) in " +
-                    $"{SampleScenePath} to build it from. Re-add the robot to the scene, or restore the prefab.");
+                    $"{RoboSimPaths.MainScene} to build it from. Re-add the robot to the scene, or restore the prefab.");
             existingPrefab = PrefabUtility.SaveAsPrefabAsset(inlineRobot, DrivetrainPrefabPath);
             if (existingPrefab == null)
                 throw new System.InvalidOperationException($"Failed to save {DrivetrainPrefabPath}.");
@@ -96,7 +92,7 @@ public static class BuildRobotPrefabs
         {
             EditorSceneManager.MarkSceneDirty(scene);
             if (!EditorSceneManager.SaveScene(scene))
-                throw new System.InvalidOperationException($"Failed to save {SampleScenePath}.");
+                throw new System.InvalidOperationException($"Failed to save {RoboSimPaths.MainScene}.");
             Debug.Log("Build Robot Prefabs & Spawner: field robot is a prefab and SampleScene spawns " +
                       "the selected model. Updated the pieces that needed it.");
         }
@@ -144,7 +140,7 @@ public static class BuildRobotPrefabs
     {
         if (catalog == null)
         {
-            Debug.LogWarning($"Build Robot Prefabs: no catalog at {CatalogPath}; prefab not linked for '{id}'.");
+            Debug.LogWarning($"Build Robot Prefabs: no catalog at {RoboSimPaths.RobotModelCatalog}; prefab not linked for '{id}'.");
             return false;
         }
         RobotModelCatalog.Entry entry = catalog.models?.Find(e => e != null && e.id == id);
@@ -163,7 +159,7 @@ public static class BuildRobotPrefabs
 
     private static void EnsureRobotsFolder()
     {
-        if (!AssetDatabase.IsValidFolder(RobotsFolder))
+        if (!AssetDatabase.IsValidFolder(RoboSimPaths.RobotsFolder))
             AssetDatabase.CreateFolder("Assets", "Robots");
     }
 }

@@ -16,9 +16,6 @@ using UnityEngine;
 //   Unity -batchmode -executeMethod MeshRobotValidation.RunBatchValidateMeshRobot -quit
 public static class MeshRobotValidation
 {
-    private const string CatalogPath = "Assets/Settings/RobotModelCatalog.asset";
-    private const string SamplePath = "Assets/Scenes/SampleScene.unity";
-
     public static void RunBatchValidateMeshRobot()
     {
         const string robotName = "MeshBot";
@@ -29,7 +26,7 @@ public static class MeshRobotValidation
         try
         {
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            CreateGroundPlane();
+            ValidationUtil.CreateGroundPlane();
             GameObject robot = BuildSyntheticMeshRobot(robotName);
             robot.transform.position = new Vector3(0f, 1f, 0f); // ~1 unit above the ground
 
@@ -84,7 +81,7 @@ public static class MeshRobotValidation
                 throw new InvalidOperationException(
                     "Mesh validation FAILED: 'arm' is not a wired motor mechanism after the split.");
 
-            RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+            RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
             RobotModelCatalog.Entry entry = catalog != null
                 ? catalog.models.Find(e => e != null && e.id == catalogEntryId) : null;
             if (catalog != null && (entry == null || entry.mechanisms == null ||
@@ -123,7 +120,7 @@ public static class MeshRobotValidation
             Physics.simulationMode = previousSimulationMode;
             if (!hadCatalogEntry) RemoveCatalogEntry(catalogEntryId);
             PlayerPrefs.DeleteKey(ControllerMapSettings.PrefKey(catalogEntryId));
-            if (File.Exists(SamplePath)) EditorSceneManager.OpenScene(SamplePath, OpenSceneMode.Single);
+            if (File.Exists(RoboSimPaths.MainScene)) EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
             else EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
         }
     }
@@ -160,23 +157,15 @@ public static class MeshRobotValidation
         return null;
     }
 
-    private static void CreateGroundPlane()
-    {
-        GameObject ground = new GameObject("Ground");
-        BoxCollider box = ground.AddComponent<BoxCollider>();
-        box.size = new Vector3(200f, 1f, 200f);
-        ground.transform.position = new Vector3(0f, -0.5f, 0f);
-    }
-
     private static bool HasCatalogEntry(string id)
     {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         return catalog != null && catalog.models != null && catalog.models.Exists(e => e != null && e.id == id);
     }
 
     private static void RemoveCatalogEntry(string id)
     {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         if (catalog != null && catalog.models != null &&
             catalog.models.RemoveAll(e => e != null && e.id == id) > 0)
         {

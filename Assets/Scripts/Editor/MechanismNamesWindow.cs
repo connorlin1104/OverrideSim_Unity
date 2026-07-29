@@ -25,7 +25,6 @@ using UnityEngine;
 // Usage: Tools > RoboSim > Robot > Mechanism Names.
 public class MechanismNamesWindow : EditorWindow
 {
-    private const string CatalogPath = "Assets/Settings/RobotModelCatalog.asset";
     private const string UndoName = "Rename Mechanisms";
 
     // Caption geometry, from BuildHomeScene.CreateConfigButton: the text under each controller
@@ -51,7 +50,7 @@ public class MechanismNamesWindow : EditorWindow
     {
         MechanismNamesWindow window = GetWindow<MechanismNamesWindow>(false, "Mechanism Names", true);
         window.minSize = new Vector2(560f, 400f);
-        window.catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        window.catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         window.robotEdits.Clear();
         window.mechanismEdits.Clear();
         window.Show();
@@ -59,10 +58,10 @@ public class MechanismNamesWindow : EditorWindow
 
     private void OnGUI()
     {
-        if (catalog == null) catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        if (catalog == null) catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         if (catalog == null)
         {
-            EditorGUILayout.HelpBox($"No robot catalog at {CatalogPath}. Run " +
+            EditorGUILayout.HelpBox($"No robot catalog at {RoboSimPaths.RobotModelCatalog}. Run " +
                 "Tools > RoboSim > Scenes > Build Home Screen to create one.", MessageType.Error);
             return;
         }

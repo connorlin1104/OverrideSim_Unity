@@ -34,8 +34,6 @@ using Scene = UnityEngine.SceneManagement.Scene;
 public class BuildHomeScene
 {
     private const string HomeScenePath = "Assets/Scenes/HomeScene.unity";
-    private const string SampleScenePath = "Assets/Scenes/SampleScene.unity";
-    private const string CatalogPath = "Assets/Settings/RobotModelCatalog.asset";
     private const string UploadConfigPath = "Assets/Settings/RobotUploadConfig.asset";
     private const string TmpSettingsPath = "Assets/TextMesh Pro/Resources/TMP Settings.asset";
 
@@ -123,28 +121,28 @@ public class BuildHomeScene
         var buildScenes = new List<EditorBuildSettingsScene>
         {
             new EditorBuildSettingsScene(HomeScenePath, true),
-            new EditorBuildSettingsScene(SampleScenePath, true),
+            new EditorBuildSettingsScene(RoboSimPaths.MainScene, true),
         };
         foreach (EditorBuildSettingsScene existing in EditorBuildSettings.scenes)
         {
-            if (existing.path != HomeScenePath && existing.path != SampleScenePath)
+            if (existing.path != HomeScenePath && existing.path != RoboSimPaths.MainScene)
                 buildScenes.Add(existing);
         }
         EditorBuildSettings.scenes = buildScenes.ToArray();
 
         // 5) Field scene edits: a way back to the home screen, and the ControlsAppearance that
         //    applies the home screen's control size/opacity settings to the on-screen controls.
-        Scene sampleScene = EditorSceneManager.OpenScene(SampleScenePath, OpenSceneMode.Single);
+        Scene sampleScene = EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
         string homeButtonStatus = EnsureFieldHomeButton(sampleScene, interactive, out bool homeButtonAdded);
         string appearanceStatus = BuildDriveControls.EnsureControlsAppearance(sampleScene, out bool appearanceChanged);
         if (homeButtonAdded || appearanceChanged) EditorSceneManager.SaveScene(sampleScene);
 
         // Interactive runs put the user back where they were; batch leaves SampleScene open.
-        if (interactive && !string.IsNullOrEmpty(previousScenePath) && previousScenePath != SampleScenePath)
+        if (interactive && !string.IsNullOrEmpty(previousScenePath) && previousScenePath != RoboSimPaths.MainScene)
             EditorSceneManager.OpenScene(previousScenePath, OpenSceneMode.Single);
 
         Debug.Log($"Build Home Scene: TMP essentials {(tmpImported ? "imported" : "already present")}, " +
-                  $"catalog {(catalogCreated ? "created at " + CatalogPath : "found")}, " +
+                  $"catalog {(catalogCreated ? "created at " + RoboSimPaths.RobotModelCatalog : "found")}, " +
                   $"upload config {(uploadConfigCreated ? "created at " + UploadConfigPath + " (fill in the Firebase bucket + key to switch submissions on)" : "found")}, " +
                   $"HomeScene {rebuildStatus}, build settings = [HomeScene, SampleScene], " +
                   $"field Home button {homeButtonStatus}, controls appearance {appearanceStatus}.");
@@ -311,7 +309,7 @@ public class BuildHomeScene
     private static RobotModelCatalog EnsureCatalog(out bool created)
     {
         created = false;
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         if (catalog != null) return catalog;
 
         if (!AssetDatabase.IsValidFolder("Assets/Settings"))
@@ -323,7 +321,7 @@ public class BuildHomeScene
             id = "360rpm-drivetrain",
             displayName = "360 RPM Drivetrain",
         });
-        AssetDatabase.CreateAsset(catalog, CatalogPath);
+        AssetDatabase.CreateAsset(catalog, RoboSimPaths.RobotModelCatalog);
         AssetDatabase.SaveAssets();
         created = true;
         return catalog;
@@ -622,7 +620,7 @@ public class BuildHomeScene
         // Re-load rather than trusting the instance loaded before NewScene: the scene swap can
         // destroy the native object behind an already-loaded asset reference, and a destroyed
         // object silently serializes as {fileID: 0} — the shipped-dead-model-list bug.
-        RobotModelCatalog freshCatalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        RobotModelCatalog freshCatalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         so.FindProperty("catalog").objectReferenceValue = freshCatalog != null ? freshCatalog : catalog;
         so.FindProperty("mainPanel").objectReferenceValue = mainPanel;
         so.FindProperty("settingsPanel").objectReferenceValue = settingsPanel;

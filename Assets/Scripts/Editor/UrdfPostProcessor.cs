@@ -31,7 +31,6 @@ public class UrdfPostProcessor : EditorWindow
 {
     private const string UndoName = "Post-Process URDF Robot";
     private const string InputActionsPath = "Assets/RobotControls.inputactions";
-    private const string CatalogPath = "Assets/Settings/RobotModelCatalog.asset";
 
     // Wheel velocity-drive tuning — matches what RobotMotorController.Awake() bakes at play
     // time, so edit-mode simulation (batch validation) behaves like play mode.
@@ -680,7 +679,7 @@ public class UrdfPostProcessor : EditorWindow
             // Ground plane (top face at y = 0) and the standard post-process at 10x with the
             // DEFAULT collider replacement on — this is the path the docs tell users to run, so
             // it is the one worth validating (part boxes on the chassis, spheres on wheel links).
-            CreateGroundPlane();
+            ValidationUtil.CreateGroundPlane();
 
             // massFromGeometry off: this test asserts a specific drive distance tuned to the URDF's
             // authored masses.
@@ -764,7 +763,7 @@ public class UrdfPostProcessor : EditorWindow
         try
         {
             GameObject robot = ImportUrdfIntoScratchScene(urdfAssetPath);
-            CreateGroundPlane();
+            ValidationUtil.CreateGroundPlane();
 
             // massFromGeometry off: the arm-sweep/piston-toggle thresholds are tuned to the URDF's
             // authored masses.
@@ -814,7 +813,7 @@ public class UrdfPostProcessor : EditorWindow
                         "is Assets/RobotControls.inputactions missing the button actions?");
             }
 
-            RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+            RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
             RobotModelCatalog.Entry entry = catalog != null
                 ? catalog.models.Find(e => e != null && e.id == catalogEntryId) : null;
             if (catalog != null && (entry == null || entry.mechanisms == null || entry.mechanisms.Count != 2))
@@ -956,7 +955,7 @@ public class UrdfPostProcessor : EditorWindow
         try
         {
             GameObject robot = ImportUrdfIntoScratchScene(urdfAssetPath);
-            CreateGroundPlane();
+            ValidationUtil.CreateGroundPlane();
             // massFromGeometry off so the arm stays at its authored 0.3 kg (this tests the tool).
             PostProcess(robot, 10f, true, "wheel", keepUrdfInertials: false, massFromGeometry: false);
             robot.transform.position = new Vector3(0f, 1f, 0f); // ~1 unit above the ground
@@ -978,7 +977,7 @@ public class UrdfPostProcessor : EditorWindow
                 throw new InvalidOperationException(
                     "Joint-tool validation FAILED: 'arm' is not a wired motor mechanism after Apply.");
 
-            RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+            RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
             RobotModelCatalog.Entry entry = catalog != null
                 ? catalog.models.Find(e => e != null && e.id == catalogEntryId) : null;
             if (catalog != null && (entry == null || entry.mechanisms == null ||
@@ -1074,18 +1073,9 @@ public class UrdfPostProcessor : EditorWindow
         return robot;
     }
 
-    // Ground plane with its top face at y = 0.
-    private static void CreateGroundPlane()
-    {
-        GameObject ground = new GameObject("Ground");
-        BoxCollider groundBox = ground.AddComponent<BoxCollider>();
-        groundBox.size = new Vector3(200f, 1f, 200f);
-        ground.transform.position = new Vector3(0f, -0.5f, 0f);
-    }
-
     private static bool HasCatalogEntry(string id)
     {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         return catalog != null && catalog.models != null &&
                catalog.models.Exists(e => e != null && e.id == id);
     }
@@ -1098,8 +1088,7 @@ public class UrdfPostProcessor : EditorWindow
     {
         Physics.simulationMode = previousSimulationMode;
 
-        const string samplePath = "Assets/Scenes/SampleScene.unity";
-        if (File.Exists(samplePath)) EditorSceneManager.OpenScene(samplePath, OpenSceneMode.Single);
+        if (File.Exists(RoboSimPaths.MainScene)) EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
         else EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
         AssetDatabase.DeleteAsset("Assets/TestRobots/Materials");
@@ -1107,7 +1096,7 @@ public class UrdfPostProcessor : EditorWindow
 
         if (!hadCatalogEntry)
         {
-            RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+            RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
             if (catalog != null && catalog.models != null &&
                 catalog.models.RemoveAll(e => e != null && e.id == catalogEntryId) > 0)
             {
@@ -1176,7 +1165,7 @@ public class UrdfPostProcessor : EditorWindow
     private static bool UpsertCatalogEntry(string id, string displayName,
         List<RobotModelCatalog.MechanismInfo> mechanisms)
     {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         if (catalog == null) return false;
 
         if (catalog.models == null) catalog.models = new List<RobotModelCatalog.Entry>();

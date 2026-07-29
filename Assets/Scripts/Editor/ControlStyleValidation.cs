@@ -25,31 +25,12 @@ public static class ControlStyleValidation
     [MenuItem("Tools/RoboSim/Testing/Validate Control Styles", false, 10)]
     private static void RunInteractive()
     {
-        try
-        {
-            string report = Run();
-            EditorUtility.DisplayDialog("Validate Control Styles", report, "OK");
-        }
-        catch (Exception e)
-        {
-            EditorUtility.DisplayDialog("Validate Control Styles", "FAILED\n\n" + e.Message, "OK");
-            Debug.LogException(e);
-        }
+        ValidationUtil.RunInteractive("Validate Control Styles", Run);
     }
 
     public static void RunBatchValidate()
     {
-        try
-        {
-            Debug.Log(Run());
-        }
-        catch (Exception e)
-        {
-            Debug.LogError("Validate Control Styles FAILED: " + e.Message);
-            EditorApplication.Exit(1);
-            return;
-        }
-        EditorApplication.Exit(0);
+        ValidationUtil.RunBatch("Validate Control Styles", Run);
     }
 
     private static string Run()
@@ -76,9 +57,9 @@ public static class ControlStyleValidation
     private static int DefaultsAndTables()
     {
         var map = new ButtonMap();
-        Assert(ControllerMapSettings.GetStyle(map, "intake", Motor) == ControllerMapSettings.StyleTwoButton,
+        ValidationUtil.Assert(ControllerMapSettings.GetStyle(map, "intake", Motor) == ControllerMapSettings.StyleTwoButton,
             "a motor with no history should default to two-button");
-        Assert(ControllerMapSettings.GetStyle(map, "doinker", Pneumatic) == ControllerMapSettings.StyleOneButton,
+        ValidationUtil.Assert(ControllerMapSettings.GetStyle(map, "doinker", Pneumatic) == ControllerMapSettings.StyleOneButton,
             "a piston with no history should default to one-button");
 
         AssertModes(Motor, ControllerMapSettings.StyleTwoButton,
@@ -99,20 +80,20 @@ public static class ControlStyleValidation
         ControllerMapSettings.AddAssignment(map, ControllerButton.R2, "intake", ControllerMapSettings.ModeReverse);
 
         ControllerMapSettings.SetStyle(map, "intake", Motor, ControllerMapSettings.StyleOneButton);
-        Assert(ControllerMapSettings.GetStyle(map, "intake", Motor) == ControllerMapSettings.StyleOneButton,
+        ValidationUtil.Assert(ControllerMapSettings.GetStyle(map, "intake", Motor) == ControllerMapSettings.StyleOneButton,
             "style should read back as one-button");
         AssertHas(map, ControllerButton.R1, "intake", ControllerMapSettings.ModeToggle,
             "R1 should have become the latching toggle");
         AssertHas(map, ControllerButton.R2, "intake", ControllerMapSettings.ModeToggleReverse,
             "R2 should have become the latching reverse toggle");
-        Assert(CountFor(map, "intake") == 2, "flipping style must not add or drop a motor's buttons");
+        ValidationUtil.Assert(CountFor(map, "intake") == 2, "flipping style must not add or drop a motor's buttons");
 
         ControllerMapSettings.SetStyle(map, "intake", Motor, ControllerMapSettings.StyleTwoButton);
         AssertHas(map, ControllerButton.R1, "intake", ControllerMapSettings.ModeForward,
             "R1 should be hold-forward again");
         AssertHas(map, ControllerButton.R2, "intake", ControllerMapSettings.ModeReverse,
             "R2 should be hold-reverse again");
-        Assert(CountFor(map, "intake") == 2, "flipping back must not add or drop buttons");
+        ValidationUtil.Assert(CountFor(map, "intake") == 2, "flipping back must not add or drop buttons");
         return 7;
     }
 
@@ -126,17 +107,17 @@ public static class ControlStyleValidation
         ControllerMapSettings.SetStyle(map, "doinker", Pneumatic, ControllerMapSettings.StyleTwoButton);
         AssertHas(map, ControllerButton.L1, "doinker", ControllerMapSettings.ModeExtend,
             "the toggle button should have become extend");
-        Assert(CountFor(map, "doinker") == 2,
+        ValidationUtil.Assert(CountFor(map, "doinker") == 2,
             "splitting a piston onto two buttons should claim a button for retract");
-        Assert(FindMode(map, "doinker", ControllerMapSettings.ModeRetract) != null,
+        ValidationUtil.Assert(FindMode(map, "doinker", ControllerMapSettings.ModeRetract) != null,
             "retract should be on some button");
-        Assert(FindMode(map, "doinker", ControllerMapSettings.ModeRetract).button != ControllerButton.L1.ToString(),
+        ValidationUtil.Assert(FindMode(map, "doinker", ControllerMapSettings.ModeRetract).button != ControllerButton.L1.ToString(),
             "retract must not land on the button extend already uses");
 
         ControllerMapSettings.SetStyle(map, "doinker", Pneumatic, ControllerMapSettings.StyleOneButton);
         AssertHas(map, ControllerButton.L1, "doinker", ControllerMapSettings.ModeToggle,
             "extend should fold back into the single toggle");
-        Assert(CountFor(map, "doinker") == 1, "the second button should be released");
+        ValidationUtil.Assert(CountFor(map, "doinker") == 1, "the second button should be released");
         return 6;
     }
 
@@ -146,12 +127,12 @@ public static class ControlStyleValidation
     {
         var map = new ButtonMap();
         ControllerMapSettings.SetStyle(map, "flywheel", Motor, ControllerMapSettings.StyleOneButton);
-        Assert(ControllerMapSettings.GetStyle(map, "flywheel", Motor) == ControllerMapSettings.StyleOneButton,
+        ValidationUtil.Assert(ControllerMapSettings.GetStyle(map, "flywheel", Motor) == ControllerMapSettings.StyleOneButton,
             "an unmapped mechanism should still remember its style");
-        Assert(CountFor(map, "flywheel") == 0, "an unmapped mechanism must not be given buttons");
+        ValidationUtil.Assert(CountFor(map, "flywheel") == 0, "an unmapped mechanism must not be given buttons");
 
         ControllerMapSettings.RemoveStyle(map, "flywheel");
-        Assert(ControllerMapSettings.GetStyle(map, "flywheel", Motor) == ControllerMapSettings.StyleTwoButton,
+        ValidationUtil.Assert(ControllerMapSettings.GetStyle(map, "flywheel", Motor) == ControllerMapSettings.StyleTwoButton,
             "removing the style should fall back to the type default");
         return 3;
     }
@@ -167,18 +148,18 @@ public static class ControlStyleValidation
         PlayerPrefs.Save();
 
         ButtonMap loaded = ControllerMapSettings.Load(TestRobotId);
-        Assert(loaded.styles != null, "a map with no styles key must still load a usable list");
-        Assert(loaded.assignments.Count == 2, "legacy assignments should survive the load");
-        Assert(ControllerMapSettings.GetStyle(loaded, "intake", Motor) == ControllerMapSettings.StyleTwoButton,
+        ValidationUtil.Assert(loaded.styles != null, "a map with no styles key must still load a usable list");
+        ValidationUtil.Assert(loaded.assignments.Count == 2, "legacy assignments should survive the load");
+        ValidationUtil.Assert(ControllerMapSettings.GetStyle(loaded, "intake", Motor) == ControllerMapSettings.StyleTwoButton,
             "a legacy hold-forward motor should read as two-button");
-        Assert(ControllerMapSettings.GetStyle(loaded, "doinker", Pneumatic) == ControllerMapSettings.StyleOneButton,
+        ValidationUtil.Assert(ControllerMapSettings.GetStyle(loaded, "doinker", Pneumatic) == ControllerMapSettings.StyleOneButton,
             "a legacy toggle piston should read as one-button");
 
         // And a style set now survives a save/load round trip.
         ControllerMapSettings.SetStyle(loaded, "intake", Motor, ControllerMapSettings.StyleOneButton);
         ControllerMapSettings.Save(TestRobotId, loaded);
         ButtonMap reloaded = ControllerMapSettings.Load(TestRobotId);
-        Assert(ControllerMapSettings.GetStyle(reloaded, "intake", Motor) == ControllerMapSettings.StyleOneButton,
+        ValidationUtil.Assert(ControllerMapSettings.GetStyle(reloaded, "intake", Motor) == ControllerMapSettings.StyleOneButton,
             "a style choice should survive save/load");
         AssertHas(reloaded, ControllerButton.R1, "intake", ControllerMapSettings.ModeToggle,
             "the rewritten mode should survive save/load");
@@ -199,8 +180,8 @@ public static class ControlStyleValidation
         foreach (string mode in modes)
         {
             string caption = ControllerMapSettings.ModeCaption(mode);
-            Assert(!string.IsNullOrEmpty(caption), $"mode '{mode}' has no caption");
-            Assert(!string.IsNullOrEmpty(ControllerMapSettings.ModeLabel(mode)), $"mode '{mode}' has no label");
+            ValidationUtil.Assert(!string.IsNullOrEmpty(caption), $"mode '{mode}' has no caption");
+            ValidationUtil.Assert(!string.IsNullOrEmpty(ControllerMapSettings.ModeLabel(mode)), $"mode '{mode}' has no label");
             if (captions.TryGetValue(caption, out string other) && other != mode)
                 throw new InvalidOperationException(
                     $"modes '{other}' and '{mode}' share the caption '{caption}' — two different " +
@@ -215,15 +196,15 @@ public static class ControlStyleValidation
     private static void AssertModes(string type, string style, params string[] expected)
     {
         string[] actual = ControllerMapSettings.ModesFor(type, style);
-        Assert(actual.Length == expected.Length,
+        ValidationUtil.Assert(actual.Length == expected.Length,
             $"{type}/{style} should expose {expected.Length} function(s), got {actual.Length}");
         for (int i = 0; i < expected.Length; i++)
-            Assert(actual[i] == expected[i],
+            ValidationUtil.Assert(actual[i] == expected[i],
                 $"{type}/{style} function {i} should be '{expected[i]}', got '{actual[i]}'");
     }
 
     private static void AssertHas(ButtonMap map, ControllerButton button, string id, string mode, string why)
-        => Assert(ControllerMapSettings.HasAssignment(map, button, id, mode), why);
+        => ValidationUtil.Assert(ControllerMapSettings.HasAssignment(map, button, id, mode), why);
 
     private static int CountFor(ButtonMap map, string mechanismId)
     {
@@ -238,10 +219,5 @@ public static class ControlStyleValidation
         foreach (ButtonAssignment a in map.assignments)
             if (a != null && a.mechanismId == mechanismId && a.mode == mode) return a;
         return null;
-    }
-
-    private static void Assert(bool condition, string why)
-    {
-        if (!condition) throw new InvalidOperationException(why);
     }
 }

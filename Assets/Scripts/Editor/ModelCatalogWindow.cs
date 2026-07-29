@@ -23,7 +23,6 @@ using UnityEngine;
 // Usage: Tools > RoboSim > Robot > Model Catalog.
 public class ModelCatalogWindow : EditorWindow
 {
-    private const string CatalogPath = "Assets/Settings/RobotModelCatalog.asset";
     private const string UndoName = "Edit Robot Catalog";
 
     private RobotModelCatalog catalog;
@@ -35,17 +34,17 @@ public class ModelCatalogWindow : EditorWindow
     {
         ModelCatalogWindow window = GetWindow<ModelCatalogWindow>(false, "Model Catalog", true);
         window.minSize = new Vector2(560f, 380f);
-        window.catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        window.catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         window.status = null;
         window.Show();
     }
 
     private void OnGUI()
     {
-        if (catalog == null) catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        if (catalog == null) catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         if (catalog == null)
         {
-            EditorGUILayout.HelpBox($"No robot catalog at {CatalogPath}. Run " +
+            EditorGUILayout.HelpBox($"No robot catalog at {RoboSimPaths.RobotModelCatalog}. Run " +
                 "Tools > RoboSim > Scenes > Build Home Screen to create one.", MessageType.Error);
             return;
         }

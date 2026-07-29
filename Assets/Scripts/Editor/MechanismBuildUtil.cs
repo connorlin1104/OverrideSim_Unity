@@ -196,6 +196,57 @@ internal static class MechanismBuildUtil
         return n > 0 ? s / n : Vector3.zero;
     }
 
+    // --- Shared builder plumbing ------------------------------------------------------------------
+
+    // The registry a builder should target: the first candidate part that sits under a
+    // RobotMechanisms, else whatever the current selection sits under. Each builder passes its own
+    // assigned parts as candidates, so a half-filled form still resolves the right robot.
+    public static RobotMechanisms RegistryFromAny(System.Collections.Generic.IEnumerable<GameObject> candidates)
+    {
+        if (candidates != null)
+        {
+            foreach (GameObject go in candidates)
+            {
+                if (go == null) continue;
+                RobotMechanisms r = go.GetComponentInParent<RobotMechanisms>();
+                if (r != null) return r;
+            }
+        }
+        return Selection.activeGameObject != null
+            ? Selection.activeGameObject.GetComponentInParent<RobotMechanisms>()
+            : null;
+    }
+
+    // First descendant of root (inclusive) with this exact name — how the builders find the helper
+    // empties (pivots, hold points, carriages) they created on a previous run.
+    public static Transform FindChild(Transform root, string name)
+    {
+        if (root == null) return null;
+        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
+            if (t.name == name) return t;
+        return null;
+    }
+
+    // The builders' shared part-list UI: a labelled column of GameObject fields with per-row
+    // remove and a trailing Add.
+    public static void DrawGoList(string label, string tip, System.Collections.Generic.List<GameObject> list)
+    {
+        EditorGUILayout.LabelField(new GUIContent(label, tip), EditorStyles.miniBoldLabel);
+        for (int i = 0; i < list.Count; i++)
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                list[i] = (GameObject)EditorGUILayout.ObjectField(list[i], typeof(GameObject), true);
+                if (GUILayout.Button("X", GUILayout.Width(24))) { list.RemoveAt(i); i--; }
+            }
+        }
+        if (GUILayout.Button("Add", GUILayout.Width(70))) list.Add(null);
+    }
+
+    // Non-zero guard for scale division: a ~0 lossyScale component would blow a size up to
+    // infinity, so treat it as 1.
+    public static float Nz(float v) => Mathf.Abs(v) < 1e-4f ? 1f : v;
+
     // Never strip the drivetrain or another registered mechanism's body out from under it — the guard
     // every builder's delete path needs before destroying an ArticulationBody.
     public static bool IsProtected(ArticulationBody body, RobotMechanisms registry)

@@ -20,8 +20,6 @@ using UnityEngine;
 // Idempotent: running it twice writes the same numbers and reports "unchanged".
 public class ApplyDriveTuningTool
 {
-    private const string RobotsFolder = "Assets/Robots";
-
     [MenuItem("Tools/RoboSim/Robot/Advanced/Apply Drive Tuning (All Prefabs)", false, 6)]
     private static void ApplyInteractive()
     {
@@ -39,7 +37,7 @@ public class ApplyDriveTuningTool
         string report = Run(out int changed, out int total);
         if (total == 0)
             throw new System.InvalidOperationException(
-                $"Apply Drive Tuning: no robot prefabs with a RobotMotorController under {RobotsFolder}.");
+                $"Apply Drive Tuning: no robot prefabs with a RobotMotorController under {RoboSimPaths.RobotsFolder}.");
         Debug.Log($"Apply Drive Tuning: {changed} of {total} prefab(s) updated.\n{report}");
     }
 
@@ -95,14 +93,14 @@ public class ApplyDriveTuningTool
             }
         }
 
-        if (total == 0) report.AppendLine($"  (no robot prefabs found under {RobotsFolder})");
+        if (total == 0) report.AppendLine($"  (no robot prefabs found under {RoboSimPaths.RobotsFolder})");
         return report.ToString().TrimEnd();
     }
 
     private static IEnumerable<string> PrefabPaths()
     {
-        if (!AssetDatabase.IsValidFolder(RobotsFolder)) yield break;
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RobotsFolder }))
+        if (!AssetDatabase.IsValidFolder(RoboSimPaths.RobotsFolder)) yield break;
+        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
             yield return AssetDatabase.GUIDToAssetPath(guid);
     }
 

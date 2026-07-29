@@ -229,15 +229,7 @@ public class PieceStackMagnet : MonoBehaviour
 
     // The piece's standing axis in its rigidbody-local frame (longest mesh-bounds axis), same
     // measurement GoalStackMagnet / IntakePull auto-upright use. Zero if there's no mesh to measure.
-    public static Vector3 ComputeUpAxis(Rigidbody rb)
-    {
-        MeshFilter mf = rb.GetComponentInChildren<MeshFilter>();
-        Mesh mesh = mf != null ? mf.sharedMesh : null;
-        if (mesh == null) return Vector3.zero;
-        Vector3 s = mesh.bounds.size;
-        Vector3 axis = (s.x >= s.y && s.x >= s.z) ? Vector3.right : (s.y >= s.z) ? Vector3.up : Vector3.forward;
-        return (Quaternion.Inverse(rb.rotation) * (mf.transform.rotation * axis)).normalized;
-    }
+    public static Vector3 ComputeUpAxis(Rigidbody rb) => PieceGeometry.MeasureUpAxis(rb);
 
 #if UNITY_EDITOR
     void OnDrawGizmosSelected()

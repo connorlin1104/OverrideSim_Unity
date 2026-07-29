@@ -24,7 +24,6 @@ using UnityEditor.SceneManagement;
 public static class GeneratePartColliders
 {
     private const string UndoName = "Generate Part Colliders";
-    private const string ScenePath = "Assets/Scenes/SampleScene.unity";
 
     private const float RobotMass = 30f;
     private const int ExpectedWheelClusters = 6;
@@ -409,7 +408,7 @@ public static class GeneratePartColliders
     // and throws (nonzero exit) if anything is off, so CI catches a broken robot import.
     public static void RunBatchOnRobot()
     {
-        var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        var scene = EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
 
         // The robot is the tag-Player object; fall back to the plain name in case a previous
         // step has not tagged it yet.
@@ -417,7 +416,7 @@ public static class GeneratePartColliders
         if (robot == null) robot = GameObject.Find("Robot");
         if (robot == null)
             throw new System.InvalidOperationException(
-                $"Generate Part Colliders: no Player-tagged GameObject and no 'Robot' in {ScenePath}.");
+                $"Generate Part Colliders: no Player-tagged GameObject and no 'Robot' in {RoboSimPaths.MainScene}.");
 
         Report report = Generate(robot);
 
@@ -427,9 +426,9 @@ public static class GeneratePartColliders
                 $"{report.wheelClusters.Count} — scene NOT saved. Check the '{RobotPartClassifier.WheelNamePrefix}' nodes.");
 
         if (!EditorSceneManager.SaveScene(scene))
-            throw new System.InvalidOperationException($"Generate Part Colliders: failed to save {ScenePath}.");
+            throw new System.InvalidOperationException($"Generate Part Colliders: failed to save {RoboSimPaths.MainScene}.");
 
-        Debug.Log($"Generate Part Colliders (batch): '{robot.name}' in {ScenePath} → {report.sphereCount} wheel " +
+        Debug.Log($"Generate Part Colliders (batch): '{robot.name}' in {RoboSimPaths.MainScene} → {report.sphereCount} wheel " +
                   $"sphere(s), {report.boxCount} box(es), {report.obbChildCount} OBB box(es), " +
                   $"{report.slabBoxCount} slab box(es), {report.hullCount} convex hull(s); skipped " +
                   $"{report.skippedFasteners} fastener(s), {report.skippedDegenerate} decal(s). Scene saved.");

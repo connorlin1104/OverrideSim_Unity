@@ -25,7 +25,6 @@ using UnityEditor.SceneManagement;
 public static class RobotResetValidation
 {
     private const string MenuTitle = "Validate Fall Reset";
-    private const string ScenePath = "Assets/Scenes/SampleScene.unity";
 
     private const float StepSeconds = 0.01f;   // matches the project's fixed timestep
     private const int SettleSteps = 200;       // 2 s
@@ -60,7 +59,7 @@ public static class RobotResetValidation
 
     private static void Run()
     {
-        EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
 
         GameObject prefab = ResolveRobotPrefab()
             ?? throw new System.InvalidOperationException(
@@ -99,7 +98,7 @@ public static class RobotResetValidation
         {
             Physics.simulationMode = previous;
             // Discard every simulated pose — never save a simulated scene.
-            EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+            EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
         }
 
         Debug.Log("RobotResetValidation: PASSED (place, trigger, recover, debounce, give up).");

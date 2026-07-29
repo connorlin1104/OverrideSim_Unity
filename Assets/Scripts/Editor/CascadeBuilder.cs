@@ -105,7 +105,7 @@ public class CascadeBuilderWindow : EditorWindow
 
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Rides with the lift", EditorStyles.boldLabel);
-        DrawGoList("Carried parts",
+        MechanismBuildUtil.DrawGoList("Carried parts",
             "The claw arm and its claw — anything that moves WITH the lift without being part of it. " +
             "They're reparented onto the top bar, so their own joints keep working while the lift " +
             "carries them. Don't list the bars themselves here.", ridesAlong);
@@ -258,10 +258,10 @@ public class CascadeBuilderWindow : EditorWindow
                     if (GUILayout.Button("X", GUILayout.Width(24))) removeAt = i;
                 }
 
-                DrawGoList("Parts on this bar",
+                MechanismBuildUtil.DrawGoList("Parts on this bar",
                     "Everything bolted to this bar EXCEPT its channels — motors, sprockets, pulleys, " +
                     "string mounts, brackets. It all welds into one moving link.", bar.parts);
-                DrawGoList("C-channel(s)",
+                MechanismBuildUtil.DrawGoList("C-channel(s)",
                     "This bar's channel(s) — group both under one empty and drop it here. The build " +
                     "reads the slide direction and the maximum travel off the longest one.", bar.channels);
 
@@ -297,20 +297,6 @@ public class CascadeBuilderWindow : EditorWindow
             ? $"channel {length:F2} u{holes}  ->  travel {travel:F2} u ({source})"
             : $"travel {travel:F2} u ({source}) — direction defaults to straight up",
             EditorStyles.miniLabel);
-    }
-
-    private void DrawGoList(string label, string tip, List<GameObject> list)
-    {
-        EditorGUILayout.LabelField(new GUIContent(label, tip), EditorStyles.miniBoldLabel);
-        for (int i = 0; i < list.Count; i++)
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                list[i] = (GameObject)EditorGUILayout.ObjectField(list[i], typeof(GameObject), true);
-                if (GUILayout.Button("X", GUILayout.Width(24))) { list.RemoveAt(i); i--; }
-            }
-        }
-        if (GUILayout.Button("Add", GUILayout.Width(70))) list.Add(null);
     }
 
     // The cascade already on this robot, so it can be re-opened or deleted without hunting the
@@ -380,28 +366,15 @@ public class CascadeBuilderWindow : EditorWindow
 
     private RobotMechanisms ResolveRegistry()
     {
+        var candidates = new List<GameObject>();
         foreach (CascadeRig.Bar bar in bars)
         {
             if (bar == null) continue;
-            RobotMechanisms r = FirstRegistry(bar.parts) ?? FirstRegistry(bar.channels);
-            if (r != null) return r;
+            if (bar.parts != null) candidates.AddRange(bar.parts);
+            if (bar.channels != null) candidates.AddRange(bar.channels);
         }
-        RobotMechanisms fromRiders = FirstRegistry(ridesAlong);
-        if (fromRiders != null) return fromRiders;
-        return Selection.activeGameObject != null
-            ? Selection.activeGameObject.GetComponentInParent<RobotMechanisms>() : null;
-    }
-
-    private static RobotMechanisms FirstRegistry(List<GameObject> list)
-    {
-        if (list == null) return null;
-        foreach (GameObject go in list)
-        {
-            if (go == null) continue;
-            RobotMechanisms r = go.GetComponentInParent<RobotMechanisms>();
-            if (r != null) return r;
-        }
-        return null;
+        if (ridesAlong != null) candidates.AddRange(ridesAlong);
+        return MechanismBuildUtil.RegistryFromAny(candidates);
     }
 
     private static int CountNonNull(List<GameObject> list)
@@ -683,7 +656,7 @@ public static class CascadeSetup
         string driverId = UrdfPostProcessor.Slugify(DriverName);
         UrdfPostProcessor.RemoveMechanism(registry, driverId, useUndo);
         MechanismBuildUtil.ClearMechanismBindings(registry.robotId, driverId);
-        Transform driver = FindChild(registry.transform, DriverName);
+        Transform driver = MechanismBuildUtil.FindChild(registry.transform, DriverName);
         if (driver != null) MechanismBuildUtil.DestroyGo(driver, useUndo);
 
         // 4) The controller and the record itself.
@@ -785,7 +758,7 @@ public static class CascadeSetup
     private static GameObject BuildDriver(Transform chassis, Options o, bool useUndo,
         out ArticulationBody body)
     {
-        Transform existing = FindChild(chassis, DriverName);
+        Transform existing = MechanismBuildUtil.FindChild(chassis, DriverName);
         GameObject hub;
         if (existing != null) hub = existing.gameObject;
         else
@@ -1011,12 +984,5 @@ public static class CascadeSetup
             if (Enum.TryParse(a.button, out ControllerButton button))
                 ControllerMapSettings.AddAssignment(map, button, a.mechanismId, a.mode);
         ControllerMapSettings.Save(robotId, map);
-    }
-
-    private static Transform FindChild(Transform root, string name)
-    {
-        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
-            if (t.name == name) return t;
-        return null;
     }
 }

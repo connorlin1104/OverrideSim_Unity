@@ -12,7 +12,6 @@ using UnityEditor.SceneManagement;
 // tuning in the Inspector survives re-runs. Batch: -executeMethod FixGoalMagnets.RunBatch.
 public static class FixGoalMagnets
 {
-    private const string ScenePath = "Assets/Scenes/SampleScene.unity";
     private const string AnchorName = "GoalStackAnchor";
     private const string FloorName = "GoalFloor_Base";
 
@@ -35,13 +34,13 @@ public static class FixGoalMagnets
     // Batch entry point for -executeMethod: throws on failure (nonzero exit).
     public static void RunBatch()
     {
-        var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        var scene = EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
         int touched = Apply(useUndo: false);
         if (touched == 0)
             throw new System.InvalidOperationException(
-                $"Add Goal Stack Magnets: no goals with a {FloorName} child found in {ScenePath}.");
+                $"Add Goal Stack Magnets: no goals with a {FloorName} child found in {RoboSimPaths.MainScene}.");
         if (!EditorSceneManager.SaveScene(scene))
-            throw new System.InvalidOperationException($"Add Goal Stack Magnets: failed to save {ScenePath}.");
+            throw new System.InvalidOperationException($"Add Goal Stack Magnets: failed to save {RoboSimPaths.MainScene}.");
         Debug.Log($"Add Goal Stack Magnets: magnets ensured on {touched} goal(s); scene saved.");
     }
 

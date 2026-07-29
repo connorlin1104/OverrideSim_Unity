@@ -445,18 +445,7 @@ public class GoalStackMagnet : MonoBehaviour
     // local bounds, mapped through the mesh child's rotation. Same measurement IntakePull's
     // auto-upright uses — per instance, because the field's pins share one mesh baked at many
     // different child rotations. Zero if there's no mesh to measure (then only position is held).
-    private static Vector3 ComputeUpAxis(Rigidbody rb)
-    {
-        MeshFilter mf = rb.GetComponentInChildren<MeshFilter>();
-        Mesh mesh = mf != null ? mf.sharedMesh : null;
-        if (mesh == null) return Vector3.zero;
-
-        Vector3 s = mesh.bounds.size;
-        Vector3 axisMeshLocal = (s.x >= s.y && s.x >= s.z) ? Vector3.right
-                              : (s.y >= s.z) ? Vector3.up : Vector3.forward;
-        Vector3 world = mf.transform.rotation * axisMeshLocal;
-        return (Quaternion.Inverse(rb.rotation) * world).normalized;
-    }
+    private static Vector3 ComputeUpAxis(Rigidbody rb) => PieceGeometry.MeasureUpAxis(rb);
 
     // --- Rigid seated hold: seated pieces in the same stack don't collide with each other ---
 

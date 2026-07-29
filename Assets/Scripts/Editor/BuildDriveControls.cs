@@ -30,8 +30,6 @@ using Scene = UnityEngine.SceneManagement.Scene;
 // Usage: Tools > RoboSim > Scenes > Build Drive Controls. Batch: -executeMethod BuildDriveControls.RunBatch.
 public static class BuildDriveControls
 {
-    private const string ScenePath = "Assets/Scenes/SampleScene.unity";
-
     // Cluster + control-path layout, all at the 1920x1080 canvas reference resolution.
     private const string ShoulderLeftName = "ShoulderButtonsLeft";
     private const string ShoulderRightName = "ShoulderButtonsRight";
@@ -105,11 +103,11 @@ public static class BuildDriveControls
 
     private static void Build()
     {
-        Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        Scene scene = EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
         GameObject canvasGo = FindRootCanvas(scene);
         if (canvasGo == null)
             throw new System.InvalidOperationException(
-                $"Build Drive Controls: no root 'Canvas' object in {ScenePath}.");
+                $"Build Drive Controls: no root 'Canvas' object in {RoboSimPaths.MainScene}.");
 
         EnsureTopBarButtons(canvasGo);
         EnsureMatchLoadButton(canvasGo);
@@ -121,10 +119,10 @@ public static class BuildDriveControls
 
         EditorSceneManager.MarkSceneDirty(scene);
         if (!EditorSceneManager.SaveScene(scene))
-            throw new System.InvalidOperationException($"Build Drive Controls: failed to save {ScenePath}.");
+            throw new System.InvalidOperationException($"Build Drive Controls: failed to save {RoboSimPaths.MainScene}.");
 
         Debug.Log("Build Drive Controls: Reset | Home | Camera row at top center, L1/L2 + R1/R2 shoulders, " +
-                  $"arrow + XBAY diamonds updated in place in {ScenePath}; controls appearance {appearanceStatus}; " +
+                  $"arrow + XBAY diamonds updated in place in {RoboSimPaths.MainScene}; controls appearance {appearanceStatus}; " +
                   $"{ChaseCameraName} + camera view button wired. Scene saved.");
     }
 
@@ -203,7 +201,7 @@ public static class BuildDriveControls
     {
         freeCamera = FindFreeCamera(scene);
         if (freeCamera == null)
-            Debug.LogWarning($"Build Drive Controls: no camera with a TouchCameraController in {ScenePath} — " +
+            Debug.LogWarning($"Build Drive Controls: no camera with a TouchCameraController in {RoboSimPaths.MainScene} — " +
                              "the camera view button will be created but left unwired.");
 
         GameObject go = FindRootObject(scene, ChaseCameraName);

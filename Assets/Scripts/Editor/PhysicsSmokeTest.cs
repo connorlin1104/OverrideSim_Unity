@@ -46,11 +46,6 @@ public class PhysicsSmokeTest
     // point is treated as "holding the wheels off the ground" (units; ~5 mm at the 10x world scale).
     private const float GroundClearanceTolerance = 0.05f;
 
-    // The field scene the robot actually runs in. Validation spawns the robot here when the editor
-    // scene has none — the field scene holds no robot in edit mode (RobotSpawner instantiates one at
-    // runtime), which is why validating it used to (misleadingly) report the drivetrain as unrigged.
-    private const string FieldScenePath = "Assets/Scenes/SampleScene.unity";
-
     // Field interior point (above the floor, clear of the walls) used as the validation spawn, so the
     // robot settles/drives/turns on open floor regardless of its game spawn point or off-center pivot.
     private static readonly Vector3 ValidationSpawnPoint = new Vector3(0f, 0.974f, 6f);
@@ -125,10 +120,12 @@ public class PhysicsSmokeTest
                 $"'{prefab.name}' has no ArticulationBody — it isn't a set-up robot. Run Set Up Imported Robot first.");
 
         // The tests need the field's floor + walls, so validate in the field scene; open it if the
-        // active scene isn't it (the menu already offered to save the current scene).
+        // active scene isn't it (the menu already offered to save the current scene). The field
+        // scene holds no robot in edit mode (RobotSpawner instantiates one at runtime), which is
+        // why validating it used to (misleadingly) report the drivetrain as unrigged.
         Scene field = SceneManager.GetActiveScene();
-        if (field.path != FieldScenePath)
-            field = EditorSceneManager.OpenScene(FieldScenePath, OpenSceneMode.Single);
+        if (field.path != RoboSimPaths.MainScene)
+            field = EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
 
         GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, field);
         if (instance == null)
@@ -137,7 +134,7 @@ public class PhysicsSmokeTest
         ArticulationBody root = PlaceForValidation(instance);
         if (root == null)
             throw new System.InvalidOperationException($"Spawned '{prefab.name}' has no ArticulationBody to validate.");
-        ValidateBody(root); // reloads FieldScenePath from disk in its finally -> discards `instance`
+        ValidateBody(root); // reloads the field scene from disk in its finally -> discards `instance`
     }
 
     // Places a freshly-instantiated robot over the middle of the field, clear of the walls, and lets

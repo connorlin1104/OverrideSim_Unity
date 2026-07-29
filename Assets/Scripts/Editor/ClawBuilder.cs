@@ -975,7 +975,7 @@ public class ClawBuilderWindow : EditorWindow
         flipStrokeMm = rig.flipStrokeMm;
         flipRecoil = rig.flipRecoil;
         flipCylinderReverse = rig.flipCylinderReverse;
-        clampSections = CloneSections(rig.clampSections);
+        clampSections = ClawSetup.CloneSections(rig.clampSections);
         clampModelled = rig.clampModelled;
         clampStartClosed = rig.clampStartClosed;
         clampTrimDeg = rig.clampTrimDeg;
@@ -1007,28 +1007,6 @@ public class ClawBuilderWindow : EditorWindow
         yawWristPivot = rig.yawWristPivot;
         showLevel = armDriver != null || CountNonNull(levelParts) > 0;   // reveal it if this claw uses it
         autoAssignButtons = rig.autoAssignButtons;
-    }
-
-    // Deep copy, so editing the form doesn't mutate the built rig before the user hits Build.
-    private static List<ClawRig.ClampSection> CloneSections(List<ClawRig.ClampSection> source)
-    {
-        var copy = new List<ClawRig.ClampSection>();
-        if (source == null) return copy;
-        foreach (ClawRig.ClampSection s in source)
-        {
-            if (s == null) continue;
-            copy.Add(new ClawRig.ClampSection
-            {
-                parts = new List<GameObject>(s.parts),
-                closeAngleDeg = s.closeAngleDeg,
-                pivot = s.pivot,
-                axisPreset = s.axisPreset,
-                customAxis = s.customAxis,
-                mirror = s.mirror,
-                builtLink = s.builtLink,
-            });
-        }
-        return copy;
     }
 
     private void ClearForm()
@@ -1611,7 +1589,7 @@ public static class ClawSetup
         rig.flipCylinderReverse = o.flipCylinderReverse;
         // Copy, don't alias: the window keeps editing its own section objects after Build, and the
         // record must stay a snapshot of what was actually built.
-        rig.clampSections = CopySections(sections);
+        rig.clampSections = CloneSections(sections);
         rig.clampModelled = o.clampModelled;
         rig.clampStartClosed = o.clampStartClosed;
         rig.clampTrimDeg = o.clampTrimDeg;
@@ -1883,7 +1861,7 @@ public static class ClawSetup
 
         // The caller passes the seed through the SAME helper the build uses, so a preview can't show a
         // pivot the build wouldn't create — which would be worse than having no preview at all.
-        existingPivot = assignedPivot != null ? assignedPivot : FindChild(link.transform, markerName);
+        existingPivot = assignedPivot != null ? assignedPivot : MechanismBuildUtil.FindChild(link.transform, markerName);
         pivotWorld = existingPivot != null ? existingPivot.position : seedPoint;
 
         ResolveAxisAnchor(link, existingPivot, preset, customAxis, isFlip, out Vector3 axisLocal, out _);
@@ -2081,7 +2059,7 @@ public static class ClawSetup
             AddMechanismJoint.JointType.Revolute, axis, anchor, -sweep, sweep,
             new AddMechanismJoint.Options
             {
-                alsoMove = LevelExtraParts(o.levelParts, levelLink, flipRoot, sections),
+                alsoMove = ExtraParts(o.levelParts, levelLink, sections, excludeRoot: flipRoot),
             }, registry, useUndo);
 
         // Passive linkage: strip any registration/actuator the link might carry from a prior life, then
@@ -2258,33 +2236,6 @@ public static class ClawSetup
         return has ? all.center : MechanismBuildUtil.BoundsCenterOrOrigin(levelLink);
     }
 
-    // The mount's extra parts to weld in: everything listed except the driven mount link, and except
-    // anything tangled up with the claw that hangs off it (the flip link or a jaw), which has to stay
-    // free to become its OWN joint rather than be swallowed into the mount.
-    private static GameObject[] LevelExtraParts(List<GameObject> list, GameObject levelLink,
-        GameObject flipRoot, List<ClawRig.ClampSection> sections)
-    {
-        var extras = new List<GameObject>();
-        if (list == null) return extras.ToArray();
-        foreach (GameObject go in list)
-        {
-            if (go == null || go == levelLink) continue;
-            if (flipRoot != null && (go == flipRoot || go.transform.IsChildOf(flipRoot.transform) ||
-                                     flipRoot.transform.IsChildOf(go.transform)))
-                continue;
-            bool tangled = false;
-            if (sections != null)
-                foreach (ClawRig.ClampSection s in sections)
-                {
-                    Transform jaw = s.parts[0].transform;
-                    if (go == s.parts[0] || go.transform.IsChildOf(jaw) || jaw.IsChildOf(go.transform))
-                    { tangled = true; break; }
-                }
-            if (!tangled) extras.Add(go);
-        }
-        return extras.ToArray();
-    }
-
     internal const string PreviewLevelPivotName = LevelPivotName;
 
     // Read-only twin of the level-keeper's pivot+axis resolution, for the Scene preview: same answer, but
@@ -2306,7 +2257,7 @@ public static class ClawSetup
             ChainBuilder.TryAxleWorldAxis(levelAxle, out axleAxis, out axleCenter);
 
         // An explicit marker wins (the user dragged it); otherwise the axle centre, else the claw's middle.
-        existingPivot = assignedPivot != null ? assignedPivot : FindChild(levelLink.transform, LevelPivotName);
+        existingPivot = assignedPivot != null ? assignedPivot : MechanismBuildUtil.FindChild(levelLink.transform, LevelPivotName);
         pivotWorld = existingPivot != null ? existingPivot.position
             : haveAxle ? axleCenter
             : LevelPivotSeed(levelLink, flipRoot, sections);
@@ -2451,7 +2402,7 @@ public static class ClawSetup
     {
         if (assigned != null) return assigned;
 
-        Transform existing = FindChild(link.transform, markerName);
+        Transform existing = MechanismBuildUtil.FindChild(link.transform, markerName);
         if (existing != null)
         {
             // On a REBUILD the marker from the last build is still here. For a fine-tune marker (flip/clamp)
@@ -2579,7 +2530,7 @@ public static class ClawSetup
             Vector3 lossy = mouth.transform.lossyScale;
             Vector3 size = Vector3.Max(jaws.size * 0.6f, Vector3.one * 0.2f);
             box.center = Vector3.zero;
-            box.size = new Vector3(size.x / Nz(lossy.x), size.y / Nz(lossy.y), size.z / Nz(lossy.z));
+            box.size = new Vector3(size.x / MechanismBuildUtil.Nz(lossy.x), size.y / MechanismBuildUtil.Nz(lossy.y), size.z / MechanismBuildUtil.Nz(lossy.z));
         }
 
         // An explicitly assigned hold point wins — that's how you put the carry position on a part
@@ -2612,7 +2563,7 @@ public static class ClawSetup
     private static GameObject EnsureHelper(RobotMechanisms registry, Transform parent, string name,
         Vector3 seedPos, bool useUndo)
     {
-        Transform existing = FindChild(registry.transform, name);
+        Transform existing = MechanismBuildUtil.FindChild(registry.transform, name);
         GameObject go;
         if (existing == null)
         {
@@ -2697,14 +2648,19 @@ public static class ClawSetup
     // with a clamp half's own driven link. A jaw becomes its OWN child joint, so it must not be welded
     // into the flip link; and a group CONTAINING a jaw can't be welded either, because merging a part
     // that already holds an ArticulationBody is rejected outright (it would swallow a live joint).
+    // `excludeRoot` (the level-keeper pass sets it to the flip link) additionally drops anything
+    // related to that subtree, for the same reason.
     private static GameObject[] ExtraParts(List<GameObject> list, GameObject link,
-        List<ClawRig.ClampSection> excludeSectionLinks)
+        List<ClawRig.ClampSection> excludeSectionLinks, GameObject excludeRoot = null)
     {
         var extras = new List<GameObject>();
         if (list == null) return extras.ToArray();
         foreach (GameObject go in list)
         {
             if (go == null || go == link) continue;
+            if (excludeRoot != null && (go == excludeRoot || go.transform.IsChildOf(excludeRoot.transform) ||
+                                        excludeRoot.transform.IsChildOf(go.transform)))
+                continue;
             bool entangled = false;
             if (excludeSectionLinks != null)
                 foreach (ClawRig.ClampSection s in excludeSectionLinks)
@@ -2737,10 +2693,15 @@ public static class ClawSetup
         return all.Length == 1 ? all[0] : null;
     }
 
-    private static List<ClawRig.ClampSection> CopySections(List<ClawRig.ClampSection> source)
+    // Deep copy, both ways across the form/rig boundary: editing the window's form must not
+    // mutate the built rig before the user hits Build, and the saved rig must not alias the form.
+    internal static List<ClawRig.ClampSection> CloneSections(List<ClawRig.ClampSection> source)
     {
         var copy = new List<ClawRig.ClampSection>();
+        if (source == null) return copy;
         foreach (ClawRig.ClampSection s in source)
+        {
+            if (s == null) continue;
             copy.Add(new ClawRig.ClampSection
             {
                 parts = new List<GameObject>(s.parts),
@@ -2751,6 +2712,7 @@ public static class ClawSetup
                 mirror = s.mirror,
                 builtLink = s.builtLink,
             });
+        }
         return copy;
     }
 
@@ -2760,16 +2722,6 @@ public static class ClawSetup
         foreach (GameObject go in list) if (go != null) return go;
         return null;
     }
-
-    private static Transform FindChild(Transform root, string name)
-    {
-        if (root == null) return null;
-        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
-            if (t.name == name) return t;
-        return null;
-    }
-
-    private static float Nz(float v) => Mathf.Abs(v) < 1e-4f ? 1f : v;
 
     private static string BuildReport(Options o, GameObject flipLink,
         List<ClawRig.ClampSection> sections, bool grabWired, string buttonNote,

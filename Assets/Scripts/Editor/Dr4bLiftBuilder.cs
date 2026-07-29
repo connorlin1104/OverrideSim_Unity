@@ -87,19 +87,19 @@ public class Dr4bLiftBuilderWindow : EditorWindow
 
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Movement (purely translational)", EditorStyles.boldLabel);
-        DrawGoList("First Stage movement", "Everything that moves — translates up + forward. Includes the driving sprockets (they just ride).", firstStageMove);
-        DrawGoList("Second Stage movement", "The subset that ALSO does the opposing/crane motion (added on top of the first).", secondStageMove);
-        DrawGoList("Scoring mechanism", "The scoring parts — ride the top (first + second stage), orientation kept. The held stack rides here.", scoring);
+        MechanismBuildUtil.DrawGoList("First Stage movement", "Everything that moves — translates up + forward. Includes the driving sprockets (they just ride).", firstStageMove);
+        MechanismBuildUtil.DrawGoList("Second Stage movement", "The subset that ALSO does the opposing/crane motion (added on top of the first).", secondStageMove);
+        MechanismBuildUtil.DrawGoList("Scoring mechanism", "The scoring parts — ride the top (first + second stage), orientation kept. The held stack rides here.", scoring);
 
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Pivots (2 each — left + right, same height)", EditorStyles.boldLabel);
-        DrawGoList("First-arm pivots (fixed)", "The 2 points where the first arms connect to the stationary channel. Fixed — the first arms rotate about the nearest one.", firstArmPivots);
-        DrawGoList("Second-arm pivots (rise)", "The 2 second sprockets. They rise with the first stage; the second arms rotate about the nearest one's height.", secondArmPivots);
+        MechanismBuildUtil.DrawGoList("First-arm pivots (fixed)", "The 2 points where the first arms connect to the stationary channel. Fixed — the first arms rotate about the nearest one.", firstArmPivots);
+        MechanismBuildUtil.DrawGoList("Second-arm pivots (rise)", "The 2 second sprockets. They rise with the first stage; the second arms rotate about the nearest one's height.", secondArmPivots);
 
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Arms (rotate; may include parts that follow them)", EditorStyles.boldLabel);
-        DrawGoList("First stage arms", "Scissor about the nearest first-arm pivot. Add anything that rotates with them.", firstArms);
-        DrawGoList("Second stage arms", "Counter-scissor about the nearest second sprocket. Add anything that rotates with them.", secondArms);
+        MechanismBuildUtil.DrawGoList("First stage arms", "Scissor about the nearest first-arm pivot. Add anything that rotates with them.", firstArms);
+        MechanismBuildUtil.DrawGoList("Second stage arms", "Counter-scissor about the nearest second sprocket. Add anything that rotates with them.", secondArms);
 
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Tuning", EditorStyles.boldLabel);
@@ -161,20 +161,6 @@ public class Dr4bLiftBuilderWindow : EditorWindow
         liftDisplayName = liftDisplayName,
     };
 
-    private void DrawGoList(string label, string tip, List<GameObject> list)
-    {
-        EditorGUILayout.LabelField(new GUIContent(label, tip), EditorStyles.miniBoldLabel);
-        for (int i = 0; i < list.Count; i++)
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                list[i] = (GameObject)EditorGUILayout.ObjectField(list[i], typeof(GameObject), true);
-                if (GUILayout.Button("X", GUILayout.Width(24))) { list.RemoveAt(i); i--; }
-            }
-        }
-        if (GUILayout.Button("Add", GUILayout.Width(70))) list.Add(null);
-    }
-
     private void ImportExisting()
     {
         RobotMechanisms reg = ResolveRegistry();
@@ -192,15 +178,10 @@ public class Dr4bLiftBuilderWindow : EditorWindow
 
     private RobotMechanisms ResolveRegistry()
     {
+        var candidates = new List<GameObject>();
         foreach (var list in new[] { firstStageMove, scoring, secondArmPivots, firstArms, secondArms, firstArmPivots })
-            foreach (GameObject g in list)
-                if (g != null) { RobotMechanisms r = g.GetComponentInParent<RobotMechanisms>(); if (r != null) return r; }
-        if (Selection.activeGameObject != null)
-        {
-            RobotMechanisms r = Selection.activeGameObject.GetComponentInParent<RobotMechanisms>();
-            if (r != null) return r;
-        }
-        return null;
+            candidates.AddRange(list);
+        return MechanismBuildUtil.RegistryFromAny(candidates);
     }
 
     // ---- Auto-fill roles by node name ------------------------------------------------------------
@@ -643,7 +624,7 @@ public static class Dr4bLiftSetup
 
     private static int DestroyNamedChild(Transform chassis, string name, bool useUndo)
     {
-        Transform t = FindChild(chassis, name);
+        Transform t = MechanismBuildUtil.FindChild(chassis, name);
         if (t == null) return 0;
         if (useUndo) Undo.DestroyObjectImmediate(t.gameObject);
         else UnityEngine.Object.DestroyImmediate(t.gameObject);
@@ -653,7 +634,7 @@ public static class Dr4bLiftSetup
     private static GameObject EnsureHub(Transform chassis, Vector3 lateralWorld, float sweepDeg, bool reverse,
         float holdFriction, bool useUndo, out string hubId, out ArticulationBody hubBody)
     {
-        Transform existing = FindChild(chassis, HubName);
+        Transform existing = MechanismBuildUtil.FindChild(chassis, HubName);
         GameObject hub;
         if (existing != null) hub = existing.gameObject;
         else
@@ -728,7 +709,7 @@ public static class Dr4bLiftSetup
         pull.scoreAction = UrdfPostProcessor.LoadActionReference("A");
         pull.showRuntimeMarkers = false;
 
-        Transform existing = FindChild(chassis, "Dr4bCarriage");
+        Transform existing = MechanismBuildUtil.FindChild(chassis, "Dr4bCarriage");
         GameObject carriage;
         if (existing != null) carriage = existing.gameObject;
         else
@@ -793,13 +774,6 @@ public static class Dr4bLiftSetup
             if (d < bestSq) { bestSq = d; best = c.transform; }
         }
         return best;
-    }
-
-    private static Transform FindChild(Transform root, string name)
-    {
-        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
-            if (t.name == name) return t;
-        return null;
     }
 
     private static Vector3 DrivetrainLateralWorld(Transform chassis, RobotMechanisms registry)

@@ -26,7 +26,6 @@ using UnityEngine;
 public static class CascadeBuilderValidation
 {
     private const string TestRobotId = "__cascade_validation__";
-    private const string CatalogPath = "Assets/Settings/RobotModelCatalog.asset";
     private const float ChannelLength = 4f;
     private const float OverlapHoles = 2f;
     private const float RaiseSeconds = 0.5f;   // short, so a test run is a second of simulation
@@ -40,31 +39,10 @@ public static class CascadeBuilderValidation
     private static void RunInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
-        try
-        {
-            EditorUtility.DisplayDialog("Validate Build Cascade", Run(), "OK");
-        }
-        catch (Exception e)
-        {
-            EditorUtility.DisplayDialog("Validate Build Cascade", "FAILED\n\n" + e.Message, "OK");
-            Debug.LogException(e);
-        }
+        ValidationUtil.RunInteractive("Validate Build Cascade", Run);
     }
 
-    public static void RunBatchValidate()
-    {
-        try
-        {
-            Debug.Log(Run());
-        }
-        catch (Exception e)
-        {
-            Debug.LogError("Validate Build Cascade FAILED: " + e.Message);
-            EditorApplication.Exit(1);
-            return;
-        }
-        EditorApplication.Exit(0);
-    }
+    public static void RunBatchValidate() => ValidationUtil.RunBatch("Validate Build Cascade", Run);
 
     private static string Run()
     {
@@ -112,42 +90,42 @@ public static class CascadeBuilderValidation
         CascadeSetup.Build(f.Options(), useUndo: false);
 
         CascadeRig rig = f.registry.GetComponent<CascadeRig>();
-        Assert(rig != null, "the build should leave a CascadeRig so the lift can be re-edited");
-        Assert(rig.bars.Count == 3, $"all three bars should have been built (got {rig.bars.Count})");
+        ValidationUtil.Assert(rig != null, "the build should leave a CascadeRig so the lift can be re-edited");
+        ValidationUtil.Assert(rig.bars.Count == 3, $"all three bars should have been built (got {rig.bars.Count})");
 
         // --- Nesting: bar N is a CHILD of bar N-1, which is what makes the reaches add up ----------
         Transform expectedParent = f.registry.transform;
         for (int i = 0; i < rig.bars.Count; i++)
         {
             GameObject link = rig.bars[i].builtLink;
-            Assert(link != null, $"bar {i + 1} should have produced a link");
-            Assert(link.transform.parent == expectedParent,
+            ValidationUtil.Assert(link != null, $"bar {i + 1} should have produced a link");
+            ValidationUtil.Assert(link.transform.parent == expectedParent,
                 $"bar {i + 1}'s link should hang off {(i == 0 ? "the chassis" : $"bar {i}'s link")} — " +
                 "siblings would each slide their own distance instead of stacking up");
 
             ArticulationBody body = link.GetComponent<ArticulationBody>();
-            Assert(body != null && body.jointType == ArticulationJointType.PrismaticJoint,
+            ValidationUtil.Assert(body != null && body.jointType == ArticulationJointType.PrismaticJoint,
                 $"bar {i + 1} must be a prismatic (sliding) joint");
-            Assert(body.linearLockX == ArticulationDofLock.LimitedMotion,
+            ValidationUtil.Assert(body.linearLockX == ArticulationDofLock.LimitedMotion,
                 $"bar {i + 1} must be limited-motion, or it slides off the end of its channel");
-            AssertApprox(body.xDrive.lowerLimit, 0f, 1e-3f, $"bar {i + 1} should rest fully retracted");
-            AssertApprox(body.xDrive.upperLimit, ExpectedTravel, 1e-3f,
+            ValidationUtil.Near(body.xDrive.lowerLimit, 0f, 1e-3f, $"bar {i + 1} should rest fully retracted");
+            ValidationUtil.Near(body.xDrive.upperLimit, ExpectedTravel, 1e-3f,
                 $"bar {i + 1}'s travel should come from its channel");
-            Assert(body.xDrive.driveType == ArticulationDriveType.Target,
+            ValidationUtil.Assert(body.xDrive.driveType == ArticulationDriveType.Target,
                 $"bar {i + 1} needs a position drive baked at build time — edit-mode validation and " +
                 "the pre-settle never run Awake, so an unbaked stage behaves differently there");
 
-            Assert(link.GetComponent<IgnoreRobotSelfCollision>() != null,
+            ValidationUtil.Assert(link.GetComponent<IgnoreRobotSelfCollision>() != null,
                 $"bar {i + 1} needs IgnoreRobotSelfCollision — telescoping bars overlap by construction");
 
             // The rule a controller-driven link lives by: no actuator, no registry entry.
-            Assert(link.GetComponent<MotorActuator>() == null &&
+            ValidationUtil.Assert(link.GetComponent<MotorActuator>() == null &&
                    link.GetComponent<PneumaticActuator>() == null,
                 $"bar {i + 1} is driven by CascadeLift, so it must not also carry an actuator");
-            Assert(f.registry.Find(UrdfPostProcessor.Slugify(link.name)) == null,
+            ValidationUtil.Assert(f.registry.Find(UrdfPostProcessor.Slugify(link.name)) == null,
                 $"bar {i + 1} must not be registered — ButtonRouter would fight CascadeLift for its drive");
 
-            Assert(f.channels[i].transform.IsChildOf(link.transform) &&
+            ValidationUtil.Assert(f.channels[i].transform.IsChildOf(link.transform) &&
                    f.parts[i].transform.IsChildOf(link.transform),
                 $"bar {i + 1}'s parts and channel should have welded into its link");
             expectedParent = link.transform;
@@ -156,34 +134,34 @@ public static class CascadeBuilderValidation
         // --- The one thing on the buttons ----------------------------------------------------------
         string driverId = UrdfPostProcessor.Slugify(CascadeSetup.DriverName);
         RobotMechanisms.Mechanism mech = f.registry.Find(driverId);
-        Assert(mech != null, "the hidden driver should be the lift's registered mechanism");
-        Assert(mech.type == RobotMechanisms.TypeMotor,
+        ValidationUtil.Assert(mech != null, "the hidden driver should be the lift's registered mechanism");
+        ValidationUtil.Assert(mech.type == RobotMechanisms.TypeMotor,
             "the lift must register as a MOTOR — that's what gives the player the hold-forward/reverse " +
             "pair (and the 1-vs-2-button choice) for free");
-        Assert(mech.displayName == "Test Cascade",
+        ValidationUtil.Assert(mech.displayName == "Test Cascade",
             $"the config screen should show the name the form asked for (got '{mech.displayName}')");
 
         ButtonMap map = ControllerMapSettings.Load(TestRobotId);
-        Assert(FindAssignment(map, driverId) != null, "the lift should have been given a button");
+        ValidationUtil.Assert(FindAssignment(map, driverId) != null, "the lift should have been given a button");
         foreach (CascadeRig.Bar bar in rig.bars)
-            Assert(FindAssignment(map, UrdfPostProcessor.Slugify(bar.builtLink.name)) == null,
+            ValidationUtil.Assert(FindAssignment(map, UrdfPostProcessor.Slugify(bar.builtLink.name)) == null,
                 "a bar must never get a button of its own");
 
         // --- The carried arm ------------------------------------------------------------------------
         GameObject top = rig.bars[rig.bars.Count - 1].builtLink;
-        Assert(f.arm.transform.parent == top.transform,
+        ValidationUtil.Assert(f.arm.transform.parent == top.transform,
             "the carried arm should hang off the TOP bar, or it wouldn't ride the lift");
-        Assert(f.arm.GetComponent<ArticulationBody>() != null,
+        ValidationUtil.Assert(f.arm.GetComponent<ArticulationBody>() != null,
             "the carried arm keeps its own joint — the lift moves it, it isn't absorbed");
-        Assert(f.registry.Find(UrdfPostProcessor.Slugify(f.arm.name)) != null,
+        ValidationUtil.Assert(f.registry.Find(UrdfPostProcessor.Slugify(f.arm.name)) != null,
             "the carried arm's own mechanism must survive being picked up by the lift");
 
         CascadeLift lift = f.registry.GetComponent<CascadeLift>();
-        Assert(lift != null && lift.stages.Count == 3, "the controller should hold all three stages");
-        Assert(lift.driver != null && lift.driver.gameObject.name == CascadeSetup.DriverName,
+        ValidationUtil.Assert(lift != null && lift.stages.Count == 3, "the controller should hold all three stages");
+        ValidationUtil.Assert(lift.driver != null && lift.driver.gameObject.name == CascadeSetup.DriverName,
             "the controller should read its progress off the hidden driver");
         for (int i = 0; i < 3; i++)
-            Assert(lift.stages[i].body == rig.bars[i].builtLink.GetComponent<ArticulationBody>(),
+            ValidationUtil.Assert(lift.stages[i].body == rig.bars[i].builtLink.GetComponent<ArticulationBody>(),
                 "the controller's stages must be in bottom-to-top order — the sequence depends on it");
 
         return "Structure: PASSED — bars nested bottom-to-top as real prismatic joints, travel from " +
@@ -214,13 +192,13 @@ public static class CascadeBuilderValidation
         lift.ApplyStep();
         for (int i = 0; i < 10; i++) { Physics.Simulate(Step); lift.ApplyStep(); }
         float drift = Vector3.Distance(f.arm.transform.position, armRest);
-        Assert(drift < 0.05f,
+        ValidationUtil.Assert(drift < 0.05f,
             $"the carried arm moved {drift:F2} units just by being simulated — its joint is still " +
             "anchored to where the chassis used to hold it, so it snaps the moment physics runs");
 
         RunLift(lift, f.DriverMotor(), 1f, 150);
 
-        AssertApprox(lift.Progress, 1f, 0.02f, "holding the button should drive the lift fully out");
+        ValidationUtil.Near(lift.Progress, 1f, 0.02f, "holding the button should drive the lift fully out");
 
         // Bar N rides bars 1..N-1, so its rise is the RUNNING TOTAL. Three siblings would each rise
         // one travel and this is what would catch it.
@@ -228,19 +206,19 @@ public static class CascadeBuilderValidation
         {
             float expected = ExpectedTravel * (i + 1);
             float actual = rig.bars[i].builtLink.transform.position.y - restY[i];
-            AssertApprox(actual, expected, 0.15f,
+            ValidationUtil.Near(actual, expected, 0.15f,
                 $"bar {i + 1} should have risen the total of the {i + 1} bars below and including it " +
                 "— if every bar rises the same amount, they aren't nested");
         }
 
         float armRise = f.arm.transform.position.y - armRestY;
-        AssertApprox(armRise, ExpectedTravel * rig.bars.Count, 0.15f,
+        ValidationUtil.Near(armRise, ExpectedTravel * rig.bars.Count, 0.15f,
             "the carried arm rides the top bar, so it should reach the lift's full height");
 
         // And it comes back down.
         RunLift(lift, f.DriverMotor(), -1f, 200);
-        AssertApprox(lift.Progress, 0f, 0.02f, "the lift should come back down when reversed");
-        AssertApprox(f.arm.transform.position.y - armRestY, 0f, 0.15f,
+        ValidationUtil.Near(lift.Progress, 0f, 0.02f, "the lift should come back down when reversed");
+        ValidationUtil.Near(f.arm.transform.position.y - armRestY, 0f, 0.15f,
             "a fully retracted lift should put the arm back where it started");
 
         return "All at once: PASSED — every bar rose by the running total of the ones below it, the " +
@@ -265,17 +243,17 @@ public static class CascadeBuilderValidation
         // haven't started. (Held at a fixed driver angle rather than timed, so the reading is about
         // the sequencing and not about how fast the test happens to run.)
         float[] extension = ExtensionsAtProgress(lift, f, rig, 1f / 3f);
-        AssertApprox(extension[0], ExpectedTravel, 0.2f,
+        ValidationUtil.Near(extension[0], ExpectedTravel, 0.2f,
             "bottom-first: a third of the way in, bar 1 should be fully out");
-        AssertApprox(extension[1], 0f, 0.2f,
+        ValidationUtil.Near(extension[1], 0f, 0.2f,
             "bottom-first: bar 2 must not have started until bar 1 finished — that's the whole " +
             "difference from the all-at-once mode");
-        AssertApprox(extension[2], 0f, 0.2f, "bottom-first: bar 3 must not have started either");
+        ValidationUtil.Near(extension[2], 0f, 0.2f, "bottom-first: bar 3 must not have started either");
 
         // ...and by the end they're all out, whichever order they went in.
         float[] full = ExtensionsAtProgress(lift, f, rig, 1f);
         for (int i = 0; i < 3; i++)
-            AssertApprox(full[i], ExpectedTravel, 0.2f,
+            ValidationUtil.Near(full[i], ExpectedTravel, 0.2f,
                 $"bar {i + 1} should be fully out at the end of the press");
 
         // Descending is the mirror: the TOP bar goes first.
@@ -288,9 +266,9 @@ public static class CascadeBuilderValidation
         CascadeLift topLift = g.registry.GetComponent<CascadeLift>();
 
         float[] topFirst = ExtensionsAtProgress(topLift, g, topRig, 1f / 3f);
-        AssertApprox(topFirst[2], ExpectedTravel, 0.2f,
+        ValidationUtil.Near(topFirst[2], ExpectedTravel, 0.2f,
             "top-first: a third of the way in, the TOP bar should be the one that's out");
-        AssertApprox(topFirst[0], 0f, 0.2f,
+        ValidationUtil.Near(topFirst[0], 0f, 0.2f,
             "top-first: the bottom bar must go LAST — otherwise the order setting does nothing");
 
         return "One at a time: PASSED — bottom-first ran bar 1 out before bar 2 started, top-first " +
@@ -306,9 +284,9 @@ public static class CascadeBuilderValidation
         CascadeSetup.Build(f.Options(), useUndo: false);
         CascadeRig rig = f.registry.GetComponent<CascadeRig>();
 
-        AssertApprox(rig.bars[0].builtTravel, ExpectedTravel, 1e-3f,
+        ValidationUtil.Near(rig.bars[0].builtTravel, ExpectedTravel, 1e-3f,
             "bar 1's travel should be its channel less the overlap that has to stay engaged");
-        AssertApprox(rig.bars[1].builtTravel, ExpectedTravel, 1e-3f,
+        ValidationUtil.Near(rig.bars[1].builtTravel, ExpectedTravel, 1e-3f,
             "bar 2 is longer, but it can only run out as far as the bar it slides in allows — using " +
             "its own length floats it off the end of bar 1's channel");
 
@@ -317,8 +295,8 @@ public static class CascadeBuilderValidation
         overridden.bars[1].travelOverride = 1.25f;
         CascadeSetup.Build(overridden, useUndo: false);
         rig = f.registry.GetComponent<CascadeRig>();
-        AssertApprox(rig.bars[1].builtTravel, 1.25f, 1e-3f, "a travel override should win outright");
-        AssertApprox(rig.bars[1].builtLink.GetComponent<ArticulationBody>().xDrive.upperLimit, 1.25f,
+        ValidationUtil.Near(rig.bars[1].builtTravel, 1.25f, 1e-3f, "a travel override should win outright");
+        ValidationUtil.Near(rig.bars[1].builtLink.GetComponent<ArticulationBody>().xDrive.upperLimit, 1.25f,
             1e-3f, "the override has to reach the JOINT, not just the record");
         overridden.bars[1].travelOverride = 0f;   // the fixture's bars are shared with later builds
 
@@ -326,7 +304,7 @@ public static class CascadeBuilderValidation
         // silently producing a lift with nowhere to go.
         CascadeSetup.Options greedy = f.Options();
         greedy.overlapHoles = 999f;
-        AssertThrows(() => CascadeSetup.Build(greedy, useUndo: false),
+        ValidationUtil.AssertThrows(() => CascadeSetup.Build(greedy, useUndo: false),
             "an overlap that eats the whole channel");
 
         return "Travel: PASSED — measured off the channel less the overlap, capped by the bar below, " +
@@ -351,14 +329,14 @@ public static class CascadeBuilderValidation
         CascadeSetup.Build(fewer, useUndo: false);
 
         CascadeRig rig = f.registry.GetComponent<CascadeRig>();
-        Assert(rig.bars.Count == 2, "the rebuild should have kept only the two listed bars");
-        Assert(droppedChannel.transform.parent == homes[2],
+        ValidationUtil.Assert(rig.bars.Count == 2, "the rebuild should have kept only the two listed bars");
+        ValidationUtil.Assert(droppedChannel.transform.parent == homes[2],
             "a bar dropped from the form must be put back where it came from, or it keeps riding a " +
             "stage that no longer exists in the record");
         int stages = 0;
         foreach (Transform t in f.registry.GetComponentsInChildren<Transform>(true))
             if (t.name.StartsWith(CascadeSetup.StagePrefix, StringComparison.Ordinal)) stages++;
-        Assert(stages == 2, $"a rebuild must leave exactly one link per listed bar (found {stages})");
+        ValidationUtil.Assert(stages == 2, $"a rebuild must leave exactly one link per listed bar (found {stages})");
 
         // Delete: everything home, nothing left behind.
         CascadeSetup.Strip(f.registry, rig, useUndo: false);
@@ -368,31 +346,31 @@ public static class CascadeBuilderValidation
             // Checked before the parent, because the way this goes wrong is fatal rather than untidy:
             // a part still sitting inside a stage link when that link is destroyed is destroyed WITH
             // it, so "Delete didn't restore it" and "Delete ate half the robot" are the same bug.
-            Assert(f.channels[i] != null,
+            ValidationUtil.Assert(f.channels[i] != null,
                 $"Delete destroyed bar {i + 1}'s channel — its parts have to come out of the stage " +
                 "link before the link is removed");
-            Assert(f.channels[i].transform.parent == homes[i],
+            ValidationUtil.Assert(f.channels[i].transform.parent == homes[i],
                 $"Delete must put bar {i + 1}'s channel back in the group it came from");
         }
-        Assert(f.arm.transform.parent == armHome,
+        ValidationUtil.Assert(f.arm.transform.parent == armHome,
             "Delete must put the carried arm back on the chassis");
-        Assert(f.arm.GetComponent<ArticulationBody>() != null &&
+        ValidationUtil.Assert(f.arm.GetComponent<ArticulationBody>() != null &&
                f.registry.Find(UrdfPostProcessor.Slugify(f.arm.name)) != null,
             "Delete must leave the carried arm's own joint and mechanism alone — the lift borrowed it, " +
             "it didn't own it");
-        Assert(f.registry.GetComponent<CascadeLift>() == null &&
+        ValidationUtil.Assert(f.registry.GetComponent<CascadeLift>() == null &&
                f.registry.GetComponent<CascadeRig>() == null,
             "Delete must remove the controller and its record");
-        Assert(f.registry.Find(UrdfPostProcessor.Slugify(CascadeSetup.DriverName)) == null,
+        ValidationUtil.Assert(f.registry.Find(UrdfPostProcessor.Slugify(CascadeSetup.DriverName)) == null,
             "Delete must remove the lift's mechanism");
         foreach (Transform t in f.registry.GetComponentsInChildren<Transform>(true))
         {
-            Assert(!t.name.StartsWith(CascadeSetup.StagePrefix, StringComparison.Ordinal),
+            ValidationUtil.Assert(!t.name.StartsWith(CascadeSetup.StagePrefix, StringComparison.Ordinal),
                 $"Delete left the stage link '{t.name}' behind");
-            Assert(t.name != CascadeSetup.DriverName, "Delete left the hidden driver behind");
+            ValidationUtil.Assert(t.name != CascadeSetup.DriverName, "Delete left the hidden driver behind");
         }
         ButtonMap map = ControllerMapSettings.Load(TestRobotId);
-        Assert(FindAssignment(map, UrdfPostProcessor.Slugify(CascadeSetup.DriverName)) == null,
+        ValidationUtil.Assert(FindAssignment(map, UrdfPostProcessor.Slugify(CascadeSetup.DriverName)) == null,
             "Delete must release the button the lift held");
 
         // And the arm, back on the chassis, still doesn't snap when physics runs.
@@ -401,7 +379,7 @@ public static class CascadeBuilderValidation
         Vector3 armAt = f.arm.transform.position;
         for (int i = 0; i < 10; i++) Physics.Simulate(Step);
         float drift = Vector3.Distance(f.arm.transform.position, armAt);
-        Assert(drift < 0.05f,
+        ValidationUtil.Assert(drift < 0.05f,
             $"the arm moved {drift:F2} units after Delete — putting it back on the chassis has to " +
             "re-derive its parent anchor too, or removing the lift throws the claw across the field");
 
@@ -416,12 +394,12 @@ public static class CascadeBuilderValidation
 
         CascadeSetup.Options empty = f.Options();
         empty.bars = new List<CascadeRig.Bar>();
-        AssertThrows(() => CascadeSetup.Build(empty, useUndo: false), "a cascade with no bars");
+        ValidationUtil.AssertThrows(() => CascadeSetup.Build(empty, useUndo: false), "a cascade with no bars");
 
         // The same part on two bars can only hinge once, and which bar wins would be silent.
         CascadeSetup.Options twice = f.Options();
         twice.bars[1].parts.Add(f.parts[0]);
-        AssertThrows(() => CascadeSetup.Build(twice, useUndo: false), "one part listed on two bars");
+        ValidationUtil.AssertThrows(() => CascadeSetup.Build(twice, useUndo: false), "one part listed on two bars");
         twice.bars[1].parts.Remove(f.parts[0]);
 
         // A group that already contains another bar's parts would be welded into one link and then
@@ -431,7 +409,7 @@ public static class CascadeBuilderValidation
         CascadeSetup.Options nested = f.Options();
         GameObject otherGroup = f.channels[1].transform.parent.gameObject;
         nested.bars[0].parts.Add(otherGroup);
-        AssertThrows(() => CascadeSetup.Build(nested, useUndo: false),
+        ValidationUtil.AssertThrows(() => CascadeSetup.Build(nested, useUndo: false),
             "a bar listing a group that contains another bar's parts");
         nested.bars[0].parts.Remove(otherGroup);
 
@@ -439,12 +417,12 @@ public static class CascadeBuilderValidation
         CascadeSetup.Options unmeasurable = f.Options();
         List<GameObject> channels = unmeasurable.bars[1].channels;
         unmeasurable.bars[1].channels = new List<GameObject>();
-        AssertThrows(() => CascadeSetup.Build(unmeasurable, useUndo: false),
+        ValidationUtil.AssertThrows(() => CascadeSetup.Build(unmeasurable, useUndo: false),
             "a bar with no channel and no travel override");
         unmeasurable.bars[1].channels = channels;
 
         // Nothing above should have left a half-built lift behind.
-        Assert(f.registry.GetComponent<CascadeRig>() == null &&
+        ValidationUtil.Assert(f.registry.GetComponent<CascadeRig>() == null &&
                f.registry.GetComponent<CascadeLift>() == null,
             "a refused build must not leave any wiring on the robot — everything is validated before " +
             "anything moves");
@@ -540,7 +518,7 @@ public static class CascadeBuilderValidation
         f.registry.robotId = TestRobotId;
         ArticulationBody chassis = root.AddComponent<ArticulationBody>();
         chassis.immovable = true;
-        MakeBox(root.transform, "ChassisMesh", Vector3.zero, new Vector3(6f, 1f, 6f));
+        ValidationUtil.MakeBox(root.transform, "ChassisMesh", Vector3.zero, new Vector3(6f, 1f, 6f));
 
         RobotMotorController mc = root.AddComponent<RobotMotorController>();
         mc.leftWheels = new[] { MakeWheel(root.transform, "WheelL", new Vector3(0f, 0f, -3f)) };
@@ -554,9 +532,9 @@ public static class CascadeBuilderValidation
 
             float length = longSecondChannel && i == 1 ? ChannelLength * 1.5f : ChannelLength;
             float z = i * 2f;   // side by side, not nested — see the note above
-            f.channels[i] = MakeBox(group.transform, $"{i + 1}1 - 2x C-Chan", new Vector3(0f, 3f, z),
+            f.channels[i] = ValidationUtil.MakeBox(group.transform, $"{i + 1}1 - 2x C-Chan", new Vector3(0f, 3f, z),
                 new Vector3(0.4f, length, 0.4f));
-            f.parts[i] = MakeBox(group.transform, $"Bar{i + 1} Motor", new Vector3(0.6f, 3f, z),
+            f.parts[i] = ValidationUtil.MakeBox(group.transform, $"Bar{i + 1} Motor", new Vector3(0.6f, 3f, z),
                 new Vector3(0.5f, 0.5f, 0.5f));
 
             f.bars.Add(new CascadeRig.Bar
@@ -568,24 +546,14 @@ public static class CascadeBuilderValidation
 
         // The carried arm: a real jointed link, the way Build Chain leaves one, so the reparent path
         // is exercised against an actual articulation rather than a plain mesh.
-        f.arm = MakeBox(root.transform, "ClawArm", new Vector3(2f, 6f, 0f), new Vector3(2f, 0.4f, 0.4f));
+        f.arm = ValidationUtil.MakeBox(root.transform, "ClawArm", new Vector3(2f, 6f, 0f), new Vector3(2f, 0.4f, 0.4f));
         AddMechanismJoint.Apply(f.arm, AddMechanismJoint.JointType.Revolute, Vector3.forward,
             Vector3.zero, -90f, 90f, useUndo: false);
         return f;
     }
 
     private static ArticulationBody MakeWheel(Transform parent, string name, Vector3 position)
-        => MakeBox(parent, name, position, new Vector3(1f, 1f, 0.4f)).AddComponent<ArticulationBody>();
-
-    private static GameObject MakeBox(Transform parent, string name, Vector3 position, Vector3 size)
-    {
-        GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        go.name = name;
-        if (parent != null) go.transform.SetParent(parent, false);
-        go.transform.position = position;
-        go.transform.localScale = size;
-        return go;
-    }
+        => ValidationUtil.MakeBox(parent, name, position, new Vector3(1f, 1f, 0.4f)).AddComponent<ArticulationBody>();
 
     // --- Small helpers ---------------------------------------------------------------------------
 
@@ -599,7 +567,7 @@ public static class CascadeBuilderValidation
 
     private static bool HasCatalogEntry(string id)
     {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         return catalog != null && catalog.models != null &&
                catalog.models.Exists(e => e != null && e.id == id);
     }
@@ -608,34 +576,10 @@ public static class CascadeBuilderValidation
     // validation run leaves no trace in a committed asset.
     private static void RemoveCatalogEntry(string id)
     {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         if (catalog == null || catalog.models == null) return;
         if (catalog.models.RemoveAll(e => e != null && e.id == id) == 0) return;
         EditorUtility.SetDirty(catalog);
         AssetDatabase.SaveAssets();
-    }
-
-    private static void Assert(bool condition, string why)
-    {
-        if (!condition) throw new InvalidOperationException(why);
-    }
-
-    private static void AssertApprox(float actual, float expected, float tolerance, string why)
-    {
-        if (Mathf.Abs(actual - expected) > tolerance)
-            throw new InvalidOperationException($"{why} (expected {expected}, got {actual})");
-    }
-
-    private static void AssertThrows(Action action, string what)
-    {
-        try
-        {
-            action();
-        }
-        catch (Exception)
-        {
-            return; // rejected, as it should be
-        }
-        throw new InvalidOperationException($"'{what}' was accepted, but it should have been rejected");
     }
 }

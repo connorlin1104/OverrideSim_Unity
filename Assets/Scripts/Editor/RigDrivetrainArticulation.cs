@@ -31,7 +31,6 @@ using UnityEngine.SceneManagement;
 // (opens SampleScene, rigs the Robot, saves).
 public class RigDrivetrainArticulation
 {
-    private const string ScenePath = "Assets/Scenes/SampleScene.unity";
     private const string UndoName = "Rig Drivetrain Articulation";
     private const string AddWheelsUndo = "Add Wheels to Drivetrain";
 
@@ -192,20 +191,20 @@ public class RigDrivetrainArticulation
     // (nonzero editor exit) on any failure instead of showing dialogs.
     public static void RunBatchOnRobot()
     {
-        Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        Scene scene = EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
 
         GameObject robot = GameObject.FindWithTag("Player");
         if (robot == null) robot = GameObject.Find("Robot");
         if (robot == null)
             throw new System.InvalidOperationException(
-                $"{UndoName}: no Player-tagged GameObject and no 'Robot' found in {ScenePath}.");
+                $"{UndoName}: no Player-tagged GameObject and no 'Robot' found in {RoboSimPaths.MainScene}.");
 
         Rig(robot);
 
         if (!EditorSceneManager.SaveScene(scene))
-            throw new System.InvalidOperationException($"{UndoName}: failed to save {ScenePath}.");
+            throw new System.InvalidOperationException($"{UndoName}: failed to save {RoboSimPaths.MainScene}.");
         AssetDatabase.SaveAssets();
-        Debug.Log($"{UndoName}: rigged '{robot.name}' and saved {ScenePath}.");
+        Debug.Log($"{UndoName}: rigged '{robot.name}' and saved {RoboSimPaths.MainScene}.");
     }
 
     // Converts the given robot wrapper into an ArticulationBody rig. Throws

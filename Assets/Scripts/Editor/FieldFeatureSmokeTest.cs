@@ -20,7 +20,6 @@ using UnityEditor.SceneManagement;
 // Detents). Batch: -executeMethod FieldFeatureSmokeTest.RunBatch (throws -> nonzero exit).
 public static class FieldFeatureSmokeTest
 {
-    private const string ScenePath = "Assets/Scenes/SampleScene.unity";
     private const float StepSeconds = 0.01f;   // matches the project's fixed timestep
 
     private const float MaxSeatedAxisError = 0.15f;   // world units off the stack axis once seated
@@ -52,7 +51,7 @@ public static class FieldFeatureSmokeTest
 
     private static void Run()
     {
-        EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
 
         GoalStackMagnet[] magnets = Object.FindObjectsByType<GoalStackMagnet>(FindObjectsInactive.Exclude);
         if (magnets.Length == 0)
@@ -81,7 +80,7 @@ public static class FieldFeatureSmokeTest
         {
             Physics.simulationMode = previous;
             // Discard every simulated pose — never save a simulated scene.
-            EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+            EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
         }
 
         if (failures.Count > 0)

@@ -12,13 +12,10 @@ using UnityEditor.SceneManagement;
 // Batch: -executeMethod FixCupMagnets.RunBatch.
 public static class FixCupMagnets
 {
-    private const string ScenePath = "Assets/Scenes/SampleScene.unity";
-    private const string PrefabFolder = "Assets/Models/MatchLoadPreFabs";
-
     [MenuItem("Tools/RoboSim/Field & Pieces/Add Cup Stack Magnets", false, 7)]
     private static void ApplyInteractive()
     {
-        EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
         MeasureProfiles(out var cup, out var pin);
         int scene = ApplyScene(cup, pin, useUndo: true, out bool sceneChanged);
         if (sceneChanged) EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
@@ -34,7 +31,7 @@ public static class FixCupMagnets
     // Batch entry point for -executeMethod: throws on failure (nonzero exit).
     public static void RunBatch()
     {
-        var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        var scene = EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
         MeasureProfiles(out var cup, out var pin);
         int sceneCups = ApplyScene(cup, pin, useUndo: false, out bool sceneChanged);
         int prefabCups = ApplyPrefabs(cup, pin);
@@ -42,7 +39,7 @@ public static class FixCupMagnets
             throw new System.InvalidOperationException(
                 "Add Cup Stack Magnets: no Cup* pieces found in the scene or the match-load prefabs.");
         if (sceneChanged && !EditorSceneManager.SaveScene(scene))
-            throw new System.InvalidOperationException("Add Cup Stack Magnets: failed to save " + ScenePath);
+            throw new System.InvalidOperationException("Add Cup Stack Magnets: failed to save " + RoboSimPaths.MainScene);
         Debug.Log($"Add Cup Stack Magnets: {sceneCups} scene cup(s), {prefabCups} cup prefab(s); scene saved.");
     }
 
@@ -62,7 +59,7 @@ public static class FixCupMagnets
     private static int ApplyPrefabs(PieceStackMagnet.PieceProfile cup, PieceStackMagnet.PieceProfile pin)
     {
         int n = 0;
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { PrefabFolder }))
+        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.MatchLoadPrefabsFolder }))
         {
             string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject root = PrefabUtility.LoadPrefabContents(path);

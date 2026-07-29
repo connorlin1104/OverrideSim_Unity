@@ -354,17 +354,7 @@ public class PneumaticBuilderWindow : EditorWindow
     }
 
     private RobotMechanisms ResolveRegistry()
-    {
-        foreach (GameObject g in new[] { movingPart, barrel })
-            if (g != null)
-            {
-                RobotMechanisms r = g.GetComponentInParent<RobotMechanisms>();
-                if (r != null) return r;
-            }
-        if (Selection.activeGameObject != null)
-            return Selection.activeGameObject.GetComponentInParent<RobotMechanisms>();
-        return null;
-    }
+        => MechanismBuildUtil.RegistryFromAny(new[] { movingPart, barrel });
 
     private PneumaticSetup.Options BuildOptions() => new PneumaticSetup.Options
     {

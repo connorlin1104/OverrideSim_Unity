@@ -125,10 +125,7 @@ public class SaveRobotPrefabWindow : EditorWindow
 // Core save + link, split out so the headless validator can drive it without the window.
 public static class SaveRobotPrefab
 {
-    private const string RobotsFolder = "Assets/Robots";
-    private const string CatalogPath = "Assets/Settings/RobotModelCatalog.asset";
-
-    public static string PrefabPathFor(string robotName) => $"{RobotsFolder}/{SanitizeFileName(robotName)}.prefab";
+    public static string PrefabPathFor(string robotName) => $"{RoboSimPaths.RobotsFolder}/{SanitizeFileName(robotName)}.prefab";
 
     // Saves `root` as a prefab and links it to its catalog entry, leaving the entry's visibility
     // alone — for callers that only care about the prefab (Set Up Imported Robot, the validator).
@@ -183,9 +180,9 @@ public static class SaveRobotPrefab
     private static string LinkCatalog(string id, GameObject prefab,
         RobotModelCatalog.Visibility? visibility, string ownerCode, string ownerLabel)
     {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         if (catalog == null)
-            return $"No catalog at {CatalogPath}; the picker won't list it until one exists.";
+            return $"No catalog at {RoboSimPaths.RobotModelCatalog}; the picker won't list it until one exists.";
         RobotModelCatalog.Entry entry = catalog.models?.Find(e => e != null && e.id == id);
         if (entry == null)
             return $"No catalog entry '{id}' to link to — run Set Up Imported Robot (or the robot was " +
@@ -213,7 +210,7 @@ public static class SaveRobotPrefab
 
     private static void EnsureRobotsFolder()
     {
-        if (!AssetDatabase.IsValidFolder(RobotsFolder))
+        if (!AssetDatabase.IsValidFolder(RoboSimPaths.RobotsFolder))
             AssetDatabase.CreateFolder("Assets", "Robots");
     }
 
@@ -257,7 +254,7 @@ public static class SaveRobotPrefab
                 throw new System.InvalidOperationException(
                     "Save-prefab validation FAILED: the prefab has no RobotMotorController (not a full robot).");
 
-            RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+            RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
             RobotModelCatalog.Entry entry = catalog != null
                 ? catalog.models.Find(e => e != null && e.id == catalogEntryId) : null;
             if (catalog != null && (entry == null || entry.prefab != prefab))
@@ -273,14 +270,13 @@ public static class SaveRobotPrefab
             AssetDatabase.DeleteAsset("Assets/TestRobots/meshes");
             if (!hadCatalogEntry)
             {
-                RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+                RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
                 if (catalog != null && catalog.models != null &&
                     catalog.models.RemoveAll(e => e != null && e.id == catalogEntryId) > 0)
                     EditorUtility.SetDirty(catalog);
             }
-            const string samplePath = "Assets/Scenes/SampleScene.unity";
-            if (System.IO.File.Exists(samplePath))
-                EditorSceneManager.OpenScene(samplePath, OpenSceneMode.Single);
+            if (System.IO.File.Exists(RoboSimPaths.MainScene))
+                EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
             else
                 EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             AssetDatabase.SaveAssets();
@@ -289,7 +285,7 @@ public static class SaveRobotPrefab
 
     private static bool HasCatalogEntry(string id)
     {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(CatalogPath);
+        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
         return catalog != null && catalog.models != null && catalog.models.Exists(e => e != null && e.id == id);
     }
 }

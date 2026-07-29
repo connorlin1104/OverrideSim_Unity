@@ -26,7 +26,6 @@ public static class TransparentMaterialTool
 {
     private const string FolderRoot = "Assets/Materials";
     public const string FolderPath = "Assets/Materials/Transparent";
-    private const string PrefabFolder = "Assets/Models/MatchLoadPreFabs"; // same set TunePiecePhysics touches
     private const string Suffix = "_Transparent";
     // Default see-through amount for a freshly-created variant. Low so clear plastic reads as a faint
     // tint, not a white film; fine-tune per material afterward with Tune Transparency (less white).
@@ -327,7 +326,7 @@ public static class TransparentMaterialTool
     private static int ReplaceInPrefabs(Dictionary<Material, Material> variants)
     {
         int swapped = 0;
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { PrefabFolder }))
+        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.MatchLoadPrefabsFolder }))
         {
             string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject root = PrefabUtility.LoadPrefabContents(path);

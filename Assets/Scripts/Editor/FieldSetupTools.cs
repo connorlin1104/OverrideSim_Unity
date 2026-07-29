@@ -418,7 +418,6 @@ public class FixGoals : EditorWindow
 // Batch: -executeMethod FixRollerDetents.RunBatch (opens and saves SampleScene).
 public static class FixRollerDetents
 {
-    private const string ScenePath = "Assets/Scenes/SampleScene.unity";
     private static readonly string[] RollerNames = { "RollerNorth", "RollerSouth", "RollerEast", "RollerWest" };
 
     [MenuItem("Tools/RoboSim/Field & Pieces/Attach Roller Detents (Scene Fix)", false, 4)]
@@ -435,13 +434,13 @@ public static class FixRollerDetents
     // Batch entry point for -executeMethod: throws on failure (nonzero exit).
     public static void RunBatch()
     {
-        var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        var scene = EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
         int touched = Apply(useUndo: false);
         if (touched == 0)
             throw new System.InvalidOperationException(
-                $"Attach Roller Detents: no rigged rollers found in {ScenePath}.");
+                $"Attach Roller Detents: no rigged rollers found in {RoboSimPaths.MainScene}.");
         if (!EditorSceneManager.SaveScene(scene))
-            throw new System.InvalidOperationException($"Attach Roller Detents: failed to save {ScenePath}.");
+            throw new System.InvalidOperationException($"Attach Roller Detents: failed to save {RoboSimPaths.MainScene}.");
         Debug.Log($"Attach Roller Detents: RollerSnap ensured on {touched} roller(s); scene saved.");
     }
 

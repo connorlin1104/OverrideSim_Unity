@@ -25,7 +25,6 @@ using Scene = UnityEngine.SceneManagement.Scene;
 // Batch: -executeMethod BuildLiteFieldScene.RunBatch.
 public class BuildLiteFieldScene
 {
-    private const string SampleScenePath = "Assets/Scenes/SampleScene.unity";
     private const string LiteScenePath = "Assets/Scenes/LiteScene.unity";
     private const string HomeScenePath = "Assets/Scenes/HomeScene.unity";
     private const string FieldRootName = "OverrideFieldVersion3";
@@ -51,8 +50,8 @@ public class BuildLiteFieldScene
 
     private static void Build(bool interactive)
     {
-        if (!File.Exists(SampleScenePath))
-            throw new FileNotFoundException($"Build Lite Field Scene: {SampleScenePath} is missing.");
+        if (!File.Exists(RoboSimPaths.MainScene))
+            throw new FileNotFoundException($"Build Lite Field Scene: {RoboSimPaths.MainScene} is missing.");
 
         string previousScenePath = SceneManager.GetActiveScene().path;
         if (interactive && !EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
@@ -61,7 +60,7 @@ public class BuildLiteFieldScene
             return;
         }
 
-        Scene scene = EditorSceneManager.OpenScene(SampleScenePath, OpenSceneMode.Single);
+        Scene scene = EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
         var report = new StringBuilder();
         Prune(scene, report);
 
@@ -104,7 +103,7 @@ public class BuildLiteFieldScene
         }
         if (fieldRoot == null)
             throw new System.InvalidOperationException(
-                $"Build Lite Field Scene: no '{FieldRootName}' root in {SampleScenePath}.");
+                $"Build Lite Field Scene: no '{FieldRootName}' root in {RoboSimPaths.MainScene}.");
 
         // Everything is kept nearest to where the robot actually spawns, so the whole lite field is
         // within driving distance instead of scattered across a 36-unit field.

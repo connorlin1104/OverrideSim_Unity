@@ -323,7 +323,6 @@ public static class TunePiecePhysics
     private const float Bounciness = 0f;        // pieces shouldn't trampoline
 
     private const string MaterialPath = "Assets/PiecePhysics.physicMaterial";
-    private const string PrefabFolder = "Assets/Models/MatchLoadPreFabs";
 
     // The field surfaces use this material, and it was set to FrictionCombine = Maximum — which
     // OVERRIDES the piece's friction back up (Unity uses the higher-priority combine mode of the two
@@ -385,7 +384,7 @@ public static class TunePiecePhysics
     private static int TunePrefabs(PhysicsMaterial mat)
     {
         int count = 0;
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { PrefabFolder }))
+        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.MatchLoadPrefabsFolder }))
         {
             string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject root = PrefabUtility.LoadPrefabContents(path);

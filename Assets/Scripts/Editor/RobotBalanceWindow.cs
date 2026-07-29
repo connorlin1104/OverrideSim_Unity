@@ -48,7 +48,6 @@ using UnityEngine;
 // prefabs and then re-bakes the drives (mass feeds the traction budget).
 public class RobotBalanceWindow : EditorWindow
 {
-    private const string RobotsFolder = "Assets/Robots";
     private const string UndoName = "Apply Robot Masses";
 
     // The rig tool is the authority on these — it is what writes them on a fresh rig, and this
@@ -195,14 +194,14 @@ public class RobotBalanceWindow : EditorWindow
     {
         reports.Clear();
         status = null;
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RobotsFolder }))
+        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
         {
             string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
             reports.Add(Measure(prefab, path));
         }
-        if (reports.Count == 0) status = $"No robot prefabs with a RobotMotorController under {RobotsFolder}.";
+        if (reports.Count == 0) status = $"No robot prefabs with a RobotMotorController under {RoboSimPaths.RobotsFolder}.";
     }
 
     private static Report Measure(GameObject prefab, string path)
