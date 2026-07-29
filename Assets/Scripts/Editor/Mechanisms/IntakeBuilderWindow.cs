@@ -22,7 +22,7 @@ using UnityEngine.Rendering;
 // adds the grabbing behavior, riding the button the roller already uses.
 public class IntakeBuilderWindow : EditorWindow
 {
-    [MenuItem("Tools/RoboSim/Robot/Mechanisms/Build Intake", false, 20)]
+    [MenuItem("Tools/RoboSim/Robot/Mechanisms/Build Intake", false, 25)]
     private static void Open() => GetWindow<IntakeBuilderWindow>("Build Intake");
 
     private MotorActuator motor;
