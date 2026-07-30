@@ -879,12 +879,25 @@ public class IntakePull : MonoBehaviour
                        body.swingYLock == ArticulationDofLock.FreeMotion ||
                        body.swingZLock == ArticulationDofLock.FreeMotion;
             case ArticulationJointType.PrismaticJoint:
-                return body.linearLockX == ArticulationDofLock.FreeMotion ||
-                       body.linearLockY == ArticulationDofLock.FreeMotion ||
-                       body.linearLockZ == ArticulationDofLock.FreeMotion;
+                // A prismatic has ONE degree of freedom: the first axis that isn't locked is the one it
+                // travels on, and the other two locks are ignored. Asking "is any axis free" instead
+                // reads a limited lift stage as free-running, because a fresh ArticulationBody defaults
+                // every lock to FreeMotion and setting the travel axis to Limited leaves the two unused
+                // ones at that default. The builders write Locked on both, but a joint configured by
+                // hand in the Inspector does not — and a false "it spins" tears an intake off its lift.
+                return TravelLock(body) == ArticulationDofLock.FreeMotion;
             default:
                 return false;            // fixed joint — welded, so riding it is riding the chassis
         }
+    }
+
+    // The lock on the axis a prismatic joint actually slides along. Locked on all three means it cannot
+    // move at all, which is as bounded as a weld.
+    private static ArticulationDofLock TravelLock(ArticulationBody body)
+    {
+        if (body.linearLockX != ArticulationDofLock.LockedMotion) return body.linearLockX;
+        if (body.linearLockY != ArticulationDofLock.LockedMotion) return body.linearLockY;
+        return body.linearLockZ;
     }
 
     private void LogStartupDiagnostics()

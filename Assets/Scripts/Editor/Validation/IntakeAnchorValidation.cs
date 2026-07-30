@@ -78,9 +78,20 @@ public static class IntakeAnchorValidation
 
         // The other bounded joints. A cascade stage slides to a commanded position and a fixed link is
         // welded, so both carry their anchors exactly as the chassis would.
+        //
+        // Both prismatic shapes on purpose. A fresh ArticulationBody defaults EVERY lock to FreeMotion,
+        // so a stage configured by hand carries Limited on its travel axis and the default Free on the
+        // two axes the joint does not use, while the builders write Locked on both. Only the first
+        // unlocked axis is the joint's degree of freedom; reading the other two turned a lift stage into
+        // a "free-spinning link" and tore the intake off it.
         Transform stage = Body(chassis, "LiftStage", ArticulationJointType.PrismaticJoint, ArticulationDofLock.LimitedMotion).transform;
         ValidationUtil.Assert(!IntakePull.NeedsReanchor(Child(stage, "IntakeSlot1"), chassis, out _),
             "an anchor on a limited PRISMATIC stage must ride it — that's an intake on a cascade lift");
+        ArticulationBody built = Body(chassis, "BuiltLiftStage", ArticulationJointType.PrismaticJoint, ArticulationDofLock.LimitedMotion);
+        built.linearLockY = ArticulationDofLock.LockedMotion;
+        built.linearLockZ = ArticulationDofLock.LockedMotion;
+        ValidationUtil.Assert(!IntakePull.NeedsReanchor(Child(built.transform, "IntakeSlot1"), chassis, out _),
+            "...and the same stage as the joint tool writes it, with the two unused axes locked");
         Transform weld = Body(chassis, "WeldedBracket", ArticulationJointType.FixedJoint).transform;
         ValidationUtil.Assert(!IntakePull.NeedsReanchor(Child(weld, "IntakeMouth"), chassis, out _),
             "a FIXED link never moves, so riding it is identical to riding the chassis");
@@ -100,7 +111,7 @@ public static class IntakeAnchorValidation
             "with no chassis resolved there is nowhere to rescue anything to");
         ValidationUtil.Assert(IntakePull.NeedsReanchor(new GameObject("Loose").transform, chassis, out _),
             "an anchor that isn't on the robot at all must be pulled back onto the chassis");
-        return 14;
+        return 15;
     }
 
     // The DR4B builder deliberately parents the stack onto its carriage so a held stack rides the lift.
