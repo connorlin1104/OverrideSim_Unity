@@ -373,6 +373,13 @@ public static class DriveFeelValidation
         ValidationUtil.Near(omniRollout, 2.754f, 0.02f, "an all-omni robot's roll-out from full speed");
         ValidationUtil.Near(tractionRollout, 0.787f, 0.02f, "a traction-wheel robot's roll-out");
 
+        // The two checks below are DERIVED guards, and under mutation the exact pins above fire
+        // first and shadow them — so they look redundant today. They aren't: they exist for the
+        // NEXT retune. Whoever moves a fraction will re-pin the exact values along with it (that is
+        // what re-pinning is for), and these are what still catch them if the new feel is one a
+        // driver can't use. Verified that way: mutating the fraction AND every pin with it leaves
+        // exactly these two standing, and both fire.
+        //
         // The point of the checkbox: it has to change the stop by enough to see. Below ~2x the
         // player would tick it, feel nothing, and conclude the setting is broken.
         ValidationUtil.Assert(omniRollout > tractionRollout * 3f,
