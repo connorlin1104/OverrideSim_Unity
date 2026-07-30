@@ -112,15 +112,18 @@ MonoBehaviour:
     - id: cascademotor
       displayName: Cascade
       type: motor
-    - id: flexwheels-spacing-1
-      displayName: FlexWheels+Spacing:1
-      type: motor
     - id: intakemech
       displayName: IntakeMech
       type: motor
     - id: outtake-1
       displayName: Outtake:1
       type: motor
+    - id: scoringmech
+      displayName: ScoringMech
+      type: motor
+    - id: component2-1
+      displayName: AlignerAdjust
+      type: pneumatic
     visibility: 0
     ownerCode: 
     ownerLabel: 
