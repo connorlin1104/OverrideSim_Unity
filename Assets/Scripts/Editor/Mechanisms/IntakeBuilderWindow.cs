@@ -26,6 +26,17 @@ using UnityEngine.Rendering;
 //
 // The intake joint/motor must already exist (Add or Fix Mechanism Joint / Auto-Detect); this only
 // adds the grabbing behavior, riding the button the roller already uses.
+//
+// ONE ROBOT, SEVERAL INTAKES. A bot that intakes at the floor and SCORES from an arm or a chain wants
+// two of these: one grabbing intake, one carrier that reverses to drop what it holds (Reverse Drops In
+// Place). So the tool is keyed on the MOTOR, not on the robot: each motor gets its own IntakePull, and
+// intake 2 numbers its whole marker set (Intake2Mouth, Intake2HoldPoint, Intake2Slot1, ...) so the two
+// can never fight over the same five names. Markers are resolved through the component's own
+// references, never by name alone — a name search from the robot root is exactly how a second build
+// would have stolen (and a second Remove deleted) the first intake's markers. The two are then linked by
+// the HANDOFF (Take From Other Intakes): the scoring intake's mouth goes over where the floor intake
+// holds its stack, and holding its button takes the piece across. It has to be explicit, because a
+// carried piece has its colliders off and trips no trigger — see IntakePull's header.
 public class IntakeBuilderWindow : EditorWindow
 {
     [MenuItem("Tools/RoboSim/Robot/Mechanisms/Build Intake", false, 25)]
@@ -34,6 +45,8 @@ public class IntakeBuilderWindow : EditorWindow
     private MotorActuator motor;
     private int maxHeld = 3;
     private float slotSpacing = 1.5f;
+    private bool reverseDropsInPlace;
+    private bool takeFromOtherIntakes = true;
     private bool rotateHandles;
     private Vector2 scroll;
 
@@ -59,6 +72,8 @@ public class IntakeBuilderWindow : EditorWindow
         if (pull == null) return;
         maxHeld = Mathf.Max(1, pull.maxHeld);
         slotSpacing = pull.slotSpacing;
+        reverseDropsInPlace = pull.reverseDropsInPlace;
+        takeFromOtherIntakes = pull.takeFromOtherIntakes;
     }
 
     private void OnGUI()
@@ -66,19 +81,28 @@ public class IntakeBuilderWindow : EditorWindow
         scroll = EditorGUILayout.BeginScrollView(scroll);
 
         EditorGUILayout.HelpBox(
-            "Adds a pull-force intake to an existing intake mechanism (the roller link with a " +
-            "MotorActuator). Hold the mechanism's button to grab pieces at the mouth; they glide " +
-            "to the hold point and stack; reverse spits them back out.\n\n" +
+            "Adds a pull-force intake to an existing mechanism (a link with a MotorActuator). Hold " +
+            "the mechanism's button to grab pieces at the mouth; they glide to the hold point and " +
+            "stack; reverse gets rid of them — thrown out of the mouth, or simply DROPPED where they " +
+            "sit if you tick Reverse Drops In Place.\n\n" +
             "After building, position everything in the Scene view: shrink the yellow IntakeMouth " +
             "box onto the opening, drag the hold point and slots where the stack should sit — and " +
-            "ROTATE them to set how each piece sits (tilt the marker, the piece tilts with it).",
+            "ROTATE them to set how each piece sits (tilt the marker, the piece tilts with it).\n\n" +
+            "One robot can have several: build one on the intake roller and another on the scoring " +
+            "mechanism. Each is keyed to its own motor, so each rides its own button — and the second " +
+            "can take pieces straight out of the first, as long as its mouth covers where the first one " +
+            "holds its stack.",
             MessageType.Info);
 
+        // Switching motors re-reads that motor's intake, so the fields below can never describe one
+        // intake while Build writes them onto another.
+        EditorGUI.BeginChangeCheck();
         motor = (MotorActuator)EditorGUILayout.ObjectField(
             new GUIContent("Intake Motor", "The roller link's MotorActuator — the thing that " +
                 "already spins when you hold its button. If it has no motor yet, rig the joint " +
                 "with Add or Fix Mechanism Joint or Auto-Detect Mechanisms first."),
             motor, typeof(MotorActuator), true);
+        if (EditorGUI.EndChangeCheck()) AdoptExisting();
 
         if (motor == null && Selection.activeGameObject != null)
         {
@@ -91,10 +115,19 @@ public class IntakeBuilderWindow : EditorWindow
         }
 
         IntakePull existing = Existing;
+        int others = IntakeSetup.AllOnRobot(motor).Length - (existing != null ? 1 : 0);
         if (existing != null)
             EditorGUILayout.HelpBox(
-                $"This robot already has an intake ('{existing.name}'). Build updates it in place — " +
-                "markers you have already positioned stay where you put them.", MessageType.None);
+                $"This motor already has an intake ('{existing.name}'). Build updates it in place — " +
+                "markers you have already positioned stay where you put them." +
+                (others > 0 ? $" The robot's {others} other intake(s) are left alone." : ""),
+                MessageType.None);
+        else if (motor != null && others > 0)
+            EditorGUILayout.HelpBox(
+                $"This robot already has {others} intake(s), on other mechanisms. Build adds ANOTHER " +
+                "one for this motor, with its own numbered markers (Intake2Mouth, Intake2HoldPoint, " +
+                "...) — that is how a bot gets a grabbing intake AND a separate scoring mechanism. " +
+                "The existing intakes are not touched.", MessageType.Info);
 
         maxHeld = EditorGUILayout.IntSlider(
             new GUIContent("Max Held", "How many pieces the intake holds before it's full. One " +
@@ -105,6 +138,24 @@ public class IntakeBuilderWindow : EditorWindow
                 "(world is 10x scale; a cup is ~1.6). Only seeds NEW slot markers — dragged ones " +
                 "keep their place."),
             slotSpacing);
+        reverseDropsInPlace = EditorGUILayout.Toggle(
+            new GUIContent("Reverse Drops In Place",
+                "ON: reverse just LETS GO — each held piece turns back into a physical object exactly " +
+                "where it sits and gravity does the rest, the way a real scoring mechanism dumps " +
+                "(reverse, and the cup/pin falls out). Nothing is launched, nothing loose is shoved. " +
+                "This is what you want for a basket or claw carried on an arm or a chain.\n\n" +
+                "OFF: pieces are thrown out through the mouth — right for a roller intake that has to " +
+                "spit them clear of itself."),
+            reverseDropsInPlace);
+        takeFromOtherIntakes = EditorGUILayout.Toggle(
+            new GUIContent("Take From Other Intakes",
+                "ON (default): this intake can take a piece straight out of ANOTHER intake on the " +
+                "robot. Hold this one's button with its mouth over where the other one carries its " +
+                "stack and the piece is handed across — that is how the floor intake loads the " +
+                "scoring mechanism. It has to be explicit: a carried piece is kinematic with its " +
+                "colliders off, so it trips no trigger and this intake is otherwise blind to it.\n\n" +
+                "OFF: this intake only picks up loose pieces off the field."),
+            takeFromOtherIntakes);
 
         rotateHandles = GUILayout.Toggle(rotateHandles,
             new GUIContent(rotateHandles ? "Scene handles: ROTATE" : "Scene handles: MOVE",
@@ -123,9 +174,11 @@ public class IntakeBuilderWindow : EditorWindow
 
         using (new EditorGUI.DisabledScope(motor == null))
         {
-            if (GUILayout.Button(existing != null ? "Rebuild Intake" : "Build Intake", GUILayout.Height(28)))
+            if (GUILayout.Button(existing != null ? "Rebuild Intake"
+                    : others > 0 ? "Build a Second Intake" : "Build Intake", GUILayout.Height(28)))
             {
-                IntakePull pull = IntakeSetup.Build(motor, maxHeld, slotSpacing, useUndo: true);
+                IntakePull pull = IntakeSetup.Build(motor, maxHeld, slotSpacing, reverseDropsInPlace,
+                    takeFromOtherIntakes, useUndo: true);
                 Selection.activeGameObject = pull.gameObject;
                 SceneView.RepaintAll();
             }
@@ -134,8 +187,9 @@ public class IntakeBuilderWindow : EditorWindow
         using (new EditorGUI.DisabledScope(existing == null))
         {
             if (GUILayout.Button("Remove Intake") && EditorUtility.DisplayDialog("Remove Intake",
-                    "Delete the IntakeMouth (with its IntakePull), IntakeHoldPoint and IntakeSlot " +
-                    "markers from this robot? The roller mechanism itself is untouched.",
+                    $"Delete '{(existing != null ? existing.name : "IntakeMouth")}' (with its " +
+                    "IntakePull), its hold point and its slot markers? The mechanism itself is " +
+                    "untouched, and so is any other intake on this robot.",
                     "Remove", "Cancel"))
             {
                 IntakeSetup.Remove(Existing, useUndo: true);
@@ -227,9 +281,28 @@ public class IntakeBuilderWindow : EditorWindow
 internal static class IntakeSetup
 {
     private const string UndoName = "Build Intake";
-    private const string MouthName = "IntakeMouth";
-    private const string HoldName = "IntakeHoldPoint";
-    private const string SlotPrefix = "IntakeSlot";
+    private const string MouthRole = "Mouth";
+    private const string HoldRole = "HoldPoint";
+    private const string SlotRole = "Slot";
+    private const int MaxSlotSweep = 12;   // slots are capped at 6 in the window; sweep well past it
+
+    // A marker's name. The robot's FIRST intake keeps the historical names ("IntakeMouth",
+    // "IntakeHoldPoint", "IntakeSlot1"), so no robot that already has one is renamed; a second intake
+    // numbers its whole set ("Intake2Mouth", "Intake2Slot1"). Names are only used to CREATE markers and
+    // to sweep leftovers — anything that already exists is found through the component's references.
+    public static string MarkerName(int index, string role) =>
+        index <= 1 ? "Intake" + role : $"Intake{index}{role}";
+
+    // Which numbered set an intake belongs to, read back off its mouth's name (1 when the name says
+    // nothing, including a mouth the user renamed).
+    public static int IndexOf(IntakePull pull)
+    {
+        string name = pull != null ? pull.name : null;
+        if (string.IsNullOrEmpty(name) || !name.StartsWith("Intake")) return 1;
+        int digits = 0, i = "Intake".Length;
+        while (i < name.Length && char.IsDigit(name[i])) { digits = digits * 10 + (name[i] - '0'); i++; }
+        return digits >= 2 ? digits : 1;
+    }
 
     // The motor on or around a picked object — parents first (the usual click on the roller
     // mesh), then children (a click on the robot root).
@@ -240,27 +313,63 @@ internal static class IntakeSetup
         return m != null ? m : picked.GetComponentInChildren<MotorActuator>();
     }
 
-    // The existing intake this window would edit: prefer the motor's own robot, else whatever is
-    // open — the Prefab Mode stage root when one is open (FindObjectsByType does not see stage
-    // contents), else the loaded scenes.
+    // Every intake on this motor's robot. The window shows the count so "Build" can say whether it
+    // updates an intake or adds another one.
+    public static IntakePull[] AllOnRobot(MotorActuator motor)
+    {
+        if (motor == null) return new IntakePull[0];
+        Transform chassis = ResolveChassis(motor);
+        return chassis != null ? chassis.GetComponentsInChildren<IntakePull>(true) : new IntakePull[0];
+    }
+
+    // The intake this window edits — THIS MOTOR'S, not "the robot's". A bot can carry an intake and a
+    // separate scoring mechanism, and returning the wrong one meant Build re-pointed the first intake
+    // at the second motor instead of creating anything.
     public static IntakePull FindExisting(MotorActuator motor)
     {
         if (motor != null)
         {
-            Transform chassis = ResolveChassis(motor);
-            IntakePull onRobot = chassis != null ? chassis.GetComponentInChildren<IntakePull>(true) : null;
-            if (onRobot != null) return onRobot;
+            IntakePull[] onRobot = AllOnRobot(motor);
+            foreach (IntakePull p in onRobot)
+                if (p != null && p.intakeMotor == motor) return p;
+            // Nobody's: hand-added, or built before this window set the field. Adopt it rather than
+            // building a duplicate on top of it.
+            foreach (IntakePull p in onRobot)
+                if (p != null && p.intakeMotor == null) return p;
+            // Everything on this robot belongs to another motor → this motor gets its own intake.
+            return null;
         }
+        // No motor picked yet: show whatever is open, so the Scene preview works before the first click.
         var stage = PrefabStageUtility.GetCurrentPrefabStage();
         if (stage != null && stage.prefabContentsRoot != null)
             return stage.prefabContentsRoot.GetComponentInChildren<IntakePull>(true);
-        return Object.FindFirstObjectByType<IntakePull>(FindObjectsInactive.Include);
+        return Object.FindAnyObjectByType<IntakePull>(FindObjectsInactive.Include);
     }
 
-    // Create or update the intake. Re-runnable: existing mouth/hold/slot objects are kept where
-    // the user dragged them (only re-parented if they would spin with the roller), the trigger box
-    // is only seeded on first creation, and slots beyond the new Max Held are pruned.
-    public static IntakePull Build(MotorActuator motor, int maxHeld, float slotSpacing, bool useUndo)
+    // Every marker the robot's OTHER intakes own. Build must never adopt one of these by name and
+    // Remove must never delete one: with two intakes on a robot, a name sweep from the root would
+    // happily hand intake 2 the markers belonging to intake 1 — and then delete them.
+    public static HashSet<Transform> ClaimedByOthers(Transform chassis, IntakePull mine)
+    {
+        var claimed = new HashSet<Transform>();
+        if (chassis == null) return claimed;
+        foreach (IntakePull other in chassis.GetComponentsInChildren<IntakePull>(true))
+        {
+            if (other == null || other == mine) continue;
+            claimed.Add(other.transform);
+            if (other.holdPoint != null) claimed.Add(other.holdPoint);
+            if (other.slotAnchors == null) continue;
+            foreach (Transform a in other.slotAnchors) if (a != null) claimed.Add(a);
+        }
+        return claimed;
+    }
+
+    // Create or update THIS MOTOR'S intake. Re-runnable: existing mouth/hold/slot objects are kept
+    // where the user dragged them (only re-parented if they would spin with the roller), the trigger
+    // box is only seeded on first creation, and slots beyond the new Max Held are pruned. Another
+    // intake on the same robot is never read, moved, adopted or deleted.
+    public static IntakePull Build(MotorActuator motor, int maxHeld, float slotSpacing,
+        bool reverseDropsInPlace, bool takeFromOtherIntakes, bool useUndo)
     {
         if (motor == null) throw new System.ArgumentNullException(nameof(motor));
 
@@ -269,6 +378,13 @@ internal static class IntakeSetup
         // Where new markers are created, and where a spinning one is rescued to. Searching still
         // starts at the robot root, so markers an older build left up there are found and re-homed.
         Transform mount = MarkerMount(link.transform, chassis);
+
+        // What this build is allowed to touch: its own intake (by motor), its own numbered marker
+        // names, and nothing another IntakePull already holds a reference to.
+        IntakePull existing = FindExisting(motor);
+        HashSet<Transform> claimed = ClaimedByOthers(chassis, existing);
+        int index = existing != null ? IndexOf(existing) : FirstFreeIndex(chassis);
+        Transform[] previousSlots = existing != null ? existing.slotAnchors : null;
 
         // World bounds of the intake link's meshes → default mouth size + hold-point guess.
         Bounds bounds;
@@ -289,7 +405,8 @@ internal static class IntakeSetup
         }
 
         // --- Mouth (grab zone), mounted beside the roller so it does not spin with it ------------
-        GameObject mouth = FindOrCreate(chassis, mount, link.transform, MouthName, useUndo, out bool newMouth);
+        GameObject mouth = ResolveMarker(existing != null ? existing.transform : null, chassis, mount,
+            link.transform, MarkerName(index, MouthRole), claimed, useUndo, out bool newMouth);
         if (newMouth)
             mouth.transform.SetPositionAndRotation(bounds.center, Quaternion.identity);
 
@@ -309,7 +426,8 @@ internal static class IntakeSetup
         }
 
         // --- Hold point (slot 0), on the same mount ----------------------------------------------
-        GameObject holdGo = FindOrCreate(chassis, mount, link.transform, HoldName, useUndo, out bool newHold);
+        GameObject holdGo = ResolveMarker(existing != null ? existing.holdPoint : null, chassis, mount,
+            link.transform, MarkerName(index, HoldRole), claimed, useUndo, out bool newHold);
         if (newHold)
             holdGo.transform.SetPositionAndRotation(
                 bounds.center + Vector3.up * (bounds.size.y * 0.5f + 0.5f), Quaternion.identity);
@@ -322,6 +440,8 @@ internal static class IntakeSetup
         pull.holdPoint = holdGo.transform;
         pull.maxHeld = Mathf.Max(1, maxHeld);
         pull.slotSpacing = slotSpacing;
+        pull.reverseDropsInPlace = reverseDropsInPlace;
+        pull.takeFromOtherIntakes = takeFromOtherIntakes;
 
         // --- Stack slot anchors -------------------------------------------------------------------
         // Slot 0 IS the hold point; slots 1..n-1 sit on the same mount, seeded along the stack axis
@@ -333,18 +453,34 @@ internal static class IntakeSetup
         anchors[0] = holdGo.transform;
         for (int i = 1; i < slots; i++)
         {
-            GameObject sgo = FindOrCreate(chassis, mount, link.transform, SlotPrefix + i, useUndo, out bool newSlot);
+            Transform known = previousSlots != null && i < previousSlots.Length ? previousSlots[i] : null;
+            // A hand-edited list that names the hold point (or the mouth) twice must not turn slot 0
+            // into slot i — that would later prune the hold point as surplus.
+            if (known == holdGo.transform || known == mouth.transform) known = null;
+            GameObject sgo = ResolveMarker(known, chassis, mount, link.transform,
+                MarkerName(index, SlotRole + i), claimed, useUndo, out bool newSlot);
             if (newSlot)
                 sgo.transform.SetPositionAndRotation(
                     holdGo.transform.position + holdGo.transform.rotation * (dir * (i * slotSpacing)),
                     holdGo.transform.rotation);
             anchors[i] = sgo.transform;
         }
-        for (int i = slots; ; i++)
+
+        // Slots beyond the new Max Held: the intake's OWN surplus anchors first (they are authoritative
+        // even if renamed), then any leftover carrying one of this set's names. Nothing another intake
+        // holds is ever deleted, and the name sweep does not stop at the first gap.
+        if (previousSlots != null)
+            for (int i = slots; i < previousSlots.Length; i++)
+            {
+                Transform surplus = previousSlots[i];
+                if (surplus != null && surplus != holdGo.transform && surplus != mouth.transform &&
+                    !claimed.Contains(surplus))
+                    MechanismBuildUtil.DestroyGo(surplus, useUndo);
+            }
+        for (int i = slots; i <= MaxSlotSweep; i++)
         {
-            Transform surplus = MechanismBuildUtil.FindChild(chassis, SlotPrefix + i);
-            if (surplus == null) break;
-            MechanismBuildUtil.DestroyGo(surplus, useUndo);
+            Transform surplus = FindUnclaimed(chassis, MarkerName(index, SlotRole + i), claimed);
+            if (surplus != null) MechanismBuildUtil.DestroyGo(surplus, useUndo);
         }
         pull.slotAnchors = anchors;
 
@@ -354,29 +490,40 @@ internal static class IntakeSetup
         return pull;
     }
 
-    // Delete everything Build created; the roller mechanism itself is untouched.
+    // Delete everything Build created FOR THIS INTAKE; the mechanism itself, and any other intake on
+    // the robot, are untouched.
     public static void Remove(IntakePull pull, bool useUndo)
     {
         if (pull == null) return;
-        // Swept from the ROBOT ROOT, not from the mouth's parent: markers built before they moved
-        // next to the roller are still sitting up there, and a Remove that misses them leaves
-        // IntakeSlot2 orphaned on the robot forever.
+        // Strays are swept from the ROBOT ROOT, not from the mouth's parent: markers built before they
+        // moved next to the roller are still sitting up there, and a Remove that misses them leaves
+        // IntakeSlot2 orphaned on the robot forever. But only this set's names, and only objects no
+        // other IntakePull claims — the old sweep hit "IntakeSlot1" by name and so would have deleted
+        // the first intake's stack while removing the second.
         RobotMechanisms registry = pull.GetComponentInParent<RobotMechanisms>();
         Transform chassis = registry != null ? registry.transform : pull.transform.root;
+        HashSet<Transform> claimed = ClaimedByOthers(chassis, pull);
+        int index = IndexOf(pull);
         UnityEngine.SceneManagement.Scene scene = pull.gameObject.scene;
 
-        if (pull.holdPoint != null && pull.holdPoint.gameObject != pull.gameObject)
+        if (pull.holdPoint != null && pull.holdPoint.gameObject != pull.gameObject &&
+            !claimed.Contains(pull.holdPoint))
             MechanismBuildUtil.DestroyGo(pull.holdPoint, useUndo);
         if (pull.slotAnchors != null)
             foreach (Transform a in pull.slotAnchors)
-                if (a != null) MechanismBuildUtil.DestroyGo(a, useUndo);
+                if (a != null && a != pull.transform && !claimed.Contains(a))
+                    MechanismBuildUtil.DestroyGo(a, useUndo);
         if (chassis != null)
-            for (int i = 1; ; i++)
+        {
+            Transform strayHold = FindUnclaimed(chassis, MarkerName(index, HoldRole), claimed);
+            if (strayHold != null && strayHold != pull.transform)
+                MechanismBuildUtil.DestroyGo(strayHold, useUndo);
+            for (int i = 1; i <= MaxSlotSweep; i++)
             {
-                Transform stray = MechanismBuildUtil.FindChild(chassis, SlotPrefix + i);
-                if (stray == null) break;
-                MechanismBuildUtil.DestroyGo(stray, useUndo);
+                Transform stray = FindUnclaimed(chassis, MarkerName(index, SlotRole + i), claimed);
+                if (stray != null && stray != pull.transform) MechanismBuildUtil.DestroyGo(stray, useUndo);
             }
+        }
         MechanismBuildUtil.DestroyGo(pull.transform, useUndo); // the mouth, taking IntakePull with it
 
         if (scene.IsValid()) EditorSceneManager.MarkSceneDirty(scene);
@@ -406,17 +553,22 @@ internal static class IntakeSetup
         return motor.transform.root;
     }
 
-    // Find an existing marker anywhere on the robot, else create it on `mount`. World pose is
-    // preserved either way.
+    // Resolve one marker, in priority order:
+    //   1. the reference the intake already holds — authoritative, because names are cosmetic and the
+    //      user may have renamed anything (this is also what keeps two intakes from swapping markers),
+    //   2. an object of that name anywhere on the robot that no OTHER intake claims — how markers an
+    //      older build left on the robot root get re-homed instead of duplicated,
+    //   3. a new empty on `mount`.
+    // World pose is preserved in every case.
     //
     // An existing marker is re-homed ONLY if it sits inside the roller link, where it would spin.
     // Anywhere else is somebody's decision — the DR4B builder deliberately re-parents these onto its
     // carriage so the stack rides the lift, and a rebuild that dragged them back would silently undo
     // that. (The old code re-homed anything whose parent wasn't the chassis, which did exactly that.)
-    private static GameObject FindOrCreate(Transform searchRoot, Transform mount, Transform rollerLink,
-        string name, bool useUndo, out bool created)
+    private static GameObject ResolveMarker(Transform known, Transform searchRoot, Transform mount,
+        Transform rollerLink, string name, HashSet<Transform> claimed, bool useUndo, out bool created)
     {
-        Transform t = MechanismBuildUtil.FindChild(searchRoot, name);
+        Transform t = known != null ? known : FindUnclaimed(searchRoot, name, claimed);
         created = t == null;
         GameObject go;
         if (created)
@@ -433,5 +585,23 @@ internal static class IntakeSetup
                 MechanismBuildUtil.EnsureChildOf(go.transform, mount, useUndo);
         }
         return go;
+    }
+
+    // MechanismBuildUtil.FindChild, minus anything another intake owns.
+    private static Transform FindUnclaimed(Transform root, string name, HashSet<Transform> claimed)
+    {
+        if (root == null) return null;
+        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
+            if (t.name == name && (claimed == null || !claimed.Contains(t))) return t;
+        return null;
+    }
+
+    // The lowest marker-set number free on this robot: 1 for a robot's first intake, so it keeps the
+    // historical names; 2 for the scoring mechanism built next to it.
+    private static int FirstFreeIndex(Transform chassis)
+    {
+        for (int n = 1; n <= 99; n++)
+            if (MechanismBuildUtil.FindChild(chassis, MarkerName(n, MouthRole)) == null) return n;
+        return 1;
     }
 }

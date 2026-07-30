@@ -30,6 +30,28 @@ using UnityEngine.InputSystem;
 // floor — reverse to eject, which is the deliberate act. (dropWhenIdle turns the old momentary behaviour
 // back on for a mechanism that really should spill when you let go.)
 //
+// REVERSE HAS TWO FLAVOURS, and the second one is how most real scoring mechanisms work. Launching is
+// right for a roller intake that has to spit a piece clear of itself. But a basket or claw carried up on
+// an arm/chain scores by reversing and simply LETTING GO — the cup or pin becomes an ordinary physical
+// object again and falls out under gravity. reverseDropsInPlace is that: no launch velocity, no ghost
+// window (a piece that barely moves would stay ghosted straight through the goal it is meant to land on,
+// so it turns solid immediately), and no outward shove on loose pieces sitting in the mouth — that shove
+// would kick away the very piece just dropped. The one thing to watch is a hold point buried inside
+// plastic: the piece turns solid interpenetrating it and PhysX pops it out. Place hold points where a
+// piece can actually fall.
+//
+// TWO INTAKES CAN HAND A PIECE OVER, and they have to, because a carried piece is INVISIBLE. The instant
+// an intake captures a piece the piece goes kinematic with its colliders switched OFF, so it fires no
+// trigger and no overlap query can find it — a second intake looking for something to grab sees nothing
+// there at all. That is why a bot that gathers at the floor and scores from an arm could not load its own
+// scoring mechanism: the floor intake's stack had stopped counting as pieces. So every carried piece is
+// registered in `carriers` (which intake is holding what) — that is how a piece stays KNOWN while it is
+// non-physical. Hold the second intake's button with its mouth over where the first one is carrying and
+// the piece is handed across: it stays kinematic and ghosted the whole way, so there is no step where it
+// can drop or bounce, and the taker inherits the two facts it could no longer measure for itself (the
+// pre-ghost centre of mass and the pre-capture kinematic flag). takeFromOtherIntakes turns this off, and
+// a short cooldown stops two overlapping mouths trading one piece back and forth every step.
+//
 // As pieces come in they're rotated so they stop tumbling and stack cleanly, IN THE SLOT ANCHOR'S
 // FRAME: rotate a slot marker and the piece in that slot rotates with it — tilt it and the piece
 // tilts, twist it and the piece twists. By default (autoUpright) each piece is also stood UP by
@@ -41,11 +63,13 @@ using UnityEngine.InputSystem;
 // Stack slots default to a straight line (stackAxis × slotSpacing) but can be overridden per slot by
 // slotAnchors — draggable/rotatable Transforms that place AND angle each slot.
 //
-// THE HOLD POINT MUST NOT SPIN. It (and the mouth) belong on the rigid chassis, not the spinning roller
-// link — otherwise the target whirls around at Play and pieces are dragged to random points. The Build
-// Intake tool anchors them to the chassis, and this component also SELF-HEALS at play start: if the
-// mouth/hold point hang off a moving articulation link it re-anchors them to the chassis and warns
-// (stabilizeHoldPoint). Select the mouth to see the editor-only gizmos; the Build Intake window adds
+// NO ANCHOR MAY HANG OFF A FREE-SPINNING LINK. The mouth, the hold point and the stack slots must not
+// be children of the roller itself — a spinning target whirls around at Play and drags pieces to random
+// points. The Build Intake tool mounts them beside the roller, and this component also SELF-HEALS at
+// play start: any anchor sitting under a free-spinning link is re-anchored to the chassis, with a warning
+// (stabilizeHoldPoint). A LIMITED link is a different thing entirely and is left alone — bolt the whole
+// intake to a pivoting arm, a wrist or a lift stage and every anchor rides it, which is the only way an
+// intake on an arm can work at all. Select the mouth to see the editor-only gizmos; the Build Intake window adds
 // full drag/rotate handles. World is 10x scale, gravity ~-98, pieces mass 1 — but slot spacing and
 // glide speed are all in WORLD units.
 //
@@ -86,6 +110,10 @@ public class IntakePull : MonoBehaviour
     [Tooltip("Optional per-slot anchors — drag one Transform per stack position to lay out THIS model's stack exactly (angled or flat). Slot 0 is the hold point; ROTATING an anchor also sets how the piece in that slot sits. Empty/missing entries fall back to the stackAxis line. The Build Intake tool creates these as draggable IntakeSlot points.")]
     public Transform[] slotAnchors;
 
+    [Header("Handoff between intakes")]
+    [Tooltip("ON (default): this intake can take a piece straight out of ANOTHER intake — hold this one's button with its mouth over where the other one is carrying, and the piece is handed across. That is how a bot gathers at the floor and then loads a scoring mechanism: a carried piece is kinematic with its colliders off, so it fires no trigger and this intake would otherwise be blind to it. OFF: this intake only picks up loose pieces off the field.")]
+    public bool takeFromOtherIntakes = true;
+
     [Header("Hold behavior")]
     // A NEW field name on purpose, and inverted. The old flag was keepHeldWhenIdle, default OFF, and
     // both shipped robots have `keepHeldWhenIdle: 0` in their YAML — a prefab's saved value always
@@ -110,25 +138,43 @@ public class IntakePull : MonoBehaviour
     public Vector3 uprightMeshAxis = Vector3.zero;
 
     [Header("Eject")]
-    [Tooltip("Seconds between ejecting one piece and the next while reverse is held — pieces come out ONE AT A TIME (bottom of the stack first) so they don't clump together, overlap and jam. Tap reverse to eject just one. Set 0 to dump the whole stack at once.")]
+    [Tooltip("ON: reverse just LETS GO — each piece turns back into a physical object exactly where it sits and GRAVITY does the rest, the way a real scoring mechanism dumps (reverse, and the cup/pin falls out). Nothing is launched and nothing loose is shoved, so Eject Speed / Clearance / Acceleration below are ignored. OFF (default): pieces are thrown out through the mouth. Use ON for a basket or claw carried on an arm or chain, OFF for a roller intake that has to spit pieces clear of itself.")]
+    public bool reverseDropsInPlace;
+    [Tooltip("Seconds between releasing one piece and the next while reverse is held — pieces leave ONE AT A TIME (bottom of the stack first) so they don't clump together, overlap and jam. Tap reverse for just one. Set 0 to dump the whole stack at once.")]
     public float ejectInterval = 0.2f;
-    [Tooltip("The world velocity each piece is launched with on eject (world units/sec). Kept separate from Glide Speed so eject stays snappy even if intake glide is slow. World is 10x scale.")]
+    [Tooltip("The world velocity each piece is launched with on eject (world units/sec). Kept separate from Glide Speed so eject stays snappy even if intake glide is slow. World is 10x scale. Ignored when Reverse Drops In Place is on — a drop has no launch.")]
     public float ejectSpeed = 40f;
-    [Tooltip("Keep an ejected piece ghosted (phasing through the frame) until it has flown this many WORLD units from where it launched, THEN it turns solid. Raise it if pieces re-solidify too soon and clip/jam on the bot; lower it if they phase through things too long. World is 10x scale.")]
+    [Tooltip("Keep an ejected piece ghosted (phasing through the frame) until it has flown this many WORLD units from where it launched, THEN it turns solid. Raise it if pieces re-solidify too soon and clip/jam on the bot; lower it if they phase through things too long. World is 10x scale. Ignored when Reverse Drops In Place is on — a dropped piece turns solid at once, so it can't fall through the goal.")]
     public float ejectClearance = 6f;
-    [Tooltip("Extra outward shove given to loose (uncaptured) pieces sitting in the mouth on reverse (acceleration; must beat gravity ~98 to arc out).")]
+    [Tooltip("Extra outward shove given to loose (uncaptured) pieces sitting in the mouth on reverse (acceleration; must beat gravity ~98 to arc out). Ignored when Reverse Drops In Place is on — reverse then only lets go, it never pushes.")]
     public float ejectAcceleration = 300f;
 
     [Header("Stability & debug")]
-    [Tooltip("At play start, if the mouth/hold point hang off a spinning or moving articulation link, re-anchor them to the rigid chassis so the hold point can't whirl around. Also logs a warning telling you to fix the prefab.")]
+    [Tooltip("At play start, if the mouth, hold point or any stack slot hangs off a FREE-SPINNING link (the roller itself), re-anchor it to the rigid chassis so it can't whirl around. Also logs a warning telling you to fix the prefab. A limited arm/wrist/lift link is left alone — an intake mounted on one is meant to ride it.")]
     public bool stabilizeHoldPoint = true;
     [Tooltip("Log a startup diagnostic (where the hold point actually is + its hierarchy path) and one line per capture/arrive/release/eject. Turn off once it's working.")]
     public bool logEvents = true;
 
     // One held piece: its stack slot, whether it has finished gliding in, its pre-capture kinematic state
-    // (so a piece that was somehow kinematic before is restored correctly on release), and its seat
-    // attitude relative to the slot anchor — solved once at capture, replayed every step.
-    private class Held { public Rigidbody rb; public int slot; public bool arrived; public bool wasKinematic; public Vector3 localCom; public Quaternion anchorLocalRot; }
+    // (so a piece that was somehow kinematic before is restored correctly on release), its seat
+    // attitude relative to the slot anchor — solved once at capture, replayed every step — and when it
+    // was taken off another intake (NegativeInfinity for a piece grabbed off the field, so the handoff
+    // cooldown only ever applies to a piece that actually arrived by handoff).
+    private class Held { public Rigidbody rb; public int slot; public bool arrived; public bool wasKinematic; public Vector3 localCom; public Quaternion anchorLocalRot; public float takenAt; }
+
+    // A piece just handed over can't be handed straight back: two intakes whose mouths overlap would
+    // otherwise trade the same piece every physics step for as long as both buttons are held.
+    private const float HandoffCooldown = 0.35f;
+
+    // How far outside the mouth a carried piece can be and still be worth mentioning in the log — far
+    // enough to catch "I aimed at it and nothing happened", near enough not to report the whole field.
+    private const float HandoffLogRange = 12f;
+
+    // Every piece ANY intake is currently carrying, and which intake is carrying it. A carried piece has
+    // its colliders off, so no trigger and no overlap query can see it — this registry is the only thing
+    // that still knows the piece exists, and it is what lets one intake hand a piece to another (and what
+    // stops two of them carrying the same piece at once).
+    private static readonly Dictionary<Rigidbody, IntakePull> carriers = new Dictionary<Rigidbody, IntakePull>();
 
     // A piece ejected and flying out as a ghosted projectile, re-solidified once it has travelled clear of
     // the mouth. Kept OUT of `held` so the intake can grab again immediately.
@@ -140,7 +186,10 @@ public class IntakePull : MonoBehaviour
     private readonly List<Ejected> ejected = new List<Ejected>();
     private readonly List<Rigidbody> scratch = new List<Rigidbody>();
     private readonly List<Held> heldScratch = new List<Held>();
+    private readonly List<Rigidbody> handoffScratch = new List<Rigidbody>();
     private float lastEjectTime;   // when the last piece was launched, for the eject-one-at-a-time spacing
+    private float lastReachLog = float.NegativeInfinity;   // rate limit for the "outside the mouth" hint
+    private Collider mouthCol;
 
     private Transform HoldTf => holdPoint != null ? holdPoint : transform;
     private Vector3 StackDir => stackAxis.sqrMagnitude > 1e-6f ? stackAxis.normalized : Vector3.up;
@@ -174,9 +223,13 @@ public class IntakePull : MonoBehaviour
     // Reverse-eject glides pieces back out through this point before shoving them clear.
     private Vector3 MouthWorldPos()
     {
-        if (GetComponent<Collider>() is BoxCollider box) return transform.TransformPoint(box.center);
+        if (MouthCol is BoxCollider box) return transform.TransformPoint(box.center);
         return transform.position;
     }
+
+    // The trigger collider that IS the mouth. Cached, but re-resolved if it goes away, so a validator
+    // (or a user) adding the collider after the component still gets a working mouth.
+    private Collider MouthCol => mouthCol != null ? mouthCol : (mouthCol = GetComponent<Collider>());
 
     void Reset()
     {
@@ -269,12 +322,12 @@ public class IntakePull : MonoBehaviour
                 // Dump the whole stack at once.
                 heldScratch.Clear();
                 heldScratch.AddRange(held);
-                foreach (Held h in heldScratch) LaunchOut(h, outward);
+                foreach (Held h in heldScratch) EjectOne(h, outward);
             }
             else if (held.Count > 0 && Time.time - lastEjectTime >= ejectInterval)
             {
                 // One at a time, bottom of the stack first, spaced by ejectInterval so they don't clump.
-                LaunchOut(LowestSlotHeld(), outward);
+                EjectOne(LowestSlotHeld(), outward);
                 lastEjectTime = Time.time;
             }
 
@@ -284,10 +337,15 @@ public class IntakePull : MonoBehaviour
             foreach (Held h in heldScratch)
                 if (h.rb != null) CarryTo(h, SlotWorldPos(h.slot), false, dt);
 
-            // Shove any loose (uncaptured) pieces sitting in the mouth out too.
-            scratch.Clear();
-            scratch.AddRange(inMouth.Keys);
-            foreach (Rigidbody rb in scratch) if (rb != null) PushOut(rb, HoldTf.position);
+            // Shove any loose (uncaptured) pieces sitting in the mouth out too — but never when reverse
+            // only DROPS: a piece released a moment ago is solid again and usually still inside the mouth
+            // trigger, so the shove would kick away the piece gravity is supposed to be taking.
+            if (!reverseDropsInPlace)
+            {
+                scratch.Clear();
+                scratch.AddRange(inMouth.Keys);
+                foreach (Rigidbody rb in scratch) if (rb != null) PushOut(rb, HoldTf.position);
+            }
             return;   // don't capture while reversing
         }
 
@@ -301,6 +359,10 @@ public class IntakePull : MonoBehaviour
                 if (held.Count >= maxHeld) break;
                 Capture(rb);
             }
+
+            // Loose pieces come in through the trigger above; a piece another intake is already carrying
+            // can only come in this way, because it has no colliders left to trip a trigger with.
+            TakeHandoffs();
         }
 
         bool holding = intaking || !dropWhenIdle;
@@ -314,7 +376,7 @@ public class IntakePull : MonoBehaviour
         heldScratch.AddRange(held);
         foreach (Held h in heldScratch)
         {
-            if (h.rb == null) { held.Remove(h); continue; }
+            if (h.rb == null) { held.Remove(h); Forget(h.rb); continue; }
 
             Vector3 slot = SlotWorldPos(h.slot);
             Vector3 nextCom = CarryTo(h, slot, !h.arrived, dt);   // glides until it arrives, then snaps to the slot
@@ -360,9 +422,22 @@ public class IntakePull : MonoBehaviour
 
     // Begin holding a piece: make it kinematic (so it glides cleanly, immune to gravity/knocks) and ghost
     // it so it passes through the CAD. Drops it into the bottom slot, pushing the stack up (bottom-fed).
-    private void Capture(Rigidbody rb)
+    //
+    // `from` is the record another intake was carrying this piece under, and is set only on the handoff
+    // path. It matters more than it looks: a piece that is already ghosted can no longer be MEASURED
+    // (see localCom/wasKinematic below), so those two facts travel with it instead of being re-read.
+    //
+    // Public so the headless validator can drive the real capture instead of a copy of it.
+    public bool TryCapture(Rigidbody rb) { int before = held.Count; Capture(rb); return held.Count > before; }
+
+    private void Capture(Rigidbody rb, Held from = null)
     {
         if (rb == null || held.Count >= maxHeld || IsHeld(rb)) return;
+
+        // Never quietly take a piece out of another intake's stack: that has to go through the handoff,
+        // which is what makes the other one let go. (A carried piece can't reach the trigger path at all,
+        // so this only guards a hand-written call.)
+        if (from == null && carriers.TryGetValue(rb, out IntakePull owner) && owner != null && owner != this) return;
 
         // Bottom-fed magazine: a piece enters at the MOUTH (slot 0, the bottom). If slot 0 is occupied,
         // shove the current stack UP one slot to make room underneath, so the FIRST piece intaked ends up
@@ -380,8 +455,10 @@ public class IntakePull : MonoBehaviour
         GoalStackMagnet.ReleaseIfSeated(rb);
 
         // Read the center of mass BEFORE ghosting — disabling colliders makes PhysX recompute the COM to
-        // the pivot, which for these off-pivot field pieces would throw the offset away.
-        Vector3 localCom = rb.centerOfMass;
+        // the pivot, which for these off-pivot field pieces would throw the offset away. A piece taken off
+        // another intake is ALREADY ghosted, so re-reading it here would give exactly that thrown-away
+        // value (the pivot, 9-15u from the mesh) and the piece would jump; inherit it instead.
+        Vector3 localCom = from != null ? from.localCom : rb.centerOfMass;
 
         // Measure this piece's standing axis in its own local frame, so Auto Upright can stand it up no
         // matter how its mesh happens to be tilted (every field pin is baked at a different child rotation).
@@ -404,20 +481,139 @@ public class IntakePull : MonoBehaviour
         }
         Quaternion anchorLocalRot = Quaternion.Inverse(anchorRot) * seatedWorld;
 
-        bool wasKinematic = rb.isKinematic;
+        // Same story as the centre of mass: the piece is kinematic RIGHT NOW because the other intake made
+        // it so, so reading it here would record "was kinematic" and the piece would never fall again.
+        bool wasKinematic = from != null ? from.wasKinematic : rb.isKinematic;
         rb.isKinematic = true;
         rb.interpolation = RigidbodyInterpolation.Interpolate;   // smooth the glide/carry between physics steps
         if (passThroughWhileHeld) SetPieceColliders(rb, false);
 
-        held.Add(new Held { rb = rb, slot = slot, arrived = false, wasKinematic = wasKinematic, localCom = localCom, anchorLocalRot = anchorLocalRot });
-        if (logEvents) Debug.Log($"IntakePull: captured '{rb.name}' → slot {slot} (holding {held.Count}/{maxHeld}); gliding its center (pivot→center offset {localCom.magnitude:0.#}u) to {SlotWorldPos(slot)}." +
+        held.Add(new Held { rb = rb, slot = slot, arrived = false, wasKinematic = wasKinematic, localCom = localCom,
+                            anchorLocalRot = anchorLocalRot, takenAt = from != null ? Time.time : float.NegativeInfinity });
+        Track(rb);
+        if (logEvents) Debug.Log($"IntakePull: {(from != null ? "TOOK" : "captured")} '{rb.name}' → slot {slot} (holding {held.Count}/{maxHeld}); gliding its center (pivot→center offset {localCom.magnitude:0.#}u) to {SlotWorldPos(slot)}." +
                                  (autoUpright ? (localUpAxis.sqrMagnitude > 1e-6f ? " Auto-upright ON." : " Auto-upright ON but NO MESH found to measure — piece keeps its caught attitude.") : ""), this);
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // Handoff: one intake gathers, another lifts and scores.
+    // ---------------------------------------------------------------------------------------------
+
+    // Take a piece another intake is carrying, if this mouth covers where it is being carried. A carried
+    // piece is kinematic with its colliders OFF: it trips no trigger, and Physics.Overlap* cannot find it
+    // either, so this is the one capture path that does not go through PhysX at all — the mouth box is
+    // measured directly against the piece's centre. This is the floor-intake → scoring-mechanism handoff.
+    //
+    // Public so the headless validator can drive the real thing rather than a copy of its logic.
+    public void TakeHandoffs()
+    {
+        if (!takeFromOtherIntakes || carriers.Count == 0 || held.Count >= maxHeld) return;
+
+        // Snapshot the keys: relinquishing mutates the registry, and one of the carriers might be us.
+        handoffScratch.Clear();
+        foreach (KeyValuePair<Rigidbody, IntakePull> kv in carriers)
+            if (kv.Value != this) handoffScratch.Add(kv.Key);
+
+        foreach (Rigidbody rb in handoffScratch)
+        {
+            if (held.Count >= maxHeld) return;
+            if (rb == null) { Forget(rb); continue; }                        // destroyed piece — prune it
+            if (!carriers.TryGetValue(rb, out IntakePull from) || from == null || from == this) continue;
+            if (!MouthCovers(from.CarriedCenter(rb), out float miss)) { NoteOutOfReach(rb, miss); continue; }
+
+            Held taken = from.Relinquish(rb);
+            if (taken != null) Capture(rb, taken);
+        }
+    }
+
+    // Hand a piece over to another intake. It stays kinematic and ghosted the whole way across — there is
+    // no step in which it is a loose physical object, so it cannot drop, bounce or clip through anything
+    // mid-handoff. Refused for a moment after WE took it (see HandoffCooldown). Returns the record the
+    // taker needs, or null if we aren't carrying this piece or won't give it up yet.
+    private Held Relinquish(Rigidbody rb)
+    {
+        for (int i = 0; i < held.Count; i++)
+        {
+            Held h = held[i];
+            if (h.rb != rb) continue;
+            if (Time.time - h.takenAt < HandoffCooldown) return null;
+            held.RemoveAt(i);
+            Forget(rb);
+            if (logEvents) Debug.Log($"IntakePull[{name}]: handed '{rb.name}' over to another intake.", this);
+            return h;
+        }
+        return null;
+    }
+
+    // Where a piece we are carrying actually IS: its centre of mass, rebuilt from the offset captured
+    // before it was ghosted. rb.worldCenterOfMass is no use here — with the colliders off PhysX has
+    // recomputed the centre back to the pivot, which for these field pieces is 9-15u from the mesh.
+    // Public alongside IsCarrying so the validator can ask both questions of the real component.
+    public Vector3 CarriedCenter(Rigidbody rb)
+    {
+        foreach (Held h in held) if (h.rb == rb) return rb.position + rb.rotation * h.localCom;
+        return rb.position;
+    }
+
+    // Is a world point inside the mouth zone? Both sides of this test are invisible to PhysX (the mouth is
+    // a trigger, the piece has no colliders), so the box is measured by hand. `miss` is how far OUTSIDE
+    // the box the point is, in world units — 0 when it's inside — which is what the hint below reports.
+    private bool MouthCovers(Vector3 worldPoint, out float miss)
+    {
+        miss = float.PositiveInfinity;
+        Collider col = MouthCol;
+        if (col == null) return false;
+
+        if (col is BoxCollider box)
+        {
+            Vector3 d = transform.InverseTransformPoint(worldPoint) - box.center;
+            Vector3 half = box.size * 0.5f;
+            Vector3 over = Vector3.Max(Vector3.zero, new Vector3(Mathf.Abs(d.x) - half.x,
+                Mathf.Abs(d.y) - half.y, Mathf.Abs(d.z) - half.z));
+            // Local → world: the mouth lives inside the robot's ~10x scale like everything else, so the
+            // overshoot has to be scaled before it means anything in world units.
+            miss = Vector3.Scale(over, transform.lossyScale).magnitude;
+            return over == Vector3.zero;
+        }
+
+        miss = (col.ClosestPoint(worldPoint) - worldPoint).magnitude;   // 0 inside, for any convex shape
+        return miss <= 1e-4f;
+    }
+
+    // "I pressed the button and nothing happened": say so, once a second, when the piece the player is
+    // plainly aiming at is being carried just outside this mouth. Cheap to leave on — it only fires while
+    // the button is held, and only for a piece already in another intake's hands.
+    private void NoteOutOfReach(Rigidbody rb, float miss)
+    {
+        if (!logEvents || miss > HandoffLogRange || Time.time - lastReachLog < 1f) return;
+        lastReachLog = Time.time;
+        Debug.Log($"IntakePull[{name}]: '{rb.name}' is held by another intake {miss:0.#}u OUTSIDE this " +
+                  "mouth box, so there is nothing here to take. Move this intake's mouth over where the " +
+                  "other one carries its stack (or make the mouth bigger) — the yellow box is the zone.", this);
+    }
+
+    // Registry bookkeeping. Forget() deliberately compares with (object) rather than ==: a DESTROYED
+    // Rigidbody reads as null through Unity's operator, and skipping it there would leave the dead key in
+    // the dictionary forever.
+    private void Track(Rigidbody rb) { if (rb != null) carriers[rb] = this; }
+
+    private void Forget(Rigidbody rb)
+    {
+        if ((object)rb == null) return;
+        if (!carriers.TryGetValue(rb, out IntakePull c)) return;
+        if (c == this || c == null || rb == null) carriers.Remove(rb);   // ours, or orphaned, or destroyed
+    }
+
+    // Which intake is carrying this piece, if any — the answer that used to be unobtainable once a piece
+    // went kinematic. Null means it is loose on the field (or gone).
+    public static IntakePull CarrierOf(Rigidbody rb) =>
+        rb != null && carriers.TryGetValue(rb, out IntakePull c) ? c : null;
 
     // Restore one piece's dynamics and colliders (no list change). Shared by Release and OnDisable.
     private void Solidify(Held h)
     {
         Rigidbody rb = h.rb;
+        Forget(rb);                      // physical again — no longer a piece anyone is carrying
         if (rb == null) return;
         rb.isKinematic = h.wasKinematic;
         if (passThroughWhileHeld) SetPieceColliders(rb, true);
@@ -453,10 +649,28 @@ public class IntakePull : MonoBehaviour
 
     private void OnScorePerformed(InputAction.CallbackContext ctx) => ScoreDrop();
 
-    // Reverse-eject, one physics step: carry every committed-leaving piece OUT through the mouth (staggered
-    // by slot so they don't pile), staying ghosted so they pass through the rollers; once a piece is clear
-    // (ejectClearance past the mouth) it turns solid and gets shoved out. Called every FixedUpdate, so an
-    // eject finishes even if reverse was only tapped — the piece can't get re-glued to its slot.
+    // One piece leaves the stack. Two ways out, chosen by reverseDropsInPlace: thrown clear of the mouth
+    // (a roller intake), or simply handed back to physics where it sits (a scoring mechanism reversing and
+    // letting gravity take the piece). Both are committed the moment they're called.
+    private void EjectOne(Held h, Vector3 outward)
+    {
+        if (reverseDropsInPlace) DropInPlace(h);
+        else LaunchOut(h, outward);
+    }
+
+    // Reverse as a real scoring mechanism does it: stop holding the piece, hand it back to physics exactly
+    // where it is, and let gravity do the work — no launch velocity, nothing pushed. It turns solid
+    // IMMEDIATELY, unlike a launched piece: a piece that is only falling out would sit inside the
+    // ejectClearance radius for a while, and staying ghosted that long would drop it straight through the
+    // stake or goal it is aimed at. This is the same release path as ScoreDrop, one piece at a time.
+    private void DropInPlace(Held h)
+    {
+        held.Remove(h);
+        Solidify(h);
+        if (h.rb != null && logEvents)
+            Debug.Log($"IntakePull: dropped '{h.rb.name}' in place — physical again, gravity takes it from here.", this);
+    }
+
     // Eject one piece: pull it from `held` NOW (freeing its slot), make it a free dynamic body flying
     // outward in WORLD space (so it separates from the bot instead of clinging), and — if it was ghosted
     // while held — hand it to `ejected` to re-solidify once it's clear of the rollers. Committed the moment
@@ -465,6 +679,7 @@ public class IntakePull : MonoBehaviour
     {
         held.Remove(h);
         Rigidbody rb = h.rb;
+        Forget(rb);
         if (rb == null) return;
         rb.isKinematic = h.wasKinematic;                              // free body again (was kinematic while held)
         if (!rb.isKinematic)
@@ -507,6 +722,10 @@ public class IntakePull : MonoBehaviour
         foreach (Held h in held) if (h.rb == rb) return true;
         return false;
     }
+
+    // Is this intake carrying that piece? (The registry answers "who holds it"; this answers it for one
+    // intake, which is how a handoff can be checked from both ends.)
+    public bool IsCarrying(Rigidbody rb) => IsHeld(rb);
 
     // The held piece lowest in the stack (smallest slot index = bottom, nearest the mouth) — the one
     // ejected first. Includes null-rb entries so stale ones get cleaned up rather than blocking the queue.
@@ -551,29 +770,43 @@ public class IntakePull : MonoBehaviour
     // Stability: keep the hold point (and mouth) off any spinning/moving link.
     // ---------------------------------------------------------------------------------------------
 
-    // Re-anchor the mouth and hold point to the rigid chassis if either currently hangs off a moving
-    // articulation link (e.g. left on the spinning roller by an old setup or a stale prefab). Preserves
-    // world pose, so a hold point sitting at the right spot stays there — it just stops whirling.
-    private void StabilizeAnchors()
+    // Re-anchor EVERY anchor that a free-spinning link would whirl — the mouth, the hold point and the
+    // stack slots — to the rigid chassis. Preserves world pose, so an anchor sitting at the right spot
+    // stays there; it just stops being dragged in circles.
+    //
+    // The slots used to be left out of this sweep while the hold point was in it, and that asymmetry
+    // read as a bug in the intake: mount the whole intake on a pivoting arm and IntakeSlot1 followed
+    // the arm while the hold point (slot 0) was snapped back to the chassis, so the stack tore itself
+    // apart. Both halves are fixed — slots are swept too, and a LIMITED link like that arm is no longer
+    // re-anchored at all (see NeedsReanchor).
+    //
+    // Public so the headless validator can drive the real thing instead of a copy of its logic; Awake
+    // is the only caller in the game.
+    public void StabilizeAnchors()
     {
         Transform chassis = ResolveStableChassis();
         if (chassis == null) return;
 
-        if (holdPoint != null && NeedsReanchor(holdPoint, chassis, out string holdReason))
-        {
-            Debug.LogWarning(
-                $"IntakePull: hold point '{holdPoint.name}' is {holdReason} — it would whirl around at Play " +
-                $"and drag pieces to random points. Re-anchoring it to the chassis '{chassis.name}'. " +
-                "Re-run Tools > RoboSim > Robot > Mechanisms > Build Intake and APPLY TO THE PREFAB to fix it permanently.", this);
-            holdPoint.SetParent(chassis, true);
-        }
+        // Parents before children: the markers can be children of the mouth, and one whose chain is
+        // already clean after its parent moved needs no rescue of its own.
+        TryReanchor(transform, chassis, "the intake mouth");
+        if (holdPoint != null) TryReanchor(holdPoint, chassis, $"hold point '{holdPoint.name}'");
+        if (slotAnchors == null) return;
+        foreach (Transform a in slotAnchors)
+            if (a != null && a != holdPoint && a != transform)
+                TryReanchor(a, chassis, $"stack slot '{a.name}'");
+    }
 
-        if (NeedsReanchor(transform, chassis, out string mouthReason))
-        {
-            Debug.LogWarning(
-                $"IntakePull: intake mouth is {mouthReason} — re-anchoring it to the chassis '{chassis.name}' so the grab zone doesn't spin.", this);
-            transform.SetParent(chassis, true);
-        }
+    private void TryReanchor(Transform t, Transform chassis, string what)
+    {
+        if (!NeedsReanchor(t, chassis, out string reason)) return;
+        Debug.LogWarning(
+            $"IntakePull: {what} is {reason} — it would whirl around at Play and drag pieces to random " +
+            $"points. Re-anchoring it to the chassis '{chassis.name}'. Mount the markers beside the " +
+            "roller (Build Intake does that) instead of inside it, and APPLY TO THE PREFAB to fix it " +
+            "permanently. Hanging them off a limited arm/wrist/lift link is fine — only a free-spinning " +
+            "link is moved.", this);
+        t.SetParent(chassis, true);
     }
 
     // The robot's rigid base: the topmost ArticulationBody ancestor (the articulation root — it drives
@@ -590,10 +823,19 @@ public class IntakePull : MonoBehaviour
         return transform.root;
     }
 
-    // True if t is not cleanly parented under the chassis via rigid (non-articulated) transforms — i.e.
-    // some ancestor between t and the chassis is its own ArticulationBody (a joint link that moves), or
-    // t isn't under the chassis at all.
-    private static bool NeedsReanchor(Transform t, Transform chassis, out string reason)
+    // True if t would be whirled around by a FREE-SPINNING link between it and the chassis, or isn't
+    // under the chassis at all.
+    //
+    // "Any ArticulationBody above it" was the old test, and it was too broad by a long way: it caught
+    // every limited joint too, so an intake bolted to a pivoting arm had its anchors torn off the arm
+    // and pinned to the chassis at Play. A LIMITED joint cannot whirl — it only goes where the driver
+    // drives it, and an anchor riding it is the whole point of mounting an intake on an arm (the same
+    // reason the LiftCarriage bypass below exists, generalized). What actually breaks pieces is an
+    // unbounded spin: the roller/flywheel the intake is built around. So that, and only that, is what
+    // gets rescued. A fixed link is bounded to the point of not moving at all, so it rides too.
+    //
+    // Public so the validator can exercise the rule directly.
+    public static bool NeedsReanchor(Transform t, Transform chassis, out string reason)
     {
         reason = null;
         if (t == null || chassis == null || t == chassis) return false;
@@ -609,14 +851,40 @@ public class IntakePull : MonoBehaviour
         for (Transform p = t.parent; p != null; p = p.parent)
         {
             if (p == chassis) return false;                                  // reached the rigid base cleanly
-            if (p.GetComponent<ArticulationBody>() != null)
+            if (SpinsFreely(p.GetComponent<ArticulationBody>()))
             {
-                reason = $"parented under the moving link '{p.name}'";
+                reason = $"parented under the free-spinning link '{p.name}'";
                 return true;
             }
         }
         reason = "not parented under the chassis";
         return true;
+    }
+
+    // A link with no travel limit on its own DOF — one that can turn (or slide) forever. A revolute
+    // whose twist is FreeMotion is exactly what the "Spinning motor" mechanism kind writes for a
+    // roller, flywheel or intake shaft, and it is the one link an anchor must never hang off. Every
+    // other joint is bounded, so whatever it carries keeps a fixed relationship to it.
+    // (The chassis's own joint settings are never consulted: the walk above stops the moment it
+    // reaches the chassis, which is by definition the frame everything else is measured against.)
+    private static bool SpinsFreely(ArticulationBody body)
+    {
+        if (body == null) return false;
+        switch (body.jointType)
+        {
+            case ArticulationJointType.RevoluteJoint:
+                return body.twistLock == ArticulationDofLock.FreeMotion;
+            case ArticulationJointType.SphericalJoint:
+                return body.twistLock == ArticulationDofLock.FreeMotion ||
+                       body.swingYLock == ArticulationDofLock.FreeMotion ||
+                       body.swingZLock == ArticulationDofLock.FreeMotion;
+            case ArticulationJointType.PrismaticJoint:
+                return body.linearLockX == ArticulationDofLock.FreeMotion ||
+                       body.linearLockY == ArticulationDofLock.FreeMotion ||
+                       body.linearLockZ == ArticulationDofLock.FreeMotion;
+            default:
+                return false;            // fixed joint — welded, so riding it is riding the chassis
+        }
     }
 
     private void LogStartupDiagnostics()
@@ -629,8 +897,14 @@ public class IntakePull : MonoBehaviour
 
         Debug.Log(
             $"IntakePull[{name}] ready. Hold point = '{HierarchyPath(h)}' at world {h.position}. " +
-            $"maxHeld={maxHeld}, glideSpeed={glideSpeed}, slotSpacing={slotSpacing}, dropWhenIdle={dropWhenIdle}. " +
-            (intakeCount > 1 ? $"NOTE: {intakeCount} IntakePull components on this robot. " : "") +
+            $"maxHeld={maxHeld}, glideSpeed={glideSpeed}, slotSpacing={slotSpacing}, dropWhenIdle={dropWhenIdle}, " +
+            $"reverse={(reverseDropsInPlace ? "DROPS pieces in place (gravity)" : $"LAUNCHES pieces out at {ejectSpeed}")}. " +
+            (intakeCount > 1
+                ? $"NOTE: {intakeCount} IntakePull components on this robot — this one " +
+                  (takeFromOtherIntakes
+                      ? "CAN take pieces off the others (hold its button with its mouth over their stack). "
+                      : "will NOT take pieces off the others (Take From Other Intakes is off). ")
+                : "") +
             "If this world position isn't where you dragged the hold point, your edit didn't reach the spawned PREFAB " +
             "(RobotSpawner instantiates the prefab, not the scene object).", this);
     }
