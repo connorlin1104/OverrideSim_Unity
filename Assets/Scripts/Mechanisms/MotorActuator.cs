@@ -11,6 +11,11 @@ using UnityEngine;
 // (Physics.Simulate, where Awake/Update never run) drive a joint whose drive parameters were
 // baked at edit time by the URDF post-processor.
 //
+// A joint that has TRAVEL LIMITS holds its angle when the input is 0 (see ShouldHoldWhenIdle). That is
+// the difference between an arm and a roller: a velocity drive with a target of 0 resists how FAST a
+// back-drive turns the joint, never where it ends up, so gravity walks a raised arm down and it never
+// stays up. A free-spinning link is left to coast, which is what a roller or flywheel is for.
+//
 // Works for both revolute joints (maxRpm, drive speaks degrees/s) and prismatic joints
 // (maxLinearSpeed in world units/s). Never touches the joint anchors — for URDF imports the
 // importer's anchorRotation encodes the joint axis, and re-seeding it is the known way to
@@ -40,6 +45,8 @@ public class MotorActuator : MonoBehaviour
     public bool holdPositionWhenIdle;
     [Tooltip("Position spring stiffness while holding idle (only if Hold Position When Idle). Higher = firmer hold against external pushes; the hold torque is still capped by the stall torque, so a shove past stall still gives — but it springs back when released instead of staying where it was pushed.")]
     public float holdStiffness = 20000f;
+    [Tooltip("Let this joint go LIMP when idle instead of holding its angle. Only matters for a joint with travel limits (an arm, a wrist, a rotating outtake): those hold their angle by default, because a plain velocity drive resists only the SPEED of a back-drive, so gravity walks a raised arm down a fraction of a degree at a time and it never stays up. Free-spinning rollers and flywheels always coast — they are never held either way. Tick this for a limited joint that SHOULD fall or swing freely when you let go.")]
+    public bool coastWhenIdle;
 
     // Last commanded input in [-1, 1]; ButtonRouter uses it to skip redundant drive writes.
     public float CurrentInput { get; private set; }
@@ -50,7 +57,15 @@ public class MotorActuator : MonoBehaviour
 
     private bool IsPrismatic => body != null && body.jointType == ArticulationJointType.PrismaticJoint;
 
-    void Awake()
+    void Awake() => Configure();
+
+    // Everything the motor needs before a button can drive it: resolve the joint, bake the motor model
+    // into its X drive, cap the joint velocity, and decide whether this joint holds its angle when idle.
+    //
+    // Public and idempotent so the headless validator can set a motor up exactly the way the game does —
+    // Awake never runs in edit mode, and a validator that re-implemented this would be testing its own
+    // copy of the rule instead of the real one.
+    public void Configure()
     {
         if (body == null) body = GetComponent<ArticulationBody>();
         if (body == null)
@@ -75,10 +90,48 @@ public class MotorActuator : MonoBehaviour
             ? maxLinearSpeed * 1.1f
             : maxRpm * Mathf.PI * 2f / 60f * 1.1f;
 
-        // If configured to hold when idle, engage the hold now so the joint is pinned from frame 0
-        // (ButtonRouter may never send an explicit SetInput(0), so we can't wait for one). Runs
-        // regardless of Awake order vs. whoever set the flag — see SetHoldPositionWhenIdle.
+        // Decide whether this joint holds its angle when idle, then engage the hold now so it is pinned
+        // from frame 0 (ButtonRouter may never send an explicit SetInput(0), so we can't wait for one).
+        // Runs regardless of Awake order vs. whoever set the flag — see SetHoldPositionWhenIdle.
+        holdPositionWhenIdle = ShouldHoldWhenIdle(body, holdPositionWhenIdle, coastWhenIdle);
         if (holdPositionWhenIdle) EnterHold();
+    }
+
+    // A joint with a TRAVEL RANGE — an arm, a wrist, a rotating outtake — is meant to stay where the
+    // driver left it, and a velocity drive cannot do that: with a target of 0 it fights the SPEED of a
+    // back-drive, not the position, so gravity creeps a raised arm down and nothing ever brings it back.
+    // So a limited revolute holds its angle when idle by DEFAULT — exactly what Dr4bLift and CascadeLift
+    // already switch on by hand for their lift drivers — and a free-spinning roller/flywheel never does,
+    // because coasting is its whole job. coastWhenIdle opts a limited joint back out.
+    //
+    // The opt-out is a NEW field on purpose: every shipped robot serializes `holdPositionWhenIdle: 0`,
+    // and a saved value beats a changed C# default, so flipping that default would have reached no
+    // existing prefab. A field absent from the YAML deserializes to its C# default, which does.
+    //
+    // Pure and public so the headless validator can test the rule directly.
+    public static bool ShouldHoldWhenIdle(ArticulationBody body, bool holdPositionWhenIdle, bool coastWhenIdle)
+    {
+        if (coastWhenIdle) return false;
+        return holdPositionWhenIdle || HoldsAngleByDefault(body);
+    }
+
+    // Revolute + LimitedMotion is the "positions to an angle and stays there" joint. FreeMotion is a
+    // roller (must coast), LockedMotion has no travel to hold, and prismatic joints are excluded because
+    // EnterHold speaks degrees — a linear lift is held by its own builder instead (CascadeLift bakes stiff
+    // position drives on the stages).
+    private static bool HoldsAngleByDefault(ArticulationBody body) =>
+        body != null &&
+        body.jointType == ArticulationJointType.RevoluteJoint &&
+        body.twistLock == ArticulationDofLock.LimitedMotion;
+
+    // The hold angle can only be read once PhysX has stepped the joint — jointPosition is NaN before that
+    // — and ButtonRouter never sends SetInput(0) for a button nobody has pressed yet, so a joint that
+    // should be holding from the start would otherwise sit there limp forever waiting for an input that
+    // never comes. Retry until it takes; once holding, this costs a bool test per step.
+    void FixedUpdate()
+    {
+        if (holdPositionWhenIdle && !holding && !IsPrismatic && Mathf.Abs(CurrentInput) < 1e-4f)
+            EnterHold();
     }
 
     // Live-set the free-spin speed (RPM, revolute) and re-apply the joint's velocity cap so a FASTER
