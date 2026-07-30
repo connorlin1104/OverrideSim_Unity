@@ -92,8 +92,19 @@ public static class IntakeHandoffValidation
         // Simulate what PhysX does to a ghosted piece: with no live colliders the automatic centre of
         // mass collapses back to the pivot. Forcing it here means the inheritance check below fails if
         // the taker re-measures — in edit mode as well as at play.
+        //
+        // The body has to be made dynamic for the write, and that is not a detail: PhysX SILENTLY IGNORES
+        // a centre-of-mass write on a kinematic body, and the piece is kinematic because the floor intake
+        // is carrying it. Written the obvious way this fixture changed nothing at all, so "inherit" and
+        // "re-measure" produced the same number and a mutant that re-measured passed the check below.
         Vector3 centreBefore = floor.CarriedCenter(piece);
+        piece.isKinematic = false;
         piece.centerOfMass = Vector3.zero;
+        piece.isKinematic = true;
+        ValidationUtil.Assert(piece.centerOfMass.sqrMagnitude < 1e-6f,
+            "TAUTOLOGY GUARD: the fixture must really be able to move this piece's centre of mass onto " +
+            "its pivot, the way ghosting does at play. If it cannot, inheriting and re-measuring read the " +
+            "same value and the check below proves nothing");
 
         scoring.TakeHandoffs();
 
@@ -111,7 +122,7 @@ public static class IntakeHandoffValidation
         ValidationUtil.Assert(!AnyColliderLive(piece), "...and stays ghosted, for the same reason");
 
         Cleanup();
-        return 7;
+        return 8;
     }
 
     // --- 3. Release ---------------------------------------------------------------------------------
@@ -149,8 +160,10 @@ public static class IntakeHandoffValidation
         ValidationUtil.Assert(floor.TryCapture(piece), "the fixture starts with the floor intake holding it");
 
         // OUT OF REACH. The scoring mouth is a box, not a magnet: a piece carried somewhere else is not
-        // handed over just because both intakes are on the same robot.
-        MovePieceCentre(piece, floor, new Vector3(0f, 3f, 6f));
+        // handed over just because both intakes are on the same robot. JUST outside on purpose — the
+        // mouth's half-extent here is 0.5 local (1.0 world, under the arm's 2x scale) and this sits at
+        // 0.6 local. Parking it far away instead would pass with the box maths wrong by any factor.
+        MovePieceCentre(piece, floor, new Vector3(0f, 3f, 1.2f));
         scoring.TakeHandoffs();
         ValidationUtil.Assert(floor.IsCarrying(piece),
             "a piece carried OUTSIDE the mouth box must not be taken — the box is the zone the player " +
@@ -170,6 +183,17 @@ public static class IntakeHandoffValidation
             "a piece just handed over must not be handed straight back — two overlapping mouths would " +
             "trade it every step for as long as both buttons are held");
 
+        // TAUTOLOGY GUARD for the line above. Same two mouths, same spot, but a piece the scoring intake
+        // picked up itself rather than took, so no cooldown is running: the floor intake DOES take this
+        // one. That is what proves the refusal above came from the cooldown and not from a floor mouth
+        // that never covered the stack point at all.
+        Rigidbody fresh = MakePiece("Cup_Cooldown", new Vector3(0f, 3f, 0f));
+        ValidationUtil.Assert(scoring.TryCapture(fresh), "the guard needs the scoring intake to hold a second piece");
+        floor.TakeHandoffs();
+        ValidationUtil.Assert(floor.IsCarrying(fresh),
+            "with no cooldown running the floor mouth must be able to take this piece back — otherwise " +
+            "the ping-pong check above is refusing nothing and would pass with the cooldown deleted");
+
         // THE OPT-OUT. Same geometry, same overlap, switch off.
         Rigidbody second = MakePiece("Cup_OptOut", new Vector3(0f, 3f, 0f));
         ValidationUtil.Assert(floor.TryCapture(second), "the fixture needs a second carried piece");
@@ -188,7 +212,7 @@ public static class IntakeHandoffValidation
             "slots");
 
         Cleanup();
-        return 7;
+        return 9;
     }
 
     // --- Fixtures -----------------------------------------------------------------------------------
@@ -199,11 +223,15 @@ public static class IntakeHandoffValidation
     // (0,3,0), and the scoring intake's mouth is a box centred on that spot. The scoring mouth sits under
     // a SCALED parent on purpose — the mouth box is measured in local units, and the robots this runs on
     // are full of non-unit scales, so the conversion has to be exercised.
+    //
+    // The floor mouth is TALL so that it too covers the stack point. Both mouths have to reach the same
+    // place or the ping-pong check below is refused by geometry rather than by the cooldown it means to
+    // test — which is exactly how a mutant with the cooldown deleted survived the first run.
     private static void MakePair(out IntakePull floor, out IntakePull scoring)
     {
         Transform robot = Track(new GameObject("HandoffRobot")).transform;
 
-        floor = MakeIntake(robot, "IntakeMouth", new Vector3(0f, 1f, 0f), new Vector3(2f, 2f, 2f),
+        floor = MakeIntake(robot, "IntakeMouth", new Vector3(0f, 1f, 0f), new Vector3(2f, 6f, 2f),
             new Vector3(0f, 3f, 0f));
 
         Transform arm = new GameObject("ScoringArm").transform;
@@ -255,7 +283,12 @@ public static class IntakeHandoffValidation
         // Explicit, not measured: edit-mode mass properties are not worth depending on, and the trap
         // being tested is what a GHOSTED piece reports when asked for its centre of mass.
         rb.centerOfMass = new Vector3(9f, 0f, 0f);
+        // Both, and the body's own position is the one that matters: everything in IntakePull measures
+        // from rb.position, and in EDIT MODE a Rigidbody does not pick up a transform assignment — there
+        // is no simulation step to sync them, so a body left at the origin reads as 9 units from where
+        // the piece visibly is and every mouth-box test lands somewhere else entirely.
         go.transform.position = centreAt - rb.centerOfMass;
+        rb.position = centreAt - rb.centerOfMass;
         return rb;
     }
 
