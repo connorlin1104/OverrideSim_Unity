@@ -138,10 +138,24 @@ public class GoalStackMagnet : MonoBehaviour
     // How far off the slot a timed-out pull-in may settle and still count as seated (world units).
     private const float NearEnough = 0.35f;
 
-    // How far above its slot a falling piece starts easing off pullInFallSpeed down to pullInSpeed
-    // (world units). About one piece tall — a cup stands ~0.86 — so the drop stays a drop right up to
-    // the last piece-height and only then becomes a landing.
-    private const float SettleDistance = 1f;
+    // The fastest a piece may be coming down `height` above its slot and still be brought to rest ON it.
+    //
+    // This is the constraint the whole descent lives under, and ignoring it is subtle: the magnet may
+    // only change a pulled-in piece's velocity by pullInPerStep per step, so the deceleration it can
+    // actually reach is pullInPerStep/step — less whatever gravity is adding on the way down. A piece
+    // descending faster than sqrt(2*a*h) therefore CANNOT be stopped in the height it has left. It
+    // overshoots the slot, gets hauled back up, overshoots again, and never lands inside the arrival
+    // window, so `arrived` never latches and it stays in the soft pull-in hold rather than the rigid
+    // seated one — which reads on the field as a scored piece that will not stop wobbling on the stake,
+    // and in FieldFeatureSmokeTest as "seated piece is still spinning".
+    //
+    // Bounding the descent by this makes the drop as fast as it can be while still being a landing.
+    private float MaxStoppableDescent(float height, float step, Vector3 up)
+    {
+        float gravityAlong = Mathf.Max(0f, -Vector3.Dot(Physics.gravity, up));  // helps the fall, fights the brake
+        float brakeAccel = Mathf.Max(1f, pullInPerStep / Mathf.Max(step, 1e-4f) - gravityAlong);
+        return Mathf.Sqrt(2f * brakeAccel * Mathf.Max(0f, height));
+    }
 
     private readonly List<Seated> stack = new List<Seated>();
     // Generous: the scan sphere sees every wall collider of the goal plus every 12-collider piece
@@ -263,7 +277,7 @@ public class GoalStackMagnet : MonoBehaviour
         // 2) Look for a new piece settling onto the next open slot.
         if (stack.Count >= maxStack) return;
         Vector3 nextSlot = stackAnchor.position + up * baseHeight; // slot surface; restHeight is per-piece
-        TryCapture(nextSlot, up);
+        TryCapture(nextSlot, up, dt);
     }
 
     // The magnet itself: move the piece's velocity toward "seek the slot" and its spin toward the
@@ -314,14 +328,14 @@ public class GoalStackMagnet : MonoBehaviour
             Vector3 lateralVel = Vector3.ClampMagnitude(-lateral * pullGain, pullInSpeed);
             float alignment = Mathf.Clamp01(1f - lateral.magnitude / Mathf.Max(0.05f, captureRadius * 0.5f));
 
-            // Descend at something that reads as FALLING, not floating: pullInFallSpeed for the whole
-            // drop, easing down to the gentle pullInSpeed only over the last SettleDistance so the piece
-            // still lands softly on whatever is under it. Easing over the WHOLE descent instead — which
-            // is what a plain error-proportional glide does — spends most of the fall crawling, and that
-            // is what made a scored piece look like it floated down the post. Still scaled by
-            // `alignment`, so an off-axis piece centres before it drops and can't wedge on the stake.
-            float descendSpeed = Mathf.Lerp(pullInSpeed, Mathf.Max(pullInSpeed, pullInFallSpeed),
-                                            Mathf.Clamp01(height / SettleDistance));
+            // Descend at something that reads as FALLING, not floating — but never faster than this
+            // magnet can still STOP before the slot. See MaxStoppableDescent: a piece coming down faster
+            // than it can be braked in the height it has left blows through its slot, gets hauled back,
+            // and oscillates without ever landing inside the arrival window, so it stays in this soft
+            // pull-in hold instead of the rigid seated one and sits there wobbling on the stake.
+            // Still scaled by `alignment`, so an off-axis piece centres before it drops.
+            float descendSpeed = Mathf.Clamp(MaxStoppableDescent(height, step, up),
+                                             pullInSpeed, Mathf.Max(pullInSpeed, pullInFallSpeed));
             float verticalVel = height > 0f
                 ? -descendSpeed * alignment                                    // descend once centered
                 : Mathf.Min(-height * pullGain, pullInSpeed);                  // below the slot: come up
@@ -368,7 +382,7 @@ public class GoalStackMagnet : MonoBehaviour
     }
 
     // Capture = a slow, free piece whose center is inside the small window around the next slot.
-    private void TryCapture(Vector3 nextSlot, Vector3 up)
+    private void TryCapture(Vector3 nextSlot, Vector3 up, float dt)
     {
         // Superset sphere for the broad scan (the exact cylinder gates are below). The gate region
         // reaches captureHeight above the slot (the post top) and restHeight above the surface.
@@ -430,13 +444,17 @@ public class GoalStackMagnet : MonoBehaviour
         // things. SIDEWAYS speed is what ricochets it off the pocket faster than any pull can recover, so
         // that is killed outright. The FALL is the scoring drop itself: braking it to the gentle sideways
         // speed here is what made a scored piece look like it stopped dead at the post top and floated
-        // down, so it is kept (capped at the descent rate the pull-in uses anyway). Upward speed is not a
-        // drop and gets the sideways treatment.
+        // down, so it is KEPT — but only up to what can still be braked in the height it has left to fall
+        // (MaxStoppableDescent). Keeping more than that is what leaves a piece oscillating around its
+        // slot instead of landing on it. Upward speed is not a drop and gets the sideways treatment.
+        float catchHeight = Vector3.Dot(best.worldCenterOfMass - (nextSlot + up * bestProfile.restHeight), up);
+        float keepFall = Mathf.Clamp(MaxStoppableDescent(catchHeight, dt, up),
+                                     pullInSpeed, Mathf.Max(pullInSpeed, pullInFallSpeed));
         Vector3 caught = best.linearVelocity;
         float fallVel = Vector3.Dot(caught, up);
         Vector3 sideways = caught - up * fallVel;
         best.linearVelocity = Vector3.ClampMagnitude(sideways, pullInSpeed)
-                              + up * Mathf.Clamp(fallVel, -Mathf.Max(pullInSpeed, pullInFallSpeed), pullInSpeed);
+                              + up * Mathf.Clamp(fallVel, -keepFall, pullInSpeed);
         best.angularVelocity = Vector3.ClampMagnitude(best.angularVelocity, maxTiltSpeed);
 
         Seated seated = new Seated

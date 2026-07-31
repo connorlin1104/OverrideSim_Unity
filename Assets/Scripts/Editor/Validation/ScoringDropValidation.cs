@@ -127,8 +127,8 @@ public static class ScoringDropValidation
     {
         // Same fixture, same drop, two settings. The OLD behaviour is exactly "the descent is capped at
         // the sideways glide speed", so setting pullInFallSpeed to pullInSpeed reproduces it.
-        float fastSteps = StepsToSeat(24f, out float fastFinalError);
-        float slowSteps = StepsToSeat(4f, out _);
+        float fastSteps = StepsToSeat(24f, out float fastFinalError, out float fastDriftDeg, out float fastSpin);
+        float slowSteps = StepsToSeat(4f, out _, out float slowDriftDeg, out float slowSpin);
 
         ValidationUtil.Assert(fastSteps > 0f,
             "the fixture must actually seat the piece at the shipped descent speed, or nothing below " +
@@ -149,14 +149,38 @@ public static class ScoringDropValidation
             "off). A descent that only looks fast because the piece blew through the goal is worse than a " +
             "slow one");
 
+        // A seated piece must HOLD ITS ATTITUDE. Measured as actual rotation over 50 steps, deliberately
+        // NOT as angularVelocity: the rigid hold is a deadbeat controller, so it commands exactly the
+        // spin that would erase the remaining error in ONE step (angleError / dt). At 100 Hz that
+        // multiplies the error by a hundred — a piece sitting 0.2 degrees off its held pose reads as
+        // ~0.35 rad/s of "spin" while not visibly moving at all. Reading the velocity therefore says very
+        // little about whether the piece is steady, which is exactly the trap FieldFeatureSmokeTest's
+        // marginal 0.3 rad/s assertion falls into. Drift is the honest measurement.
+        ValidationUtil.Assert(fastDriftDeg < 2f,
+            $"a seated piece must hold the attitude it was dropped in — it turned {fastDriftDeg:0.##}° " +
+            "over 50 steps after seating");
+        ValidationUtil.Assert(slowDriftDeg < 2f,
+            $"...at the old descent speed too, so the check above is about seating rather than about " +
+            $"which speed was used (old drifted {slowDriftDeg:0.##}°)");
+
+        Debug.Log($"ScoringDropValidation: descent {slowSteps / fastSteps:0.0}x faster than the old glide " +
+                  $"({fastSteps} steps vs {slowSteps}), settling {fastFinalError:0.###}u off the slot. " +
+                  $"Seated attitude drift over 50 steps — fast {fastDriftDeg:0.###}° (reported " +
+                  $"angularVelocity {fastSpin:0.##} rad/s), old {slowDriftDeg:0.###}° (reported " +
+                  $"{slowSpin:0.##} rad/s). A large reported velocity with near-zero drift is the " +
+                  "deadbeat hold's correction term, not motion.");
+
         Cleanup();
-        return 4;
+        return 6;
     }
 
     // Drives a real GoalStackMagnet over a real dropped piece and returns how many steps it took to reach
     // its slot, or 0 if it never did. `finalError` is how far off the slot it is 50 steps AFTER seating,
-    // which is what separates "landed" from "went through".
-    private static float StepsToSeat(float fallSpeed, out float finalError)
+    // which is what separates "landed" from "went through". `driftDeg` is how far it actually TURNED over
+    // those 50 steps and `finalSpin` the angular velocity reported at the end — reported separately
+    // because the deadbeat hold makes those two numbers mean very different things.
+    private static float StepsToSeat(float fallSpeed, out float finalError, out float driftDeg,
+        out float finalSpin)
     {
         Cleanup();
         GoalStackMagnet magnet = MakeGoal(fallSpeed, out Transform anchor);
@@ -165,6 +189,8 @@ public static class ScoringDropValidation
 
         Vector3 slot = anchor.position + anchor.up * (CupRestHeight + magnet.stackClearance);
         finalError = float.PositiveInfinity;
+        driftDeg = float.PositiveInfinity;
+        finalSpin = float.PositiveInfinity;
 
         // The project runs with Auto Sync Transforms OFF, so the fixture's poses have to be pushed into
         // PhysX before the magnet's first overlap scan goes looking for a piece to capture.
@@ -172,15 +198,22 @@ public static class ScoringDropValidation
 
         const int MaxSteps = 600;   // 6 seconds — twice the magnet's own pull-in timeout
         int seatedAt = 0;
+        Quaternion seatedRotation = Quaternion.identity;
         for (int step = 1; step <= MaxSteps; step++)
         {
             magnet.StepMagnet(StepSeconds);
             Physics.Simulate(StepSeconds);
 
-            if (seatedAt == 0 && (piece.worldCenterOfMass - slot).magnitude < 0.15f) seatedAt = step;
+            if (seatedAt == 0 && (piece.worldCenterOfMass - slot).magnitude < 0.15f)
+            {
+                seatedAt = step;
+                seatedRotation = piece.rotation;
+            }
             if (seatedAt != 0 && step >= seatedAt + 50)
             {
                 finalError = (piece.worldCenterOfMass - slot).magnitude;
+                driftDeg = Quaternion.Angle(seatedRotation, piece.rotation);
+                finalSpin = piece.angularVelocity.magnitude;
                 break;
             }
         }

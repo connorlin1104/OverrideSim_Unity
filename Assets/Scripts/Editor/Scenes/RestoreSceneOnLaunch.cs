@@ -39,6 +39,13 @@ public static class RestoreSceneOnLaunch
 
     static RestoreSceneOnLaunch()
     {
+        // NEVER in batch mode. A -executeMethod run opens and closes scenes deliberately (the validators
+        // simulate physics in them), and it starts on exactly the untitled empty scene this hook exists
+        // to replace — so an unguarded version could swap the scene out from under a running test, or
+        // overwrite the remembered path with whatever a headless tool happened to open last. Verified
+        // not to fire during the current batch suite, which is the point: keep it that way.
+        if (Application.isBatchMode) return;
+
         EditorSceneManager.sceneOpened += (scene, _) => Remember(scene);
         EditorSceneManager.sceneSaved += Remember;
 
