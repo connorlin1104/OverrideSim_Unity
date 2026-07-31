@@ -10,7 +10,9 @@ using UnityEngine;
 // The hold is a STRONG MAGNET, not a weld: seated pieces stay dynamic (gravity on, still solid to the
 // robot — you can knock the whole stack), but each physics step the magnet velocity-corrects the piece
 // toward its slot with a per-step cap. That cap is the magnet's strength. While a piece is still
-// gliding IN it is soft (so it lands gently); once SEATED the hold is stiff — it aims the piece exactly
+// gliding IN it is soft (it DESCENDS the post at pullInFallSpeed, near enough gravity that scoring reads
+// as a drop rather than a float, then eases to pullInSpeed for the last stretch so it still lands gently
+// on whatever is below it); once SEATED the hold is stiff — it aims the piece exactly
 // back onto its slot within a single step (rigidHoldPerStep), so a bump barely registers. A ram that
 // shoves a piece faster than the cap, long enough to carry it past releaseRadius, still unseats it and
 // it's ordinary physics again (deliberate ram-descoring — you have to hit hard, high up). Pieces above
@@ -76,8 +78,10 @@ public class GoalStackMagnet : MonoBehaviour
     public float maxPullPerStep = 2f;
     [Tooltip("Pull-in strength while a freshly-captured piece is still traveling to its slot (world units/sec per step). Much stronger than the seated hold — a piece dropped into the goal arrives hot (~15 u/s) and must be caught decisively, or one ricochet off the snug pocket flings it away. Once it first arrives, the seated strength above takes over.")]
     public float pullInPerStep = 4f;
-    [Tooltip("Glide speed while pulling a captured piece to its slot (world units/sec). Deliberately slower than the seated seek speed so a piece lands SOFTLY on an occupied stack — colliding with a held piece at speed deflects hard enough to escape the magnet.")]
+    [Tooltip("SIDEWAYS glide speed while pulling a captured piece onto the stack axis (world units/sec), and the speed it settles the last fraction of a unit onto its slot. Deliberately slow so a piece lands SOFTLY on an occupied stack — colliding with a held piece at speed deflects hard enough to escape the magnet. How fast it DESCENDS the post is Pull In Fall Speed.")]
     public float pullInSpeed = 4f;
+    [Tooltip("How fast a captured piece DESCENDS the stack axis to its slot (world units/sec) — the speed of the scoring drop itself. Gravity here is ~98, so a piece dropped into a goal is already falling this fast; holding the descent down to the gentle sideways Pull In Speed instead is what made scoring look like the piece FLOATED down the post rather than fell. The descent eases off to Pull In Speed over the last stretch so the piece still seats softly instead of punching into the piece below it.")]
+    public float pullInFallSpeed = 24f;
     [Tooltip("A captured piece that hasn't reached its slot within this many seconds is let go (something is blocking it) instead of being dragged around forever.")]
     public float pullInTimeout = 3f;
     [Tooltip("How fast the piece is stood upright (rad/sec) while seated.")]
@@ -133,6 +137,11 @@ public class GoalStackMagnet : MonoBehaviour
 
     // How far off the slot a timed-out pull-in may settle and still count as seated (world units).
     private const float NearEnough = 0.35f;
+
+    // How far above its slot a falling piece starts easing off pullInFallSpeed down to pullInSpeed
+    // (world units). About one piece tall — a cup stands ~0.86 — so the drop stays a drop right up to
+    // the last piece-height and only then becomes a landing.
+    private const float SettleDistance = 1f;
 
     private readonly List<Seated> stack = new List<Seated>();
     // Generous: the scan sphere sees every wall collider of the goal plus every 12-collider piece
@@ -304,8 +313,17 @@ public class GoalStackMagnet : MonoBehaviour
 
             Vector3 lateralVel = Vector3.ClampMagnitude(-lateral * pullGain, pullInSpeed);
             float alignment = Mathf.Clamp01(1f - lateral.magnitude / Mathf.Max(0.05f, captureRadius * 0.5f));
+
+            // Descend at something that reads as FALLING, not floating: pullInFallSpeed for the whole
+            // drop, easing down to the gentle pullInSpeed only over the last SettleDistance so the piece
+            // still lands softly on whatever is under it. Easing over the WHOLE descent instead — which
+            // is what a plain error-proportional glide does — spends most of the fall crawling, and that
+            // is what made a scored piece look like it floated down the post. Still scaled by
+            // `alignment`, so an off-axis piece centres before it drops and can't wedge on the stake.
+            float descendSpeed = Mathf.Lerp(pullInSpeed, Mathf.Max(pullInSpeed, pullInFallSpeed),
+                                            Mathf.Clamp01(height / SettleDistance));
             float verticalVel = height > 0f
-                ? -pullInSpeed * alignment                                     // descend once centered
+                ? -descendSpeed * alignment                                    // descend once centered
                 : Mathf.Min(-height * pullGain, pullInSpeed);                  // below the slot: come up
             desiredVel = lateralVel + up * verticalVel;
         }
@@ -408,10 +426,17 @@ public class GoalStackMagnet : MonoBehaviour
 
         if (best == null) return;
 
-        // The catch: kill the excess speed the moment the magnet claims it — a piece falling at
-        // ~15+ u/s would otherwise ricochet off the pocket (or the held piece below) faster than any
-        // pull can recover.
-        best.linearVelocity = Vector3.ClampMagnitude(best.linearVelocity, pullInSpeed);
+        // The catch, split along the stack axis — the two halves of the piece's velocity mean opposite
+        // things. SIDEWAYS speed is what ricochets it off the pocket faster than any pull can recover, so
+        // that is killed outright. The FALL is the scoring drop itself: braking it to the gentle sideways
+        // speed here is what made a scored piece look like it stopped dead at the post top and floated
+        // down, so it is kept (capped at the descent rate the pull-in uses anyway). Upward speed is not a
+        // drop and gets the sideways treatment.
+        Vector3 caught = best.linearVelocity;
+        float fallVel = Vector3.Dot(caught, up);
+        Vector3 sideways = caught - up * fallVel;
+        best.linearVelocity = Vector3.ClampMagnitude(sideways, pullInSpeed)
+                              + up * Mathf.Clamp(fallVel, -Mathf.Max(pullInSpeed, pullInFallSpeed), pullInSpeed);
         best.angularVelocity = Vector3.ClampMagnitude(best.angularVelocity, maxTiltSpeed);
 
         Seated seated = new Seated

@@ -917,7 +917,7 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 0.8, y: 0.01, z: 1.4}
+  m_Size: {x: 1, y: 0.1, z: 1.4}
   m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &268091492
 GameObject:
@@ -1532,6 +1532,7 @@ MonoBehaviour:
   maxPullPerStep: 1
   pullInPerStep: 4
   pullInSpeed: 4
+  pullInFallSpeed: 24
   pullInTimeout: 3
   maxTiltSpeed: 6
   tiltGain: 6
@@ -2298,7 +2299,7 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 0.8, y: 0.01, z: 1.4}
+  m_Size: {x: 1, y: 0.1, z: 1.4}
   m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &492561201
 GameObject:
@@ -4090,7 +4091,7 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 0.4, y: 0.01, z: 1.4}
+  m_Size: {x: 0.6, y: 0.1, z: 1.4}
   m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &1070209105
 GameObject:
@@ -7202,7 +7203,7 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 0.8, y: 0.01, z: 1.4}
+  m_Size: {x: 1, y: 0.1, z: 1.4}
   m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &1582779281
 GameObject:
@@ -7997,7 +7998,7 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 0.8, y: 0.01, z: 1.4}
+  m_Size: {x: 1, y: 0.1, z: 1.4}
   m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &1772196348
 GameObject:
@@ -8475,7 +8476,7 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 0.4, y: 0.01, z: 1.4}
+  m_Size: {x: 0.6, y: 0.1, z: 1.4}
   m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &1854592571
 GameObject:
@@ -9043,6 +9044,7 @@ MonoBehaviour:
   robotTag: Player
   clearRadius: 1.5
   stayUpWhileOccupied: 1
+  spawnTilt: {x: 0, y: 0, z: 0}
   manualSpawnExtraHeight: 2
   liftHeight: 2.8
   liftSpeed: 10
@@ -9125,7 +9127,7 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 0.4, y: 0.01, z: 1.4}
+  m_Size: {x: 0.6, y: 0.1, z: 1.4}
   m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &2083881350
 GameObject:
@@ -9682,7 +9684,7 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 0.4, y: 0.01, z: 1.4}
+  m_Size: {x: 0.6, y: 0.1, z: 1.4}
   m_Center: {x: 0, y: 0, z: 0}
 --- !u!4 &7457797635505428
 Transform:

@@ -19,6 +19,18 @@ public class MatchLoaderController : MonoBehaviour
     [Tooltip("If checked, the loader stays up as long as an object is inside the tape trigger.")]
     [SerializeField] private bool stayUpWhileOccupied = true;
 
+    [Header("Spawn Angle")]
+    [Tooltip("Extra rotation given to the spawned piece, in degrees, applied in the SPAWN POINT'S OWN " +
+             "frame (so it is relative to however you have the anchor aimed). This is the knob for a " +
+             "scooper-style bot parked under the loader: the human feed only enters the mechanism cleanly " +
+             "at the right attitude, and a few degrees of lean is usually all it needs. Keep it SMALL — a " +
+             "piece that misses the robot has to be able to settle upright on the floor by itself, and " +
+             "past roughly 28 degrees its centre of mass leaves its base and it stays tipped over. " +
+             "SELECT THE LOADER and the Scene view draws the piece at the pose it will be born in, at " +
+             "both spawn heights, with the lean in degrees — drag the rotation handle there to aim it " +
+             "instead of typing numbers here.")]
+    [SerializeField] private Vector3 spawnTilt;
+
     [Header("Manual Matchloading")]
     [Tooltip("Extra height (world units) added to a MANUAL spawn (Match Load button, when Automatic Matchloading is off in Settings) so the piece falls into the robot instead of resting on the loader. World is 10x scale, so 2 = 0.2 m.")]
     [SerializeField] private float manualSpawnExtraHeight = 2f;
@@ -133,6 +145,12 @@ public class MatchLoaderController : MonoBehaviour
         return link != null && link.CompareTag(robotTag);
     }
 
+    // The attitude a piece is born in: the spawn anchor's aim, leaned by spawnTilt. Public so the Scene-view
+    // gizmo and the validator both read the SAME number the spawn uses — a tilt that only the spawn knows
+    // about is a tilt nobody can aim.
+    public Quaternion SpawnRotation =>
+        spawnPoint != null ? spawnPoint.rotation * Quaternion.Euler(spawnTilt) : Quaternion.Euler(spawnTilt);
+
     // True while our spawned piece is still sitting in the loader (not yet carried away).
     private bool LoaderOccupied()
     {
@@ -148,9 +166,9 @@ public class MatchLoaderController : MonoBehaviour
     {
         if (spawnPoint == null || elementPrefab == null) return;
 
-        // Spawns exactly ONE cup/pin unit at the anchor position and rotation. Manual spawns add
+        // Spawns exactly ONE cup/pin unit at the anchor position, leaning by spawnTilt. Manual spawns add
         // extraHeight straight up so the unit drops into a waiting robot.
-        currentItem = Instantiate(elementPrefab, spawnPoint.position + Vector3.up * extraHeight, spawnPoint.rotation);
+        currentItem = Instantiate(elementPrefab, spawnPoint.position + Vector3.up * extraHeight, SpawnRotation);
 
         // Zero out physics velocity instantly at birth so it drops cleanly, and give each body
         // a MinHeightClamp so it can't be crushed through the floor. The prefab root has no
@@ -190,4 +208,20 @@ public class MatchLoaderController : MonoBehaviour
 
         if (!movingUp) isMovingDown = false;
     }
+
+    // What the Scene-view preview needs to draw the spawn, without making the tuning fields public.
+    // MatchLoaderControllerEditor is the only caller; everything it shows comes from the SAME values
+    // SpawnSingleMatchLoad uses, so the preview can't promise a pose the spawn doesn't produce.
+    public Transform SpawnAnchor => spawnPoint;
+    public GameObject ElementPrefab => elementPrefab;
+    public float ManualSpawnExtraHeight => manualSpawnExtraHeight;
+
+    // Past this lean a cup's centre of mass leaves its base, so one that misses the robot stays tipped
+    // over on the floor instead of settling upright — Connor's stated limit on how far this may go.
+    public const float SelfRightingLimitDegrees = 28f;
+
+    // How far the spawn is currently leaned from the anchor's own aim, in degrees.
+    public float SpawnTiltDegrees =>
+        spawnPoint != null ? Quaternion.Angle(spawnPoint.rotation, SpawnRotation)
+                           : Quaternion.Angle(Quaternion.identity, Quaternion.Euler(spawnTilt));
 }

@@ -33,12 +33,18 @@ using UnityEngine.InputSystem;
 // REVERSE HAS TWO FLAVOURS, and the second one is how most real scoring mechanisms work. Launching is
 // right for a roller intake that has to spit a piece clear of itself. But a basket or claw carried up on
 // an arm/chain scores by reversing and simply LETTING GO — the cup or pin becomes an ordinary physical
-// object again and falls out under gravity. reverseDropsInPlace is that: no launch velocity, no ghost
-// window (a piece that barely moves would stay ghosted straight through the goal it is meant to land on,
-// so it turns solid immediately), and no outward shove on loose pieces sitting in the mouth — that shove
-// would kick away the very piece just dropped. The one thing to watch is a hold point buried inside
-// plastic: the piece turns solid interpenetrating it and PhysX pops it out. Place hold points where a
-// piece can actually fall.
+// object again and falls out under gravity. reverseDropsInPlace is that: no launch velocity, and no
+// outward shove on loose pieces sitting in the mouth — that shove would kick away the very piece just
+// dropped.
+//
+// A DROPPED PIECE FALLS FIRST AND TURNS SOLID A BEAT LATER (dropGhostSeconds). Handing it back to physics
+// in the same instant is what jammed the mechanism: the piece is still BETWEEN the rollers when it becomes
+// solid, so PhysX finds it interpenetrating plastic and either wedges it there or pops it out sideways.
+// Gravity takes it the moment it is released — it is falling the whole time — it just stays ghosted for a
+// short window so it drops CLEAR before anything can collide with it. That window is measured in TIME,
+// not in distance the way a launched piece is: a piece that is only falling starts at zero speed, so a
+// distance window would keep it ghosted long past the goal it was aimed at. Keep it short for the same
+// reason (a ghosted piece is invisible to the goal magnets, and gravity here is ~98).
 //
 // TWO INTAKES CAN HAND A PIECE OVER, and they have to, because a carried piece is INVISIBLE. The instant
 // an intake captures a piece the piece goes kinematic with its colliders switched OFF, so it fires no
@@ -140,6 +146,13 @@ public class IntakePull : MonoBehaviour
     [Header("Eject")]
     [Tooltip("ON: reverse just LETS GO — each piece turns back into a physical object exactly where it sits and GRAVITY does the rest, the way a real scoring mechanism dumps (reverse, and the cup/pin falls out). Nothing is launched and nothing loose is shoved, so Eject Speed / Clearance / Acceleration below are ignored. OFF (default): pieces are thrown out through the mouth. Use ON for a basket or claw carried on an arm or chain, OFF for a roller intake that has to spit pieces clear of itself.")]
     public bool reverseDropsInPlace;
+    [Tooltip("Reverse Drops In Place only: how long a released piece stays GHOSTED (colliders off) after " +
+             "the mechanism lets go of it. It is FALLING under gravity the whole time — this only delays " +
+             "it turning SOLID, so it drops clear instead of becoming solid while still inside the " +
+             "mechanism and jamming there. Raise it if pieces still catch on the way out; 0 = solid the " +
+             "instant it is released (the old behaviour). Keep it short: a ghosted piece is invisible to " +
+             "the goal magnets and gravity here is ~98, so a long window drops it straight past the goal.")]
+    public float dropGhostSeconds = 0.15f;
     [Tooltip("Seconds between releasing one piece and the next while reverse is held — pieces leave ONE AT A TIME (bottom of the stack first) so they don't clump together, overlap and jam. Tap reverse for just one. Set 0 to dump the whole stack at once.")]
     public float ejectInterval = 0.2f;
     [Tooltip("The world velocity each piece is launched with on eject (world units/sec). Kept separate from Glide Speed so eject stays snappy even if intake glide is slow. World is 10x scale. Ignored when Reverse Drops In Place is on — a drop has no launch.")]
@@ -176,9 +189,16 @@ public class IntakePull : MonoBehaviour
     // stops two of them carrying the same piece at once).
     private static readonly Dictionary<Rigidbody, IntakePull> carriers = new Dictionary<Rigidbody, IntakePull>();
 
-    // A piece ejected and flying out as a ghosted projectile, re-solidified once it has travelled clear of
-    // the mouth. Kept OUT of `held` so the intake can grab again immediately.
-    private class Ejected { public Rigidbody rb; public Vector3 launchPos; }
+    // A piece on its way OUT: no longer held, not solid yet. Kept out of `held` so its slot frees up at
+    // once and it can never get stuck back on the stack.
+    //
+    // Two ways to count as "clear", because the two exits look nothing alike. A LAUNCHED piece flies, so
+    // it is measured by DISTANCE from where it left — on a freely moving body that always completes,
+    // there is no arrival point to miss. A piece that is only DROPPED starts at zero speed, so distance
+    // would keep it ghosted long past the goal it was aimed at; it is measured by TIME instead.
+    // clearance > 0 selects the first, ghostLeft > 0 the second (counted down, not compared against
+    // Time.time, so the headless validator can drive it a step at a time).
+    private class Ejected { public Rigidbody rb; public Vector3 launchPos; public float clearance; public float ghostLeft; }
 
     // Pieces overlapping the mouth, counted (a cup/pin has several child colliders → several triggers).
     private readonly Dictionary<Rigidbody, int> inMouth = new Dictionary<Rigidbody, int>();
@@ -296,8 +316,8 @@ public class IntakePull : MonoBehaviour
     {
         float dt = Time.fixedDeltaTime;
 
-        // Re-solidify ejected pieces once they've flown clear (runs every step, independent of input).
-        UpdateEjected();
+        // Re-solidify pieces on their way out once they're clear (runs every step, independent of input).
+        StepEjected(dt);
 
         if (intakeMotor == null) return;
 
@@ -313,9 +333,7 @@ public class IntakePull : MonoBehaviour
 
         if (ejecting)
         {
-            Vector3 mouth = MouthWorldPos();
-            Vector3 outward = mouth - HoldTf.position;
-            outward = outward.sqrMagnitude > 1e-6f ? outward.normalized : -transform.forward;
+            Vector3 outward = OutwardDir();
 
             if (ejectInterval <= 0f)
             {
@@ -338,8 +356,8 @@ public class IntakePull : MonoBehaviour
                 if (h.rb != null) CarryTo(h, SlotWorldPos(h.slot), false, dt);
 
             // Shove any loose (uncaptured) pieces sitting in the mouth out too — but never when reverse
-            // only DROPS: a piece released a moment ago is solid again and usually still inside the mouth
-            // trigger, so the shove would kick away the piece gravity is supposed to be taking.
+            // only DROPS: a piece released a moment ago turns solid still inside the mouth trigger and
+            // registers as loose, so the shove would kick away the piece gravity is supposed to be taking.
             if (!reverseDropsInPlace)
             {
                 scratch.Clear();
@@ -649,6 +667,28 @@ public class IntakePull : MonoBehaviour
 
     private void OnScorePerformed(InputAction.CallbackContext ctx) => ScoreDrop();
 
+    // Which way "out of the mouth" points: from the hold point through the mouth. Falls back to the
+    // mouth's own backward axis when the two sit on top of each other and there is no direction to read.
+    private Vector3 OutwardDir()
+    {
+        Vector3 outward = MouthWorldPos() - HoldTf.position;
+        return outward.sqrMagnitude > 1e-6f ? outward.normalized : -transform.forward;
+    }
+
+    // Send ONE piece out the way holding reverse does — bottom of the stack first, dropped in place or
+    // launched according to reverseDropsInPlace. Returns false when there is nothing left to eject.
+    //
+    // Public so the headless validator can drive the REAL eject path rather than a copy of it: edit-mode
+    // simulation never calls FixedUpdate, and the ejectInterval spacing that gates it there is timing,
+    // not behaviour. Same reason TryCapture and TakeHandoffs are public.
+    public bool EjectOneNow()
+    {
+        Held h = LowestSlotHeld();
+        if (h == null) return false;
+        EjectOne(h, OutwardDir());
+        return true;
+    }
+
     // One piece leaves the stack. Two ways out, chosen by reverseDropsInPlace: thrown clear of the mouth
     // (a roller intake), or simply handed back to physics where it sits (a scoring mechanism reversing and
     // letting gravity take the piece). Both are committed the moment they're called.
@@ -658,17 +698,33 @@ public class IntakePull : MonoBehaviour
         else LaunchOut(h, outward);
     }
 
-    // Reverse as a real scoring mechanism does it: stop holding the piece, hand it back to physics exactly
-    // where it is, and let gravity do the work — no launch velocity, nothing pushed. It turns solid
-    // IMMEDIATELY, unlike a launched piece: a piece that is only falling out would sit inside the
-    // ejectClearance radius for a while, and staying ghosted that long would drop it straight through the
-    // stake or goal it is aimed at. This is the same release path as ScoreDrop, one piece at a time.
+    // Reverse as a real scoring mechanism does it: stop holding the piece, hand it back to GRAVITY exactly
+    // where it is, and let the fall do the work — no launch velocity, nothing pushed. One piece at a time.
+    //
+    // Dynamics come back immediately (the piece starts falling the instant you reverse), but the COLLIDERS
+    // come back dropGhostSeconds later. Turning solid in the same instant was the jam: the cup is still
+    // inside the mechanism at the moment of release, so PhysX finds it interpenetrating plastic and either
+    // wedges it there or pops it out sideways. The short ghost window lets it fall CLEAR first. Timed, not
+    // distance-based like a launch — see the Ejected comment for why — and short, because a ghosted piece
+    // is invisible to the goal magnets.
     private void DropInPlace(Held h)
     {
         held.Remove(h);
-        Solidify(h);
-        if (h.rb != null && logEvents)
-            Debug.Log($"IntakePull: dropped '{h.rb.name}' in place — physical again, gravity takes it from here.", this);
+        Rigidbody rb = h.rb;
+        Forget(rb);                          // physical again — no longer a piece anyone is carrying
+        if (rb == null) return;
+        rb.isKinematic = h.wasKinematic;     // gravity has it from THIS step; only solidity is delayed
+
+        if (passThroughWhileHeld)
+        {
+            if (dropGhostSeconds > 0f)
+                ejected.Add(new Ejected { rb = rb, launchPos = rb.position, ghostLeft = dropGhostSeconds });
+            else
+                SetPieceColliders(rb, true);                 // window off: the old solid-at-once behaviour
+        }
+
+        if (logEvents)
+            Debug.Log($"IntakePull: dropped '{rb.name}' in place — falling now, solid in {dropGhostSeconds:0.##}s.", this);
     }
 
     // Eject one piece: pull it from `held` NOW (freeing its slot), make it a free dynamic body flying
@@ -687,25 +743,34 @@ public class IntakePull : MonoBehaviour
             rb.AddForce(outward * ejectSpeed, ForceMode.VelocityChange);   // fly straight out
             rb.angularVelocity = Vector3.zero;
         }
-        if (passThroughWhileHeld) ejected.Add(new Ejected { rb = rb, launchPos = rb.position });  // stay ghosted till clear
+        // Stay ghosted until it has flown clear of the rollers.
+        if (passThroughWhileHeld)
+            ejected.Add(new Ejected { rb = rb, launchPos = rb.position, clearance = Mathf.Max(ejectClearance, 1e-4f) });
         if (logEvents) Debug.Log($"IntakePull: ejected '{rb.name}' — launched out (re-solidifies after {ejectClearance:0.#}u).", this);
     }
 
-    // Re-solidify ejected pieces once they've travelled ejectClearance from where they launched — they're
-    // ghosted projectiles until then, so they pass cleanly through the rollers, then turn solid in the air.
-    // Distance-based on a freely-moving body, so it ALWAYS completes (there's no arrival point to miss).
-    private void UpdateEjected()
+    // Re-solidify pieces on their way out once they're clear of the mechanism — ghosted until then, so
+    // they pass cleanly through the rollers and turn solid in the air. A LAUNCHED piece is clear once it
+    // has travelled ejectClearance from where it left (distance-based on a freely-moving body, so it
+    // ALWAYS completes — there's no arrival point to miss); a DROPPED one is clear once dropGhostSeconds
+    // have run out, because it starts from rest and distance would keep it ghosted past the goal.
+    //
+    // Public + dt-parameterized for the same reason GoalStackMagnet.StepMagnet is: edit-mode validation
+    // never calls FixedUpdate, and a test that re-implemented this would not be testing it.
+    public void StepEjected(float dt)
     {
         for (int i = ejected.Count - 1; i >= 0; i--)
         {
             Ejected e = ejected[i];
             if (e.rb == null) { ejected.RemoveAt(i); continue; }
-            if ((e.rb.position - e.launchPos).sqrMagnitude >= ejectClearance * ejectClearance)
-            {
-                SetPieceColliders(e.rb, true);       // solid again — no more phase-through
-                ejected.RemoveAt(i);
-                if (logEvents) Debug.Log($"IntakePull: '{e.rb.name}' cleared the intake — solid now.", this);
-            }
+            bool clear = e.clearance > 0f
+                ? (e.rb.position - e.launchPos).sqrMagnitude >= e.clearance * e.clearance
+                : (e.ghostLeft -= dt) <= 0f;
+            if (!clear) continue;
+
+            SetPieceColliders(e.rb, true);       // solid again — no more phase-through
+            ejected.RemoveAt(i);
+            if (logEvents) Debug.Log($"IntakePull: '{e.rb.name}' cleared the intake — solid now.", this);
         }
     }
 
@@ -911,7 +976,7 @@ public class IntakePull : MonoBehaviour
         Debug.Log(
             $"IntakePull[{name}] ready. Hold point = '{HierarchyPath(h)}' at world {h.position}. " +
             $"maxHeld={maxHeld}, glideSpeed={glideSpeed}, slotSpacing={slotSpacing}, dropWhenIdle={dropWhenIdle}, " +
-            $"reverse={(reverseDropsInPlace ? "DROPS pieces in place (gravity)" : $"LAUNCHES pieces out at {ejectSpeed}")}. " +
+            $"reverse={(reverseDropsInPlace ? $"DROPS pieces in place (gravity; ghosted {dropGhostSeconds:0.##}s so they fall clear before turning solid)" : $"LAUNCHES pieces out at {ejectSpeed}")}. " +
             (intakeCount > 1
                 ? $"NOTE: {intakeCount} IntakePull components on this robot — this one " +
                   (takeFromOtherIntakes

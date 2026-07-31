@@ -25,7 +25,7 @@ using Scene = UnityEngine.SceneManagement.Scene;
 // Batch: -executeMethod BuildLiteFieldScene.RunBatch.
 public class BuildLiteFieldScene
 {
-    private const string LiteScenePath = "Assets/Scenes/LiteScene.unity";
+    private const string LiteScenePath = RoboSimPaths.LiteScene;
     private const string HomeScenePath = "Assets/Scenes/HomeScene.unity";
     private const string FieldRootName = "OverrideFieldVersion3";
 

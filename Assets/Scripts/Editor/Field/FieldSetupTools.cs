@@ -297,7 +297,21 @@ public class FixGoals : EditorWindow
                 }
             }
 
-            float wallThickness = 0.01f;
+            // The RING walls (outer bumper + lower base) are what a ROBOT hits, and they used to be a
+            // 0.01-unit shell — 1 mm at this project's scale, thinner than the physics contact offset and
+            // far thinner than a bot covers in one 100 Hz step. Worse, eight flat panels laid on an
+            // octagon's edges do not MEET at the corners: each ring had eight full-height slots in it, so
+            // a robot frame could slip inside the goal and then wedge, with 1 mm of wall on every side
+            // for PhysX to push it back out of. RingThickness gives depenetration a definite direction;
+            // CornerOverlap widens each panel until neighbours cross at the corners and the ring is
+            // closed. See GoalShellValidation, which fails on any ring that still has a gap.
+            float wallThickness = GoalShellSpec.RingThickness;
+            float cornerOverlap = GoalShellSpec.CornerOverlap;
+
+            // The INNER POCKET is deliberately left alone. Its six panels already meet, nothing but game
+            // pieces ever touches them, and thickening them would eat into the pocket the stack sits in —
+            // whose clearances are tuned against the seated piece heights.
+            float pocketThickness = GoalShellSpec.PocketThickness;
             float innerTaperAngle = 6.5f;
 
             Vector3 basePosition = (meshInstanceChild != null) ? meshInstanceChild.position : targetGoal.transform.position;
@@ -335,7 +349,7 @@ public class FixGoals : EditorWindow
                 BoxCollider box = wall.AddComponent<BoxCollider>();
                 float currentWidth = isCardinal ? cardWidth : diagWidth;
 
-                box.size = new Vector3(currentWidth, wallThickness, outerHeight);
+                box.size = new Vector3(currentWidth + cornerOverlap, wallThickness, outerHeight);
             }
 
             // ===================================================================
@@ -364,7 +378,7 @@ public class FixGoals : EditorWindow
                     BoxCollider box = wall.AddComponent<BoxCollider>();
                     float currentWidth = isCardinal ? lowerCardWidth : lowerDiagWidth;
 
-                    box.size = new Vector3(currentWidth, wallThickness, lowerHeight);
+                    box.size = new Vector3(currentWidth + cornerOverlap, wallThickness, lowerHeight);
                 }
             }
 
@@ -386,7 +400,7 @@ public class FixGoals : EditorWindow
 
                 BoxCollider box = wall.AddComponent<BoxCollider>();
                 float innerPanelWidth = (i % 2 == 0) ? 0.38f : 0.30f;
-                box.size = new Vector3(innerPanelWidth, wallThickness, innerHeight);
+                box.size = new Vector3(innerPanelWidth, pocketThickness, innerHeight);
             }
 
             // ===================================================================
