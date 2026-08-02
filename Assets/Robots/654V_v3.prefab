@@ -6308,9 +6308,12 @@ MonoBehaviour:
   omniBrakeFraction: 0.2
   tractionBrakeFraction: 0.7
   plowFraction: 1
-  backDriveTractionMultiple: 2
   rollRelief: 1
   rollReliefFrequency: 12
+  backDriveTractionMultiple: 2
+  loadTransferPitchDeg: 2.5
+  loadTransferFrequency: 12
+  loadTransferDamping: 0.55
   inputDeadzone: 0.08
   throttleExpo: 0.35
   turnExpo: 0.55
@@ -138819,8 +138822,8 @@ Transform:
   m_GameObject: {fileID: 9203397658119172725}
   serializedVersion: 2
   m_LocalRotation: {x: 0.4055799, y: 0.579228, z: 0.40557978, w: 0.579228}
-  m_LocalPosition: {x: 0.55, y: 0.307, z: 0.395}
-  m_LocalScale: {x: 1.4763376, y: 0.99999976, z: 0.99999976}
+  m_LocalPosition: {x: 0.473, y: 0.307, z: 0.395}
+  m_LocalScale: {x: 1.4763376, y: 0.99999976, z: 0.7093272}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 4598190658989924310}
