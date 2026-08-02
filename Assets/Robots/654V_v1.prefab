@@ -1065,6 +1065,7 @@ MonoBehaviour:
   retractedTarget: 0
   stiffness: 20000
   damping: 500
+  forceLimit: 2000
   travelSeconds: 0
   startExtended: 0
   toggleAction: {fileID: 0}
@@ -55481,6 +55482,7 @@ MonoBehaviour:
   retractedTarget: -90
   stiffness: 20000
   damping: 500
+  forceLimit: 2000
   travelSeconds: 0
   startExtended: 1
   toggleAction: {fileID: 0}
@@ -150131,7 +150133,7 @@ MonoBehaviour:
   robotId: 654v-v1
   mechanisms:
   - id: spinningpart
-    displayName: SpinningPart
+    displayName: RollerMech
     type: motor
     motor: {fileID: 277921641138614158}
     pneumatic: {fileID: 0}
@@ -150255,6 +150257,12 @@ MonoBehaviour:
   omniBrakeFraction: 0.2
   tractionBrakeFraction: 0.7
   plowFraction: 1
+  rollRelief: 1
+  rollReliefFrequency: 12
+  backDriveTractionMultiple: 3
+  loadTransferPitchDeg: 2.5
+  loadTransferFrequency: 12
+  loadTransferDamping: 0.55
   inputDeadzone: 0.08
   throttleExpo: 0.35
   turnExpo: 0.55

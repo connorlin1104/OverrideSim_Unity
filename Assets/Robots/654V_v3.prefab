@@ -6336,22 +6336,22 @@ MonoBehaviour:
   robotId: ryan-cascaderobot
   mechanisms:
   - id: cascademotor
-    displayName: Cascade
+    displayName: CascadeLift
     type: motor
     motor: {fileID: 6537189715410292965}
     pneumatic: {fileID: 0}
   - id: intakemech
-    displayName: IntakeMech
+    displayName: GroundIntake
     type: motor
     motor: {fileID: 3871156690346766074}
     pneumatic: {fileID: 0}
   - id: outtake-1
-    displayName: Outtake:1
+    displayName: ArmRotate
     type: motor
     motor: {fileID: 9166353741210215300}
     pneumatic: {fileID: 0}
   - id: scoringmech
-    displayName: ScoringMech
+    displayName: ScoringIntake
     type: motor
     motor: {fileID: 8210160119159247881}
     pneumatic: {fileID: 0}

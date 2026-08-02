@@ -103413,6 +103413,12 @@ MonoBehaviour:
   omniBrakeFraction: 0.2
   tractionBrakeFraction: 0.7
   plowFraction: 1
+  rollRelief: 1
+  rollReliefFrequency: 12
+  backDriveTractionMultiple: 3
+  loadTransferPitchDeg: 2.5
+  loadTransferFrequency: 12
+  loadTransferDamping: 0.55
   inputDeadzone: 0.08
   throttleExpo: 0.35
   turnExpo: 0.55
@@ -103445,12 +103451,12 @@ MonoBehaviour:
     motor: {fileID: 3675990212208672232}
     pneumatic: {fileID: 0}
   - id: clawarm
-    displayName: ClawArm
+    displayName: ClawArmRotate
     type: motor
     motor: {fileID: 1569860493952405542}
     pneumatic: {fileID: 0}
   - id: cascademotor
-    displayName: Cascade
+    displayName: CascadeLift
     type: motor
     motor: {fileID: 94452269717629603}
     pneumatic: {fileID: 0}
@@ -232215,6 +232221,7 @@ MonoBehaviour:
   retractedTarget: 0
   stiffness: 20000
   damping: 500
+  forceLimit: 2000
   travelSeconds: 0.2
   startExtended: 0
   toggleAction: {fileID: 0}
@@ -283012,6 +283019,7 @@ MonoBehaviour:
   retractedTarget: -20
   stiffness: 20000
   damping: 500
+  forceLimit: 2000
   travelSeconds: 0
   startExtended: 1
   toggleAction: {fileID: 0}
