@@ -8,9 +8,9 @@ using UnityEngine;
 // This is a cosmetic feature, which makes it MORE dangerous than a physical one, not less. A drive
 // change that felt wrong would be noticed in a lap of the field; a render pose that quietly leaks
 // into the simulation would show up as a robot that tips differently than it measures, months
-// later, with nothing pointing back here. So the first assertion below is the important one: run
-// the identical input twice, once with the lean at its default and once with it switched off, and
-// require the two physics trajectories to match to the last representable digit.
+// later, with nothing pointing back here. So the important assertion below runs the identical input
+// three times — lean on, lean off, lean on again — and requires switching the lean on to move the
+// physics no further than merely re-running the same simulation does.
 //
 // The rest are properties of the maths that can be checked without a robot at all — a steady state,
 // an overshoot that exists only below critical damping, a frame rate that does not change the
@@ -60,6 +60,7 @@ public static class LoadTransferValidation
         checks += ZeroLeanIsTheIdentity(lines);
         checks += LeaningNeverPushesAWheelThroughTheFloor(lines);
         checks += NoseUpMeansNoseUp(lines);
+        checks += ForwardIsWhereTheRobotActuallyGoes(lines);
         checks += TheLeanChangesNothingPhysical(lines);
 
         lines.Insert(0, $"Load transfer: {checks} checks passed.\n");
@@ -161,7 +162,7 @@ public static class LoadTransferValidation
         var position = new Vector3(3f, 1.2f, -7f);
         Quaternion rotation = Quaternion.Euler(4f, 37f, -2f);
 
-        RobotMotorController.LeanedPose(position, rotation, 0f, FrontPivot, RearPivot,
+        RobotMotorController.LeanedPose(position, rotation, 0f, FrontPivot, RearPivot, Vector3.right,
             out Vector3 leanedPosition, out Quaternion leanedRotation);
 
         ValidationUtil.Assert(leanedPosition == position,
@@ -184,7 +185,7 @@ public static class LoadTransferValidation
 
         for (float lean = -4f; lean <= 4.001f; lean += 0.25f)
         {
-            RobotMotorController.LeanedPose(position, rotation, lean, FrontPivot, RearPivot,
+            RobotMotorController.LeanedPose(position, rotation, lean, FrontPivot, RearPivot, Vector3.right,
                 out Vector3 leanedPosition, out Quaternion leanedRotation);
 
             float frontBefore = (position + rotation * FrontPivot).y;
@@ -216,9 +217,9 @@ public static class LoadTransferValidation
 
         float level = (position + rotation * noseLocal).y;
 
-        RobotMotorController.LeanedPose(position, rotation, 2.5f, FrontPivot, RearPivot,
+        RobotMotorController.LeanedPose(position, rotation, 2.5f, FrontPivot, RearPivot, Vector3.right,
             out Vector3 upPosition, out Quaternion upRotation);
-        RobotMotorController.LeanedPose(position, rotation, -2.5f, FrontPivot, RearPivot,
+        RobotMotorController.LeanedPose(position, rotation, -2.5f, FrontPivot, RearPivot, Vector3.right,
             out Vector3 downPosition, out Quaternion downRotation);
 
         float up = (upPosition + upRotation * noseLocal).y;
@@ -236,6 +237,87 @@ public static class LoadTransferValidation
     }
 
     // --- The robot -------------------------------------------------------------------------------
+
+    // The check that would have saved a day. Drive each robot in a straight line and require the
+    // direction it actually went to be the direction the controller thinks is forward.
+    //
+    // RobotMotorController used to take root +Z as the driving axis on the strength of a comment.
+    // That is true of 654V_v1 and 360RpmDrivetrain and FALSE of 654V_v2 and 654V_v3, which travel
+    // perpendicular to their own transform.forward — so the roll relief was rolling them about their
+    // PITCH axis, cancelling exactly the front-to-back tipping it is documented to preserve, and the
+    // load transfer measured no acceleration however hard they braked. Nothing failed loudly. The
+    // axis is measured from the wheels' axles now, and this is what says it stayed measured.
+    private static int ForwardIsWhereTheRobotActuallyGoes(List<string> lines)
+    {
+        var failures = new List<string>();
+        int tested = 0;
+
+        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        {
+            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(guid));
+            if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
+            tested++;
+
+            SimulationMode previousMode = Physics.simulationMode;
+            try
+            {
+                ArticulationBody root = TipOverValidation.SpawnOnBareFloor(prefab, out RobotMotorController motor);
+                motor.Initialise();
+                Physics.simulationMode = SimulationMode.Script;
+                TipOverValidation.StepDriven(motor, 0f, 0f, SettleSteps);
+                TipOverValidation.StepDriven(motor, 1f, 0f, DriveSteps);
+
+                Vector3 travel = root.linearVelocity;
+                travel.y = 0f;
+                if (travel.magnitude < 1f)
+                {
+                    failures.Add($"'{prefab.name}' never reached 1 u/s in a straight line, so which " +
+                                 "way it drives could not be measured at all");
+                    continue;
+                }
+
+                // Signed, because a robot driving backwards on full forward throttle is its own bug
+                // (that is what invertLeft/invertRight exist for) and must not read as a good axis.
+                float agreement = Vector3.Dot(travel.normalized, motor.DriveForwardWorld);
+                lines.Add($"  '{prefab.name}': drove {travel.magnitude:0.0} u/s at " +
+                          $"{Mathf.Acos(Mathf.Clamp(agreement, -1f, 1f)) * Mathf.Rad2Deg:0.0} deg from " +
+                          "the forward axis it measured for itself");
+
+                // The two ways this fails are not the same failure, and saying so is the point of
+                // the check. Off the LINE is loud: the roll relief rolls about the pitch axis and
+                // cancels the front-to-back tipping it is documented to leave alone, the load
+                // transfer reads ~0 acceleration however hard the robot brakes, and the half-track
+                // is really the wheelbase. BACKWARDS down a correct line is silent: everything
+                // reading these axes today flips with them and nothing moves on screen — but
+                // DriveForwardWorld is public, and the next thing to read it inherits the bug.
+                if (agreement < MinAxisAgreement)
+                {
+                    float off = Mathf.Acos(Mathf.Clamp(agreement, -1f, 1f)) * Mathf.Rad2Deg;
+                    failures.Add(agreement <= -MinAxisAgreement
+                        ? $"'{prefab.name}' drives BACKWARDS along the forward axis MeasureDriveAxes " +
+                          $"derived from its wheels ({off:0} deg). The line is right and only the " +
+                          "sign is wrong, so today's readers — which all flip with it — look fine " +
+                          "and hide it; the axis is public and the next reader will not"
+                        : $"'{prefab.name}' drives {off:0} deg away from the forward axis " +
+                          "MeasureDriveAxes derived from its wheels, so the roll relief rolls it " +
+                          "about the wrong axis, the load transfer reads the wrong acceleration, " +
+                          "and the half-track is really the wheelbase");
+                }
+            }
+            finally { Physics.simulationMode = previousMode; }
+        }
+
+        ValidationUtil.Assert(tested > 0,
+            $"no robot prefab with a RobotMotorController under {RoboSimPaths.RobotsFolder}");
+        ValidationUtil.Assert(failures.Count == 0,
+            $"{failures.Count} of {tested} robot(s) do not drive the way they think they do:\n  - " +
+            string.Join("\n  - ", failures));
+        return tested;
+    }
+
+    // cos(15 deg). Generous: the question is whether the axis is RIGHT or ninety degrees out, and
+    // wheel mounting error in imported CAD is worth a couple of degrees on its own.
+    private const float MinAxisAgreement = 0.966f;
 
     // The one that matters, measured against its own noise floor.
     //
@@ -404,7 +486,7 @@ public static class LoadTransferValidation
 
             var track = new List<Vector3>();
             Drive(root, motor, +1f, track, ref slam, braking: false);
-            slam.topSpeed = Forward(root);
+            slam.topSpeed = Forward(root, motor);
             slam.topPlanarSpeed = new Vector2(root.linearVelocity.x, root.linearVelocity.z).magnitude;
             Drive(root, motor, -1f, track, ref slam, braking: true);
             return track;
@@ -415,7 +497,7 @@ public static class LoadTransferValidation
     private static void Drive(ArticulationBody root, RobotMotorController motor, float throttle,
         List<Vector3> track, ref Slam slam, bool braking)
     {
-        float last = Forward(root);
+        float last = Forward(root, motor);
         bool stillSlowing = braking;
 
         for (int i = 0; i < DriveSteps; i++)
@@ -429,7 +511,7 @@ public static class LoadTransferValidation
             track.Add(root.transform.position);
             slam.peakLeanDeg = Mathf.Max(slam.peakLeanDeg, Mathf.Abs(motor.LeanDegrees));
 
-            float now = Forward(root);
+            float now = Forward(root, motor);
             if (braking)
             {
                 slam.peakDecel = Mathf.Max(slam.peakDecel, Mathf.Abs(now - last) / StepSeconds);
@@ -443,6 +525,11 @@ public static class LoadTransferValidation
         }
     }
 
-    private static float Forward(ArticulationBody root)
-        => Vector3.Dot(root.linearVelocity, root.transform.forward);
+    // Off the MEASURED axis, never root.transform.forward — which is what this instrument used to
+    // do, and it is the same bug the check twenty lines up exists to catch. It read v2 and v3
+    // slamming to a stop from "0.0 u/s" while they were plainly doing 9.3, so every accel this
+    // reports on those two was ~0 and the failure message blamed the spring. A ruler built on the
+    // assumption under test cannot referee it.
+    private static float Forward(ArticulationBody root, RobotMotorController motor)
+        => Vector3.Dot(root.linearVelocity, motor.DriveForwardWorld);
 }

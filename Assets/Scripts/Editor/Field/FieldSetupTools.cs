@@ -17,8 +17,31 @@ using System.Collections.Generic;
 // so game pieces make only shallow contact, sink/wedge into the floor (the robot then rides
 // over them), and fast pieces tunnel through the walls. This tool:
 //   - strips every MeshCollider under FloorTiles and Walls (the thin panels pieces clip through),
+//   - strips the FLAT colliders under StaticObjects (the painted tape — see below),
 //   - adds a thick ground box under FloorTiles,
 //   - adds four thick perimeter wall boxes under Perimeter, set slightly inward from the floor edge.
+//
+// THE TAPE IS PAINT, NOT A SURFACE. Under StaticObjects the field CAD carries three FLAT sheets —
+// one 3029 x 0 x 3087 mm sitting 0.2 mm above the floor, and two 914 x 1 x 2946 mm strips just under
+// it — and every one of them had a MeshCollider. A sheet a fifth of a millimetre above the ground
+// box is the worst possible thing to hand the solver: each wheel's contact flip-flops between two
+// surfaces that are, to it, the same surface, and the robot shakes. The file already knew this and
+// said so about the floor tiles ("leaving them coplanar with the new ground box makes the solver
+// flip-flop and wedge pieces into the floor"); the decals are the same bug one folder over.
+//
+// It cost a wrong diagnosis too: every turn in this project is measured on TipOverValidation's bare
+// floor, so the harness was smooth in exactly the place the game was rough, and the difference was
+// never the robot — the game has tape and the harness does not.
+//
+// ONLY THE FLAT ONES. The other 92 colliders under StaticObjects are 77 x 88 x 80 mm blocks standing
+// 71 to 149 mm proud of the floor. Those are real structure, not paint, and stripping them because
+// they share a folder with the tape would let robots drive straight through them. Thickness is the
+// test, because thickness is what actually decides whether something is a surface or a sticker.
+//
+// TapeDetectors is a DIFFERENT thing and is deliberately left alone: those four boxes are triggers
+// driving MatchLoadTrigger -> MatchLoaderController.OnTapeEntered, which is how the game knows a
+// robot is standing on the tape to be fed. Triggers generate no contact forces, so they cannot cause
+// this, and removing them would silently break match loading.
 //
 // Re-runnable: it removes its previous output first. The collider host objects are given a
 // world-identity transform (via SetParent worldPositionStays), so BoxCollider centers are plain
@@ -34,26 +57,48 @@ public class FixFieldColliders
     private const string WallsName = "WallColliders";
     private const string LegacyRootName = "FieldPhysicsBounds"; // from the earlier version of this tool
 
+    // The painted decals. Everything under here is visual and nothing under here may collide.
+    public const string StaticObjectsName = "StaticObjects";
+
+    // Thicker than this and it is not paint. Measured, the split is not close: the tape sheets are
+    // 0 to 1 mm thick and everything else under StaticObjects is 88 mm, so anything in between is a
+    // new kind of object and worth a second look rather than a silent decision. 0.2 units is 20 mm
+    // at this project's scale.
+    private const float DecalThickness = 0.2f;
+
     [MenuItem("Tools/RoboSim/Field & Pieces/Rebuild Floor and Wall Bounds", false, 1)]
     private static void SetupBounds()
+    {
+        try { Debug.Log(Rebuild()); }
+        catch (System.InvalidOperationException e)
+        {
+            EditorUtility.DisplayDialog("Setup Field Physics Bounds", e.Message, "OK");
+        }
+    }
+
+    // Batch: -executeMethod FixFieldColliders.RunBatch (opens and saves SampleScene).
+    public static void RunBatch()
+    {
+        EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
+        string report = Rebuild();
+        EditorSceneManager.SaveOpenScenes();
+        Debug.Log(report);
+        EditorApplication.Exit(0);
+    }
+
+    internal static string Rebuild()
     {
         GameObject floorTiles = GameObject.Find("FloorTiles");
         GameObject perimeter = GameObject.Find("Perimeter");
         GameObject walls = GameObject.Find("Walls");
         if (floorTiles == null || perimeter == null)
-        {
-            EditorUtility.DisplayDialog("Setup Field Physics Bounds",
-                "Couldn't find 'FloorTiles' and/or 'Perimeter' in the scene.", "OK");
-            return;
-        }
+            throw new System.InvalidOperationException(
+                "Couldn't find 'FloorTiles' and/or 'Perimeter' in the scene.");
 
         // Floor world bounds from its renderers (robust to the collider removal below).
         if (!TryGetRendererBounds(floorTiles, out Bounds floor))
-        {
-            EditorUtility.DisplayDialog("Setup Field Physics Bounds",
-                "FloorTiles has no renderers to measure the floor from.", "OK");
-            return;
-        }
+            throw new System.InvalidOperationException(
+                "FloorTiles has no renderers to measure the floor from.");
 
         // Clean up previous output so re-running doesn't stack duplicates.
         DestroyIfExists(LegacyRootName);
@@ -66,6 +111,10 @@ public class FixFieldColliders
         // thin mesh panels.
         int removed = RemoveAllColliders(floorTiles);
         if (walls != null) removed += RemoveMeshColliders(walls);
+
+        // And the tape. Done here rather than in its own tool so that rebuilding the field's physics
+        // cannot put it back: this method is what defines what the field collides with.
+        string decals = StripDecalColliders(floor.max.y, out int decalCount);
 
         float floorTop = floor.max.y;
         Vector3 c = floor.center;
@@ -97,9 +146,48 @@ public class FixFieldColliders
         EditorSceneManager.MarkSceneDirty(floorTiles.scene);
         Selection.activeGameObject = wallHost;
 
-        Debug.Log($"Setup Field Physics Bounds: removed {removed} mesh collider(s) from floor/walls; " +
-                  $"added ground box under FloorTiles and 4 walls (inset {WallInset}) under Perimeter. " +
-                  $"floorTop={floorTop:F2}, footprint {width:F1}×{depth:F1}.");
+        return $"Setup Field Physics Bounds: removed {removed} mesh collider(s) from floor/walls and " +
+               $"{decalCount} from {StaticObjectsName}; added ground box under FloorTiles and 4 walls " +
+               $"(inset {WallInset}) under Perimeter. floorTop={floorTop:F2}, " +
+               $"footprint {width:F1}×{depth:F1}.{decals}";
+    }
+
+    // The FLAT colliders under StaticObjects, gone; everything with real thickness left exactly as it
+    // was. Triggers are skipped too — the one trigger set that matters, TapeDetectors feeding
+    // MatchLoaderController, lives outside this subtree, but a decal trigger is nobody's bug.
+    private static string StripDecalColliders(float floorTop, out int count)
+    {
+        count = 0;
+        GameObject decals = GameObject.Find(StaticObjectsName);
+        if (decals == null) return $"\n  No '{StaticObjectsName}' in this scene — nothing to strip.";
+
+        var stripped = new List<string>();
+        var kept = new List<float>();
+        foreach (Collider col in decals.GetComponentsInChildren<Collider>(true))
+        {
+            if (col == null || col.isTrigger) continue;
+
+            float thickness = col.bounds.size.y;
+            if (thickness > DecalThickness) { kept.Add(col.bounds.max.y - floorTop); continue; }
+
+            // How far it sits off the floor is the interesting number for the ones that go: at a
+            // fraction of a millimetre it is not a ledge the wheel climbs, it is a second floor at
+            // the same height as the first, and the contact alternates between them every step.
+            stripped.Add($"{col.name} {thickness * 100f:0.0} mm thick, " +
+                         $"{(col.bounds.max.y - floorTop) * 100f:+0.0;-0.0} mm off the floor");
+            Undo.DestroyObjectImmediate(col);
+            count++;
+        }
+
+        string report = count == 0
+            ? $"\n  No flat colliders under {StaticObjectsName} — already clean."
+            : $"\n  Stripped {count} FLAT collider(s) (the paint):\n    " + string.Join("\n    ", stripped);
+
+        if (kept.Count == 0) return report;
+        kept.Sort();
+        return report + $"\n  Kept {kept.Count} collider(s) thicker than {DecalThickness * 100f:0} mm — " +
+               $"they stand {kept[0] * 100f:0} to {kept[kept.Count - 1] * 100f:0} mm above the floor, " +
+               "which is structure rather than paint and would let robots drive through it if removed.";
     }
 
     private static bool TryGetRendererBounds(GameObject go, out Bounds bounds)

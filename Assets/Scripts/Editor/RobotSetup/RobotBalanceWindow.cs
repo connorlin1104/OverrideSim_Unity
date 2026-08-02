@@ -371,7 +371,7 @@ public class RobotBalanceWindow : EditorWindow
                      "links' collider centroids minus the fitted radius, so ground clearance is " +
                      "approximate.";
         }
-        Footprint footprint = MeasureFootprint(centres);
+        Footprint footprint = MeasureFootprint(centres, WheelbaseRunsAlongZ(wheels, rootTransform));
         r.halfTrack = footprint.halfTrack;
         r.baseIsZ = footprint.baseIsZ;
         r.comHeight = com.y - lowest;
@@ -381,10 +381,17 @@ public class RobotBalanceWindow : EditorWindow
         // footprint is the whole point, and every one of these robots is asymmetric.
         //
         // 654V_v3 is why the lateral pair is measured rather than assumed symmetric. Its centre of
-        // mass sits 42 mm to one side of a 127 mm half-track, so its weak side has only 85 mm of
-        // margin — and with the lift up that is a 0.28 g roll threshold where the symmetric figure
-        // says a comfortable 0.46. Reporting the average of a strong side and a weak one describes
-        // a robot that does not exist; the robot goes over on the weak side.
+        // mass sits well to one side of its own wheel track — TipOverValidation, measuring the same
+        // robot on a bare floor, puts it 21.9 mm right of a 93.1 mm half-track, which leaves 17.7
+        // degrees of roll margin one way against 27.3 the other. Reporting the average of a strong
+        // side and a weak one describes a robot that does not exist; it goes over on the weak side.
+        //
+        // The two tools do NOT yet agree on the half-track itself (this one reports 130 mm for the
+        // same robot) because they measure different things: half the SPREAD of LinkCentre — the
+        // wheel LINK's collider centroid, gears and hubs included — against the MEAN lateral offset
+        // of wheel.transform.position. Same trap WheelContactPlane was fixed for. Until that is
+        // unified, quote TipOverValidation's numbers for absolute margins and this tool's for
+        // which-side-is-weak; the asymmetry is robust, the scale is not.
         float comAlongBase = footprint.baseIsZ ? com.z : com.x;
         r.noseMargin = footprint.baseMax - comAlongBase;
         r.tailMargin = comAlongBase - footprint.baseMin;
@@ -665,16 +672,26 @@ public class RobotBalanceWindow : EditorWindow
         }
     }
 
-    // The wheels' footprint: which horizontal axis is the TRACK (the shorter spread, the one a turn
-    // tips the robot over) and which is the WHEELBASE (the longer one, the one a reversal tips it
-    // over), plus where the outermost contact lines sit along the wheelbase.
+    // The wheels' footprint: which horizontal axis is the TRACK (the one a turn tips the robot over)
+    // and which is the WHEELBASE (the one a reversal tips it over), plus where the outermost contact
+    // lines sit along each.
     //
     // The two axes were not worth separating while only the roll threshold was reported — the old
     // HalfTrack took the smaller spread and threw the larger one away with a one-line comment. They
     // matter now because the question that started this was "why doesn't slamming reverse tip it",
-    // and that tips over the wheelbase, which is the LONGER of the two on every robot here. Reading
-    // a roll number and calling it the answer flatters the robot by however much longer it is than
-    // it is wide.
+    // and that tips over the wheelbase.
+    //
+    // WHICH IS WHICH IS NOT A GEOMETRY QUESTION, and answering it as one was wrong on every robot in
+    // this project. This used to decide with `baseIsZ = spreadZ >= spreadX` — "the wheelbase is the
+    // longer spread" — and every one of these four robots is WIDER THAN IT IS LONG, so it labelled
+    // the track as the wheelbase and swapped its own two margins, on all four, silently. 654V_v3
+    // came out with a 127 mm half-track against TipOverValidation's 93.1 mm for the same robot, and
+    // the disagreement was never chased because both numbers looked plausible.
+    //
+    // The wheels know. The rig aligns every wheel link's local +X with robot RIGHT, so the mean
+    // wheel axle IS the track axis and the wheelbase is perpendicular to it — measured, not guessed,
+    // and the same derivation RobotMotorController.MeasureDriveAxes uses so the tool and the
+    // drivetrain cannot disagree about which way the robot faces.
     private struct Footprint
     {
         public float halfTrack;      // half the shorter horizontal spread
@@ -685,7 +702,7 @@ public class RobotBalanceWindow : EditorWindow
         public bool baseIsZ;         // wheelbase runs along root Z (the usual case) rather than X
     }
 
-    private static Footprint MeasureFootprint(List<Vector3> centres)
+    private static Footprint MeasureFootprint(List<Vector3> centres, bool baseIsZ)
     {
         float minX = float.PositiveInfinity, maxX = float.NegativeInfinity;
         float minZ = float.PositiveInfinity, maxZ = float.NegativeInfinity;
@@ -694,15 +711,34 @@ public class RobotBalanceWindow : EditorWindow
             minX = Mathf.Min(minX, c.x); maxX = Mathf.Max(maxX, c.x);
             minZ = Mathf.Min(minZ, c.z); maxZ = Mathf.Max(maxZ, c.z);
         }
-        float spreadX = maxX - minX, spreadZ = maxZ - minZ;
 
-        var f = new Footprint { baseIsZ = spreadZ >= spreadX };
-        f.halfTrack = Mathf.Max(Mathf.Min(spreadX, spreadZ) * 0.5f, 1e-4f);
-        f.baseMin = f.baseIsZ ? minZ : minX;
-        f.baseMax = f.baseIsZ ? maxZ : maxX;
-        f.trackMin = f.baseIsZ ? minX : minZ;
-        f.trackMax = f.baseIsZ ? maxX : maxZ;
+        var f = new Footprint { baseIsZ = baseIsZ };
+        f.baseMin = baseIsZ ? minZ : minX;
+        f.baseMax = baseIsZ ? maxZ : maxX;
+        f.trackMin = baseIsZ ? minX : minZ;
+        f.trackMax = baseIsZ ? maxX : maxZ;
+        f.halfTrack = Mathf.Max((f.trackMax - f.trackMin) * 0.5f, 1e-4f);
         return f;
+    }
+
+    // The track axis, from the wheels' own axles. Root-local, and only ever answering "X or Z"
+    // because everything downstream indexes root-local components; a robot whose axles sit at 45
+    // degrees to its own root would need more than this, and would also need more than this
+    // everywhere else.
+    private static bool WheelbaseRunsAlongZ(IEnumerable<ArticulationBody> wheels, Transform root)
+    {
+        Vector3 sum = Vector3.zero;
+        foreach (ArticulationBody wheel in wheels)
+        {
+            if (wheel == null) continue;
+            Vector3 axle = root.InverseTransformDirection(wheel.transform.right);
+            if (sum != Vector3.zero && Vector3.Dot(axle, sum) < 0f) axle = -axle;
+            sum += axle;
+        }
+        // The axle runs across the TRACK, so the wheelbase is the other axis. No wheels, or axles
+        // pointing straight up, falls back to the old assumption rather than inventing one.
+        if (sum.sqrMagnitude < 1e-6f) return true;
+        return Mathf.Abs(sum.x) >= Mathf.Abs(sum.z);
     }
 
     // Acceleration, in g, that puts the robot over an edge `margin` from its centre of mass when

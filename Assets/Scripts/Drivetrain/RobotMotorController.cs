@@ -243,6 +243,13 @@ public class RobotMotorController : MonoBehaviour
     // in the physics reads it. Exposed so LoadTransferValidation can watch a stop happen.
     public float LeanDegrees => leanDeg;
 
+    // Which way this robot actually drives, in world space, measured from its wheels in Initialise.
+    // Public because every harness that drives a robot in a straight line and then measures anything
+    // directional has to agree with the controller about which way that was — TipOverValidation's
+    // lateral balance and RobotBalanceWindow's two margins were both wrong for exactly that reason.
+    public Vector3 DriveForwardWorld => DriveForward;
+    public Vector3 DriveRightWorld => DriveRight;
+
     // The force limit each wheel's drive currently carries, so the per-step decision below only
     // writes an ArticulationDrive struct when it actually changes. Same reason MotorActuator keeps
     // its hold flag: this runs 100 times a second across every wheel.
@@ -256,6 +263,17 @@ public class RobotMotorController : MonoBehaviour
 
     // The most a back-driven wheel may be given, derived from backDriveTractionMultiple in Initialise.
     private float backDriveTorque;
+
+    // WHICH WAY THIS ROBOT ACTUALLY DRIVES, in the root's own frame. Measured from the wheels in
+    // Initialise; see MeasureDriveAxes for why it cannot be assumed.
+    private Vector3 driveRightLocal = Vector3.right;
+    private Vector3 driveForwardLocal = Vector3.forward;
+
+    // The same two, in world space, valid the moment they are read.
+    private Vector3 DriveRight => rootBody != null
+        ? rootBody.transform.TransformDirection(driveRightLocal) : Vector3.right;
+    private Vector3 DriveForward => rootBody != null
+        ? rootBody.transform.TransformDirection(driveForwardLocal) : Vector3.forward;
 
     // How many entries at the start of allWheels are left-side wheels. Awake fills allWheels left
     // side first, and the braking-quadrant check needs to know which command each wheel was given.
@@ -454,8 +472,98 @@ public class RobotMotorController : MonoBehaviour
             wheel.angularDamping = wheelSpinDamping;
         }
 
+        // FIRST: both of the next two measure along the driving axis, and until this runs there is
+        // no reason to believe the root's +Z is it.
+        MeasureDriveAxes();
         MeasureRollResistance();
         MeasureLoadTransfer();
+    }
+
+    // --- Which way is forward ---------------------------------------------------------------------
+
+    // ROOT +Z IS NOT THE DRIVING AXIS, and assuming it was is the most expensive bug in this file.
+    //
+    // The convention in the header holds on 654V_v1 and 360RpmDrivetrain — both measured driving at
+    // 13.8 and 16.6 u/s exactly along transform.forward. It is FALSE on 654V_v2 and 654V_v3, which
+    // travel 9.3 u/s PERPENDICULAR to their own transform.forward. Robots arrive from player CAD, so
+    // the root's authored orientation is wherever the exporter left it, and nothing has ever forced
+    // it to agree with the drivetrain.
+    //
+    // WHAT THAT BROKE, on the two robots that carry a cascade:
+    //   - ApplyRollRelief rolls about the forward axis. On those two that is the PITCH axis, so the
+    //     relief was cancelling exactly the front-to-back tipping it is documented to leave alone —
+    //     "the front and back isn't really that tippy", in one line of code.
+    //   - StepLoadTransfer reads longitudinal acceleration as dot(velocity, forward), so it measured
+    //     ~0 however hard they braked and the body never leaned.
+    //   - MeasureRollResistance took half-track along right, i.e. along the wheelbase.
+    //
+    // MEASURED FROM THE WHEELS, because they are the only thing that knows. The rig aligns every
+    // wheel link's local +X with robot RIGHT (see the header's sign convention), so the mean wheel
+    // axle IS the right axis, and forward is right x up. That works on any imported robot, which no
+    // convention and no geometry heuristic does — RobotBalanceWindow picked the axis by "the
+    // wheelbase is the longer spread" and got it backwards on all four, because every one of these
+    // robots is wider than it is long.
+    //
+    // THE SIGN COMES FROM THE AXLE TOO, and this is where the first version of this function still
+    // got it wrong. Having measured the line off the wheels it then turned it to face the root's own
+    // +X — the very assumption the rest of this comment exists to reject — and v2 and v3 came back
+    // with a forward pointing exactly backwards down a correct line. The sign is not a convention to
+    // be recovered from the root; it is a fact about the drivetrain, and the drivetrain states it:
+    // a positive drive spins the wheel about +axle by the right-hand rule, which drags the contact
+    // patch backwards and sends the robot along axle x up. Measured, on all four: dot(travel,
+    // axle x up) = +1.00, v2 and v3 included.
+    //
+    // Everything reading these axes today is sign-symmetric — the relief's angle, rate and torque
+    // all flip together, and the lean flips its sign, its pivot and its axis together — so fixing
+    // the sign moves nothing on screen. That is precisely why it had to be fixed from the outside by
+    // a test that drives the robot: the line was wrong loudly and the sign was wrong silently, and
+    // the next thing to read DriveForwardWorld would have been the one to find out.
+    //
+    // The result is orthonormalised against world up so a wheel mounted a degree out of true does
+    // not tilt the roll axis into the ground.
+    private void MeasureDriveAxes()
+    {
+        driveRightLocal = Vector3.right;
+        driveForwardLocal = Vector3.forward;
+        if (rootBody == null || allWheels.Length == 0) return;
+
+        // Measured in WORLD space and stored in the root's frame. World is where the flattening has
+        // to happen — the robot is upright on the floor when this runs, so world up is the normal
+        // the axles should be square to — and the root's frame is where the answer has to live, so
+        // it rides along once the robot turns.
+        Transform t = rootBody.transform;
+        Vector3 sum = Vector3.zero;
+        for (int i = 0; i < allWheels.Length; i++)
+        {
+            ArticulationBody wheel = allWheels[i];
+            if (wheel == null) continue;
+
+            // The JOINT's twist axis, not the mesh's local +X: on a URDF import the axle can live
+            // entirely in anchorRotation with the transform left as the exporter wrote it. The two
+            // agree on all four shipped robots, so this costs nothing and covers the case that isn't.
+            Vector3 axle = wheel.transform.rotation * wheel.anchorRotation * Vector3.right;
+
+            // An inverted side spins the other way for the same stick, so the robot travels the
+            // other way, so forward IS the other way. allWheels is filled left side first.
+            bool inverted = i < leftWheelCount ? invertLeft : invertRight;
+            sum += inverted ? -axle : axle;
+        }
+
+        // Summed raw and never folded onto a reference wheel. A mirrored wheel then costs one vote
+        // instead of dragging every other wheel onto its own sign, which is what folding-onto-the-
+        // first does when the first one is the mirrored one. An even split leaves nothing to decide
+        // with — that robot cannot drive straight either — so this keeps the convention and says
+        // nothing rather than picking a side.
+        if (sum.sqrMagnitude < 1e-6f) return;
+
+        // The axles carry whatever camber and mounting error the CAD has, and a roll axis with a
+        // vertical component would lever the robot into the floor.
+        Vector3 right = Vector3.ProjectOnPlane(sum.normalized, Vector3.up);
+        if (right.sqrMagnitude < 1e-6f) return;   // axles vertical: nothing sane to derive
+        right.Normalize();
+
+        driveRightLocal = t.InverseTransformDirection(right);
+        driveForwardLocal = t.InverseTransformDirection(Vector3.Cross(right, Vector3.up).normalized);
     }
 
     // --- Roll relief ------------------------------------------------------------------------------
@@ -489,7 +597,7 @@ public class RobotMotorController : MonoBehaviour
         if (rootBody == null || rollRelief <= 0f || rollInertia <= 0f || dt <= 0f) return;
 
         Transform t = rootBody.transform;
-        Vector3 axis = t.forward;
+        Vector3 axis = DriveForward;   // measured from the wheels — NEVER t.forward, see MeasureDriveAxes
 
         // Roll = how far the robot's up has rotated about its own forward axis away from the most
         // upright it could be at this heading. Projecting world up onto the plane normal to the roll
@@ -543,7 +651,8 @@ public class RobotMotorController : MonoBehaviour
 
         Transform t = rootBody.transform;
         Vector3 origin = t.position;
-        Vector3 axis = t.forward;
+        Vector3 axis = DriveForward;
+        Vector3 across = DriveRight;
 
         float mass = 0f;
         foreach (ArticulationBody body in rootBody.GetComponentsInChildren<ArticulationBody>(true))
@@ -561,7 +670,7 @@ public class RobotMotorController : MonoBehaviour
         foreach (ArticulationBody wheel in allWheels)
         {
             if (wheel == null) continue;
-            halfTrack += Mathf.Abs(Vector3.Dot(wheel.transform.position - origin, t.right));
+            halfTrack += Mathf.Abs(Vector3.Dot(wheel.transform.position - origin, across));
             counted++;
         }
         if (counted > 0) halfTrack /= counted;
@@ -619,16 +728,18 @@ public class RobotMotorController : MonoBehaviour
         {
             if (wheel == null) continue;
             Vector3 offset = wheel.transform.position - t.position;
-            float along = Vector3.Dot(offset, t.forward);
+            float along = Vector3.Dot(offset, DriveForward);
             front = Mathf.Max(front, along);
             rear = Mathf.Min(rear, along);
             lowest = Mathf.Min(lowest, Vector3.Dot(offset, t.up));
         }
         if (float.IsInfinity(front)) return;
 
+        // Built from the MEASURED forward, not from local +Z, and in world units so that rotating it
+        // by the root's rotation lands it where the wheels actually are.
         float contact = lowest - radius;
-        frontPivotOffset = new Vector3(0f, contact, front);
-        rearPivotOffset = new Vector3(0f, contact, rear);
+        frontPivotOffset = driveForwardLocal * front + Vector3.up * contact;
+        rearPivotOffset = driveForwardLocal * rear + Vector3.up * contact;
 
         // Full lean at the friction cone, which is the hardest this robot can ever accelerate or
         // stop. Sizing it off the tyres rather than a chosen number means a grippier robot leans
@@ -645,7 +756,7 @@ public class RobotMotorController : MonoBehaviour
         // Measured off the body, not off the throttle. A robot shoved by another robot, dragged to a
         // stop by a wall or spinning its wheels on a slick patch is having its weight moved around
         // just as much as one under power, and only the velocity knows about any of that.
-        float forwardSpeed = Vector3.Dot(rootBody.linearVelocity, rootBody.transform.forward);
+        float forwardSpeed = Vector3.Dot(rootBody.linearVelocity, DriveForward);
         float accel = (forwardSpeed - lastForwardSpeed) / dt;
         lastForwardSpeed = forwardSpeed;
 
@@ -691,15 +802,18 @@ public class RobotMotorController : MonoBehaviour
     // Static and pure for the same reason LeanStep is — the property that matters (the pivot does
     // not move, so nothing is ever pushed through the floor) is checkable without a robot.
     public static void LeanedPose(Vector3 position, Quaternion rotation, float leanDeg,
-        Vector3 frontPivotOffset, Vector3 rearPivotOffset,
+        Vector3 frontPivotOffset, Vector3 rearPivotOffset, Vector3 rightLocal,
         out Vector3 leanedPosition, out Quaternion leanedRotation)
     {
         // Nose-up leans about the REAR contact line, nose-down about the FRONT one: always the end
         // the weight has moved onto, so the other end is what rises.
         Vector3 pivot = position + rotation * (leanDeg >= 0f ? rearPivotOffset : frontPivotOffset);
 
-        // Negative about the robot's own right axis is nose-UP (right-hand rule takes +Z to -Y).
-        Quaternion lean = Quaternion.AngleAxis(-leanDeg, rotation * Vector3.right);
+        // About the robot's MEASURED right axis, passed in rather than taken as local +X for the
+        // same reason the pivots are: on 654V_v2 and 654V_v3, local +X is the driving direction, so
+        // leaning about it would ROLL the robot rather than pitch it. Negative is nose-up, because
+        // the right-hand rule about right takes forward to down.
+        Quaternion lean = Quaternion.AngleAxis(-leanDeg, rotation * rightLocal);
         leanedPosition = lean * (position - pivot) + pivot;
         leanedRotation = lean * rotation;
     }
@@ -726,7 +840,7 @@ public class RobotMotorController : MonoBehaviour
         if (Mathf.Abs(leanDeg) < 0.001f) return;
 
         LeanedPose(physicsPosition, physicsRotation, leanDeg, frontPivotOffset, rearPivotOffset,
-            out Vector3 leanedPosition, out Quaternion leanedRotation);
+            driveRightLocal, out Vector3 leanedPosition, out Quaternion leanedRotation);
         t.SetPositionAndRotation(leanedPosition, leanedRotation);
 
         posedPosition = t.position;
