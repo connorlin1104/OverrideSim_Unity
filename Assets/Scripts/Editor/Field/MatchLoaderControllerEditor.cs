@@ -47,14 +47,17 @@ public class MatchLoaderControllerEditor : Editor
             return;
         }
 
-        float tilt = loader.SpawnTiltDegrees;
+        // Lean is what the limit is about; the total includes yaw, which cannot tip anything.
+        float lean = loader.SpawnLeanDegrees;
+        float total = loader.SpawnTiltDegrees;
         EditorGUILayout.HelpBox(
-            $"Spawn lean: {tilt:0.#}°\n" +
-            (tilt > MatchLoaderController.SelfRightingLimitDegrees
-                ? $"Past ~{MatchLoaderController.SelfRightingLimitDegrees:0}°, a piece that misses the " +
-                  "robot will STAY tipped over on the floor instead of settling upright."
-                : "Select this loader and drag the rotation handle in the Scene view to aim it."),
-            tilt > MatchLoaderController.SelfRightingLimitDegrees ? MessageType.Warning : MessageType.Info);
+            $"Spawn aim: {total:0.#}° from the anchor, of which {lean:0.#}° is LEAN\n" +
+            (lean > MatchLoaderController.SelfRightingLimitDegrees
+                ? $"Past ~{MatchLoaderController.SelfRightingLimitDegrees:0}° of lean, a piece that " +
+                  "misses the robot will STAY tipped over on the floor instead of settling upright."
+                : "Yaw is free — only lean can tip a piece. Drag the rotation handle in the Scene " +
+                  "view to aim it."),
+            lean > MatchLoaderController.SelfRightingLimitDegrees ? MessageType.Warning : MessageType.Info);
     }
 
     private void OnSceneGUI()
@@ -70,7 +73,7 @@ public class MatchLoaderControllerEditor : Editor
 
         Quaternion spawnRot = loader.SpawnRotation;
         float tilt = loader.SpawnTiltDegrees;
-        bool tooFar = tilt > MatchLoaderController.SelfRightingLimitDegrees;
+        bool tooFar = loader.SpawnLeanDegrees > MatchLoaderController.SelfRightingLimitDegrees;
         Color tiltColor = tooFar ? OverTiltColor : TiltColor;
 
         Vector3 restAt = anchor.position;                                                  // automatic spawn

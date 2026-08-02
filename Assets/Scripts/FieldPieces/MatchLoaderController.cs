@@ -220,8 +220,55 @@ public class MatchLoaderController : MonoBehaviour
     // over on the floor instead of settling upright — Connor's stated limit on how far this may go.
     public const float SelfRightingLimitDegrees = 28f;
 
-    // How far the spawn is currently leaned from the anchor's own aim, in degrees.
+    // How far the spawn is rotated from the anchor's own aim, in degrees — ALL of it, yaw included.
+    // For display. Do not test self-righting against this; see SpawnLeanDegrees.
     public float SpawnTiltDegrees =>
         spawnPoint != null ? Quaternion.Angle(spawnPoint.rotation, SpawnRotation)
                            : Quaternion.Angle(Quaternion.identity, Quaternion.Euler(spawnTilt));
+
+    // How far the spawn is LEANED — the angle between the anchor's up and the spawn's up, which is
+    // the only part of the rotation that can tip a piece over.
+    //
+    // Yaw does not tip anything. Spinning a cup about its own vertical axis leaves its centre of
+    // mass exactly over its base at any angle, so a spawn aimed with pure yaw can never fail to
+    // self-right however far it is turned. SpawnTiltDegrees cannot tell the two apart — it is a
+    // whole-rotation magnitude — so testing the self-righting limit against it charges a harmless
+    // yaw against a budget meant for lean, and would warn about (or refuse) an aim that is
+    // physically fine. The shipped loaders are aimed with exactly that: 13 degrees of pure yaw.
+    public float SpawnLeanDegrees
+    {
+        get
+        {
+            Vector3 aimUp = spawnPoint != null ? spawnPoint.rotation * Vector3.up : Vector3.up;
+            return Vector3.Angle(aimUp, SpawnRotation * Vector3.up);
+        }
+    }
+
+    // The aim a freshly-added loader starts with, so rebuilding the field (or removing and re-adding
+    // this component) reproduces the shipped setup instead of a zeroed one nobody remembers to
+    // re-aim. Pure YAW: the feed enters the robot squarely, and yaw cannot tip a piece.
+    public const float DefaultSpawnYawDegrees = 13f;
+
+    // Unity calls this when the component is first added and on Inspector > Reset. Alliance comes
+    // from the object's own name (MatchLoaderRedNorth / ...BlueSouth), walking up the parents as a
+    // fallback, because the field CAD is what names these and there is no alliance type in the
+    // project to ask. An unrecognised name leaves the aim at zero rather than guessing a side — a
+    // wrong sign aims the feed away from the robot, which is worse than an obvious no-op.
+    private void Reset()
+    {
+        float sign = AllianceSign(transform);
+        spawnTilt = new Vector3(0f, DefaultSpawnYawDegrees * sign, 0f);
+    }
+
+    // +1 red, -1 blue, 0 unknown.
+    private static float AllianceSign(Transform t)
+    {
+        for (Transform p = t; p != null; p = p.parent)
+        {
+            string n = p.name.ToLowerInvariant();
+            if (n.Contains("red")) return 1f;
+            if (n.Contains("blue")) return -1f;
+        }
+        return 0f;
+    }
 }
