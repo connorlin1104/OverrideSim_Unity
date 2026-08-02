@@ -233,7 +233,7 @@ public class Dr4bLiftBuilderWindow : EditorWindow
     private void AutoFillRec(Transform t, Slot parentHint)
     {
         if (t == null) return;
-        if (t.name == "LiftMotor" || t.name == "Dr4bCarriage") return;
+        if (t.name == "LiftMotor" || t.name == "Dr4bCarriage" || t.name == "Dr4bBallast") return;
 
         Slot slot = Classify(t.name);
         if (parentHint == Slot.SecondArms)
@@ -324,6 +324,8 @@ public static class Dr4bLiftSetup
 {
     private const string UndoName = "Build DR4B Lift";
     private const string HubName = "LiftMotor";
+    private const string BallastName = "Dr4bBallast";
+    private const float WorldScaleFactor = 10f;   // 1 scaled unit = 0.1 m, as everywhere else here
     // The hidden driver joint's travel. Internal — only the 0->1 lift progress matters, and the arm
     // angles + rise are set directly, so this value doesn't change the final look.
     private const float DriverSweepDeg = 60f;
@@ -424,6 +426,11 @@ public static class Dr4bLiftSetup
         // 5) Stack carriage rides the scoring (stage 1 + 2).
         string carriageNote = WireStackCarriage(registry, chassis, lift, useUndo);
 
+        // 5b) The mass the linkage above moves — which, until this existed, was none of it. See
+        //     Dr4bBallast: everything wired in steps 3 and 4 had its body destroyed and its
+        //     colliders switched off, so the solver has never known the lift is there.
+        string ballastNote = EnsureBallast(registry, chassis, lift, useUndo);
+
         // 6) Buttons + display name on the hub.
         string buttonNote = "kept";
         if (o.autoAssignButtons)
@@ -450,6 +457,7 @@ public static class Dr4bLiftSetup
             $"• Translational movers: {lift.translators.Count}  Scissor arms: {lift.rotators.Count}" +
             (o.arms4Bar ? " (4-bar: each parallel bar rotates about its OWN base; big head assemblies stay rigid).\n" : ".\n") +
             $"• Stack: {carriageNote}. Intake mouth stays at the base.\n" +
+            $"• Balance: {ballastNote}\n" +
             $"• Hold-to-lift, stops at top ({o.liftRaiseSeconds}s to full — editable live on the Dr4bLift component). Score = A button (drops the stack, only while raised).\n" +
             $"• Intake AND outtake auto-disable while the lift is raised; the intake markers/mouth overlay are hidden.\n\n" +
             "IMPORTANT: the field spawns the robot PREFAB at Play, not this scene object. APPLY THESE " +
@@ -534,6 +542,7 @@ public static class Dr4bLiftSetup
         foreach (Dr4bLift dl in robot.GetComponentsInChildren<Dr4bLift>(true)) DestroyComp(dl, useUndo);
         helpers += DestroyNamedChild(chassis, HubName, useUndo);
         helpers += DestroyNamedChild(chassis, "Dr4bCarriage", useUndo);
+        helpers += DestroyNamedChild(chassis, BallastName, useUndo);
 
         if (refreshCatalog)
         {
@@ -658,6 +667,151 @@ public static class Dr4bLiftSetup
             hubBody.jointFriction = holdFriction;
         }
         return hub;
+    }
+
+    // Builds (or rebuilds) the mass proxy for everything steps 3 and 4 just neutralized.
+    //
+    // Runs LAST on purpose: it measures what is actually wired, so a re-Build with a changed role
+    // assignment re-measures rather than carrying a stale number. Neutralizing destroys bodies and
+    // disables colliders but leaves the MeshFilters alone, which is what the measurement reads.
+    //
+    // Three numbers come out of the geometry and all three matter:
+    //   • WHERE — the bounds-weighted centre of the wired parts at rest. The link has no collider,
+    //     so automaticCenterOfMass pins its whole mass at its own origin; putting that origin
+    //     anywhere else is just moving the error somewhere less obvious. This is the number that
+    //     sets the lift-DOWN threshold.
+    //   • HOW MUCH — each part massed with its own name's density, the same way CascadeBuilder
+    //     masses a bar. Not MinLiftMass: a floor that wins on every link is not a floor, it is the
+    //     value, and it is why every lift in this project used to weigh the same 1.5 kg.
+    //   • HOW FAR — the mass-weighted travel, as a VECTOR. Stage flags give each translator its own
+    //     offset; an arm is taken to ride its pivot, which under-counts the tip of a long arm and
+    //     over-counts its root, and those largely cancel. The vector is kept whole rather than
+    //     reduced to a rise because a DR4B drifts fore-and-aft as it lifts (654V_v1: 160 mm
+    //     BACKWARD against a nose margin of ~125 mm) and a prismatic axis is free to slant.
+    internal static string EnsureBallast(RobotMechanisms registry, Transform chassis, Dr4bLift lift, bool useUndo)
+    {
+        GameObject root = registry.gameObject;
+
+        // Every part the lift moves, paired with the offset it moves by.
+        var moved = new List<(GameObject go, Vector3 offset)>();
+        foreach (Dr4bMoveFollower f in lift.translators)
+            if (f != null) moved.Add((f.gameObject, StageOffset(lift, f.followsStage1, f.followsStage2)));
+        foreach (PivotRotateFollower r in lift.rotators)
+            if (r != null) moved.Add((r.gameObject, PivotOffset(lift, r)));
+
+        if (moved.Count == 0)
+        {
+            DestroyNamedChild(chassis, BallastName, useUndo);
+            return "no moving parts wired, so no ballast link — this lift moves no mass";
+        }
+
+        // Mass-weight the travel, part by part. A part with no measurable mass still MOVES, so it
+        // keeps a small floor weight rather than being dropped — dropping it would bias the travel
+        // toward whichever parts happened to export as watertight solids, which on a lift is the
+        // motors and sprockets down at the bottom.
+        Vector3 weightedOffset = Vector3.zero;
+        float offsetWeight = 0f;
+        foreach ((GameObject go, Vector3 offset) in moved)
+        {
+            float kg = RobotMassFromGeometry.MassAndCentre(new[] { go }, root.transform,
+                WorldScaleFactor, out _, out _);
+            float w = Mathf.Max(kg, 1e-4f);
+            weightedOffset += offset * w;
+            offsetWeight += w;
+        }
+        Vector3 travelVector = offsetWeight > 0f ? weightedOffset / offsetWeight : Vector3.zero;
+
+        // Mass and centre over the whole set at once, not as an average of per-part answers, so a
+        // long channel outweighs a small sprocket — that weighting is what MassAndCentre is for.
+        var allNodes = new List<GameObject>();
+        foreach ((GameObject go, Vector3 _) in moved) allNodes.Add(go);
+        float totalKg = RobotMassFromGeometry.MassAndCentre(allNodes, root.transform,
+            WorldScaleFactor, out Vector3 centre, out Bounds bounds);
+
+        float travel = travelVector.magnitude;
+        Vector3 axisWorld = travel > 1e-4f ? travelVector / travel : chassis.up;
+
+        Transform existing = MechanismBuildUtil.FindChild(chassis, BallastName);
+        GameObject ballast;
+        if (existing != null) ballast = existing.gameObject;
+        else
+        {
+            ballast = new GameObject(BallastName);
+            if (useUndo) Undo.RegisterCreatedObjectUndo(ballast, UndoName);
+            ballast.transform.SetParent(chassis, false);
+        }
+        ballast.transform.SetPositionAndRotation(centre, chassis.rotation);
+
+        // ConfigureJointLink, not Apply: Apply would register this as a button mechanism, and a
+        // ballast the player can drive is a ballast that stops agreeing with the lift.
+        Vector3 axisLocal = ballast.transform.InverseTransformDirection(axisWorld).normalized;
+        ArticulationBody body = AddMechanismJoint.ConfigureJointLink(ballast,
+            AddMechanismJoint.JointType.Prismatic, axisLocal, Vector3.zero, 0f, travel,
+            default, registry, useUndo);
+
+        if (useUndo) Undo.RecordObject(body, UndoName);
+        body.mass = Mathf.Max(totalKg, MechanismBuildUtil.MinLiftMass);
+
+        // Explicit, because there are no colliders to derive either from. The centre of mass is the
+        // link origin, which the transform above already placed at the assembly's centroid — that is
+        // the whole design, not a fallback. The inertia tensor is the solid-box formula over the
+        // assembly's measured extent: PhysX given a degenerate tensor on a colliderless link is a
+        // solver that jitters, and a robot's pitch RATE (as opposed to whether it pitches at all)
+        // is exactly what rotational inertia sets.
+        body.automaticCenterOfMass = false;
+        body.centerOfMass = Vector3.zero;
+        body.automaticInertiaTensor = false;
+        Vector3 e = bounds.size;
+        float k = body.mass / 12f;
+        body.inertiaTensor = Vector3.Max(
+            new Vector3(k * (e.y * e.y + e.z * e.z), k * (e.x * e.x + e.z * e.z), k * (e.x * e.x + e.y * e.y)),
+            Vector3.one * 1e-3f);
+        body.inertiaTensorRotation = Quaternion.identity;
+
+        Dr4bBallast ballastComponent = MechanismBuildUtil.AddOrGet<Dr4bBallast>(ballast, useUndo);
+        if (useUndo) Undo.RecordObject(ballastComponent, UndoName);
+        ballastComponent.lift = lift;
+        ballastComponent.body = body;
+        ballastComponent.travel = travel;
+        ballastComponent.BakeDrive();   // edit-mode Physics.Simulate never runs Awake
+
+        EditorUtility.SetDirty(body);
+        EditorUtility.SetDirty(ballastComponent);
+
+        return $"'{BallastName}' carries {body.mass:0.00} kg at the linkage's centre and slides " +
+               $"{travel * 100f:0.} mm as it lifts, so the lift finally moves the robot's centre of " +
+               $"mass (Tools > RoboSim > Robot > Mass & Balance shows by how much)" +
+               (totalKg < MechanismBuildUtil.MinLiftMass
+                   ? $" — measured only {totalKg:0.00} kg of geometry, so it is on the {MechanismBuildUtil.MinLiftMass} kg floor"
+                   : "");
+    }
+
+    // How far a translator with these stage flags moves at full lift. Mirrors Dr4bMoveFollower.Apply,
+    // which sums Stage1Move and Stage2Move — but read off the AUTHORED fields rather than the
+    // controller's per-frame outputs, because those are only populated at play time.
+    private static Vector3 StageOffset(Dr4bLift lift, bool stage1, bool stage2)
+    {
+        Transform c = lift.Chassis != null ? lift.Chassis : lift.transform;
+        Vector3 up = lift.riseAlongChassisUp ? c.up : Vector3.up;
+        Vector3 fwd = c.forward;
+        Vector3 move = Vector3.zero;
+        if (stage1) move += up * lift.stage1Rise + fwd * lift.stage1Forward;
+        if (stage2) move += up * lift.stage2Rise + fwd * lift.stage2Forward;
+        return move;
+    }
+
+    // An arm is taken to move with its pivot. A rotator's own sweep about that pivot is deliberately
+    // not modelled: its centroid traces an arc whose vertical extent depends on where the mass sits
+    // along the bar, and guessing at that would be worse than a bounded approximation — the same
+    // call RobotBalanceWindow.LiftedMoment makes when it declares revolute joints out of scope.
+    private static Vector3 PivotOffset(Dr4bLift lift, PivotRotateFollower r)
+    {
+        for (Transform t = r.pivot; t != null; t = t.parent)
+        {
+            Dr4bMoveFollower f = t.GetComponent<Dr4bMoveFollower>();
+            if (f != null) return StageOffset(lift, f.followsStage1, f.followsStage2);
+        }
+        return Vector3.zero;   // a fixed pivot: the arm swings, its base does not rise
     }
 
     private static void WireTranslators(List<GameObject> group, bool stage1, bool stage2,

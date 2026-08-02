@@ -50,6 +50,10 @@ public class PhysicsSmokeTest
     // robot settles/drives/turns on open floor regardless of its game spawn point or off-center pivot.
     private static readonly Vector3 ValidationSpawnPoint = new Vector3(0f, 0.974f, 6f);
 
+    // internal so GoalEntrapmentValidation can pick the goal nearest this point — its robot starts
+    // from the same settled pose, so "which goal is closest" has to mean the same thing there.
+    internal static Vector3 ValidationSpawn => ValidationSpawnPoint;
+
     [MenuItem("Tools/RoboSim/Validation/Validate Robot Physics", false, 1)]
     private static void ValidateMenu()
     {
@@ -142,7 +146,10 @@ public class PhysicsSmokeTest
     // point or CAD pivot. Edit-mode transform writes stick because no Physics.Simulate has built the
     // articulation yet; a physics-based pre-settle then drops it onto the floor without needing to
     // know the floor height (edit-mode raycasts before the first Simulate are unreliable).
-    private static ArticulationBody PlaceForValidation(GameObject instance)
+    // internal so TipOverValidation can spawn onto the same settled start pose. Its reversal
+    // measurement is only comparable between robots if every robot begins from the same place on
+    // the same open floor, which is exactly what this establishes.
+    internal static ArticulationBody PlaceForValidation(GameObject instance)
     {
         instance.transform.SetPositionAndRotation(ValidationSpawnPoint, Quaternion.identity);
         Physics.SyncTransforms();
@@ -495,7 +502,7 @@ public class PhysicsSmokeTest
 
     // --- Helpers --------------------------------------------------------------------------
 
-    private static void Step(int steps)
+    internal static void Step(int steps)
     {
         for (int i = 0; i < steps; i++) Physics.Simulate(StepSeconds);
     }
@@ -523,7 +530,7 @@ public class PhysicsSmokeTest
 
     // The robot prefab to spawn for validation: the Project selection if it's a set-up robot prefab,
     // else the catalog's selected model, else the first catalog entry with a prefab.
-    private static GameObject ResolveRobotPrefab()
+    internal static GameObject ResolveRobotPrefab()
     {
         GameObject selected = Selection.activeObject as GameObject;
         if (selected != null && PrefabUtility.IsPartOfPrefabAsset(selected) &&
@@ -564,7 +571,7 @@ public class PhysicsSmokeTest
 
     // All revolute links under the root, split by side (link names carry LS/RS; fall back to
     // the sign of their root-local X, where +X is robot right).
-    private static ArticulationBody[] FindWheels(ArticulationBody root, out ArticulationBody[] left, out ArticulationBody[] right)
+    internal static ArticulationBody[] FindWheels(ArticulationBody root, out ArticulationBody[] left, out ArticulationBody[] right)
     {
         // Prefer the DRIVE wheels the rig recorded on RobotMotorController. Driving only these keeps
         // the robot's other revolute joints (rollers, arms, coupled followers) out of the drive/turn

@@ -12,37 +12,42 @@ using UnityEngine;
 // everything. The problem was never that the COM wasn't calculated. It was that the MASSES make it
 // almost impossible to move:
 //
-//   • RigDrivetrainArticulation puts a hard-coded 24 kg on the chassis link, which is 66-68% of
-//     every shipped robot, sitting low and never moving.
-//   • Each wheel link is 1 kg — 6 kg at axle height. That one is left alone: a real omni is 0.11 kg,
-//     but a wheel's centre sits only one radius above the contact patch, so its mass is weak
-//     ballast, and shrinking it wrecks the mass ratio across the drive joint. See
-//     RigDrivetrainArticulation.WheelMass, which has the measurements.
+//   • RigDrivetrainArticulation put a hard-coded 24 kg on the chassis link, which was 66-68% of
+//     every shipped robot, sitting low and never moving. Then 7 kg, which was still enough floor
+//     to outvote any lift. It is 4 kg now — see RootMass, which has the measurements.
+//   • Each wheel link was 1 kg — up to 8 kg at axle height. Halved to 0.5, which is still 5x a real
+//     omni's 0.11 kg: a wheel's centre sits one radius above the contact patch so its mass is weak
+//     ballast either way, and what stops it going lower is the mass RATIO across the drive joint,
+//     not the mass. See RigDrivetrainArticulation.WheelMass.
 //   • Every lift link lands on MechanismBuildUtil.MinLiftMass (1.5 kg), which has won on 100% of
-//     the shipped links: the mass-from-geometry pass computes near-zero volume for thin plates, so
-//     the floor is the value, not a floor.
+//     the shipped links. This one is NOT a measurement failure, which is worth knowing before
+//     trying to fix it: every mesh in 654V_v1's DR4B is closed and measurable, and the assembly
+//     genuinely comes to ~1.2 kg of aluminium. The CAD models the structure, not the robot.
 //
-// Net effect: raising a full cascade lift moves the composite COM by ~44 mm, and every shipped
-// robot's tip threshold (1.16-1.95 g, or 0.92 g for a fully raised cascade) sits ABOVE the 0.8 g
-// its tyres can actually deliver. The robots physically cannot tip themselves by driving, in any
-// configuration, no matter how hard a reversal is slammed. For scale, a real VEX V5 robot is at
-// most 11.3 kg with its COM 150-200 mm up on a ~300 mm track, and tips well under 0.5 g with a
-// loaded lift raised.
+// Net effect BEFORE any of that: raising a full cascade lift moved the composite COM by ~44 mm, and
+// every shipped robot's tip threshold sat ABOVE the 0.8 g its tyres can deliver. The robots
+// physically could not tip themselves by driving, in any configuration, no matter how hard a
+// reversal was slammed. For scale, a real VEX V5 robot is at most 11.3 kg with its COM 150-200 mm
+// up on a ~300 mm track, and tips well under 0.5 g with a loaded lift raised.
 //
 // Applying the VEX-realistic masses below leaves acceleration essentially unchanged — DrivetrainTuning
 // derives drive force from mu*m*g, so force and inertia scale together — and changes only what mass
 // distribution was ever supposed to change: stability.
 //
-// TWO THINGS THIS DOES NOT FIX, both worth knowing before reading the report:
-//   • The DR4B contributes exactly 0 mm of COM rise on 654V_v1, and no mass change here will alter
-//     that. Its stages are not ArticulationBody links at all — they are transform-posed visuals
-//     (Dr4bMoveFollower / PivotRotateFollower) owned by the chassis link with their colliders
-//     disabled. The only DR4B body is a colliderless 1.5 kg motor hub whose COM sits on its own
-//     rotation axis, so rotating it cannot move it. Making the DR4B affect balance means giving it
-//     real links, which is a builder change, not a mass change.
-//   • A carried game piece is weightless: ClawGrab and IntakePull set isKinematic on the piece, and
-//     a kinematic body contributes no mass to the solver. A loaded lift is indistinguishable from
-//     an empty one.
+// TWO THINGS TO KNOW BEFORE READING THE REPORT:
+//   • The DR4B's mass now moves, but only its own. Its stages are still transform-posed visuals
+//     (Dr4bMoveFollower / PivotRotateFollower) with their colliders disabled and their bodies
+//     destroyed — a four-bar is a closed loop and an ArticulationBody tree is a tree — so the mass
+//     they represent rides a Dr4bBallast link instead: one real prismatic joint, no collider,
+//     carrying the assembly's measured mass along its measured travel. What that buys is honest
+//     rather than dramatic. 654V_v1's linkage is 1.5 kg moving 320 mm, so it lifts the composite
+//     COM by ~43 mm and the robot still cannot tip itself with the lift empty. That is the right
+//     answer for a chain-driven DR4B whose motors stay on the chassis; what tips one is the load.
+//   • Which is still weightless. ClawGrab and IntakePull set isKinematic on a carried piece, and a
+//     kinematic body contributes no mass to the solver, so a loaded lift remains indistinguishable
+//     from an empty one. On a stacker like 654V_v1 that is the difference between a lift that
+//     cannot tip the robot and one that easily can — four 1 kg cups at 630 mm would take it from
+//     1.11 g to well under 0.5.
 //
 // Usage: Tools > RoboSim > Robot > Mass & Balance. Measuring is always safe; applying rewrites
 // prefabs and then re-bakes the drives (mass feeds the traction budget).
@@ -54,12 +59,13 @@ public class RobotBalanceWindow : EditorWindow
     // window's whole job is bringing already-rigged robots into line with it.
     private const float ChassisMass = RigDrivetrainArticulation.RootMass;
     private const float WheelMass = RigDrivetrainArticulation.WheelMass;
+    private const float WorldScaleFactor = 10f;   // 1 scaled unit = 0.1 m, as everywhere else
 
     private readonly List<Report> reports = new List<Report>();
     private Vector2 scroll;
     private string status;
 
-    private struct Report
+    internal struct Report
     {
         public string path;
         public string name;
@@ -70,8 +76,18 @@ public class RobotBalanceWindow : EditorWindow
         public float comHeight;     // above the wheel contact plane, world units
         public float comHeightRaised; // ...with every prismatic lift at its upper limit
         public float halfTrack;     // world units
-        public float tipG;          // lateral acceleration that tips it, in g
+        public float tipG;          // LATERAL acceleration that tips it, in g — a hard turn
         public float tipGRaised;    // ...with the lifts up
+
+        // The lengthwise pair, which is what a slammed reversal tips it over. Two numbers rather
+        // than one because the centre of mass is rarely centred fore-and-aft: a lift hung off the
+        // front shortens the nose margin and lengthens the tail one, so the robot goes over its
+        // nose long before it would go over its tail.
+        public float noseMargin;    // COM to the front contact line, world units
+        public float tailMargin;    // COM to the rear contact line
+        public float leftMargin;    // ...and the same pair across the track, for the ROLL threshold
+        public float rightMargin;
+        public bool baseIsZ;        // wheelbase runs along root +Z ("nose") rather than +X
         public float liftTravel;    // total vertical travel available, world units
         public float tractionG;     // what the tyres can actually deliver
         public int wheelCount;
@@ -94,10 +110,13 @@ public class RobotBalanceWindow : EditorWindow
     private void OnGUI()
     {
         EditorGUILayout.HelpBox(
-            "Tip threshold is the lateral acceleration that would put the robot over, from its " +
-            "measured centre of mass and half-track. Compare it against the traction ceiling: the " +
-            "tyres cannot push harder than mu*g, so a robot whose tip threshold is ABOVE its " +
-            "traction ceiling can never tip itself by driving, however hard you slam a reversal.\n\n" +
+            "Tip threshold is the acceleration that would put the robot over, from its measured " +
+            "centre of mass and how far that sits inside the wheels. SIDEWAYS is a hard turn, over " +
+            "the track. LENGTHWISE is a slammed reversal, over the wheelbase — the longer axis, so " +
+            "it is the harder one to reach, and it is the one that answers 'why won't it nose " +
+            "over'. Compare either against the traction ceiling: the tyres cannot push harder than " +
+            "mu*g, so a robot whose threshold is ABOVE its traction ceiling can never tip itself " +
+            "by driving, however hard you slam a reversal.\n\n" +
             "Link COMs here are computed from collider volumes, which is what PhysX does for boxes " +
             "and spheres; convex meshes are approximated by their bounds, so absolute heights carry " +
             "a few mm of uncertainty. Comparisons between robots and before/after are exact.",
@@ -139,25 +158,15 @@ public class RobotBalanceWindow : EditorWindow
                 $"{r.totalMass:0.00} kg  —  chassis {r.chassisMass:0.00} " +
                 $"({(r.totalMass > 0f ? r.chassisMass / r.totalMass : 0f):P0}), " +
                 $"{r.wheelCount} wheels {r.wheelMass:0.00}, everything else {r.otherMass:0.00}");
+            string front = r.baseIsZ ? "+Z" : "+X";
             EditorGUILayout.LabelField(
                 $"COM {r.comHeight * 100f:0.} mm above the contact patch, half-track " +
-                $"{r.halfTrack * 100f:0.} mm");
+                $"{r.halfTrack * 100f:0.} mm, nose/tail margin {r.noseMargin * 100f:0.}/" +
+                $"{r.tailMargin * 100f:0.} mm (nose = root {front})");
 
-            bool canTip = r.tipG < r.tractionG;
-            EditorGUILayout.LabelField(
-                $"lift down: tips at {r.tipG:0.00} g   ·   tyres deliver {r.tractionG:0.00} g   ·   " +
-                (canTip ? "CAN tip by driving" : "cannot tip by driving"),
-                canTip ? EditorStyles.boldLabel : EditorStyles.label);
-
+            DrawThresholds("lift down", r, r.comHeight);
             if (r.liftTravel > 1e-3f)
-            {
-                bool canTipRaised = r.tipGRaised < r.tractionG;
-                EditorGUILayout.LabelField(
-                    $"lift up ({r.liftTravel * 100f:0.} mm): COM {r.comHeightRaised * 100f:0.} mm, " +
-                    $"tips at {r.tipGRaised:0.00} g   ·   " +
-                    (canTipRaised ? "CAN tip by driving" : "cannot tip by driving"),
-                    canTipRaised ? EditorStyles.boldLabel : EditorStyles.label);
-            }
+                DrawThresholds($"lift up ({r.liftTravel * 100f:0.} mm)", r, r.comHeightRaised);
 
             // Worth surfacing: a link with no enabled collider gets automaticCenterOfMass, which
             // puts its whole mass at the link origin. The mechanism builders place a motor hub's
@@ -177,6 +186,35 @@ public class RobotBalanceWindow : EditorWindow
         }
     }
 
+    // One pose's worth of thresholds: sideways (a hard turn) and lengthwise (a slammed reversal),
+    // each against what the tyres can actually deliver.
+    //
+    // LENGTHWISE IS THE ONE TO READ for the reversal question, and it is reported as the WORSE of
+    // the nose and tail margins rather than an average. The player can flip which end is the front
+    // (Reverse Drive Direction), and a robot only has to go over once.
+    private static string ThresholdLine(string pose, Report r, float comHeight, out bool canTip)
+    {
+        float left = TipG(r.leftMargin, comHeight);
+        float right = TipG(r.rightMargin, comHeight);
+        float roll = Mathf.Min(left, right);
+        float nose = TipG(r.noseMargin, comHeight);
+        float tail = TipG(r.tailMargin, comHeight);
+        float pitch = Mathf.Min(nose, tail);
+
+        canTip = Mathf.Min(roll, pitch) < r.tractionG;
+        return $"{pose}: COM {comHeight * 100f:0.} mm  ·  " +
+               $"sideways {roll:0.00} g (L {left:0.00} / R {right:0.00})  ·  " +
+               $"lengthwise {pitch:0.00} g (nose {nose:0.00} / tail {tail:0.00})  ·  " +
+               $"tyres deliver {r.tractionG:0.00} g  ·  " +
+               (canTip ? "CAN tip by driving" : "cannot tip by driving");
+    }
+
+    private static void DrawThresholds(string pose, Report r, float comHeight)
+    {
+        string line = ThresholdLine(pose, r, comHeight, out bool canTip);
+        EditorGUILayout.LabelField(line, canTip ? EditorStyles.boldLabel : EditorStyles.label);
+    }
+
     // Run `action` once OnGUI has returned. See the note at the call sites.
     private void Defer(System.Action action)
     {
@@ -189,6 +227,81 @@ public class RobotBalanceWindow : EditorWindow
     }
 
     // --- Measuring ------------------------------------------------------------------------------
+
+    // Batch entry, following the RunBatch* convention the other RoboSim tools use:
+    //   Unity -batchmode -nographics -quit -projectPath . \
+    //         -executeMethod RobotBalanceWindow.RunBatchMeasure
+    //
+    // Measuring only — it writes nothing. This exists because the numbers it prints are the ONLY
+    // way to tell whether a mass change moved the thing it was supposed to move, and reading them
+    // off an EditorWindow means a human has to be sitting there to iterate.
+    public static void RunBatchMeasure()
+    {
+        var log = new StringBuilder("Robot Mass & Balance\n");
+        int found = 0;
+        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
+            log.AppendLine(Describe(Measure(prefab, path)));
+            found++;
+        }
+        if (found == 0)
+            throw new System.InvalidOperationException(
+                $"No robot prefabs with a RobotMotorController under {RoboSimPaths.RobotsFolder}.");
+        Debug.Log(log.ToString());
+    }
+
+    // The write half, headless. Same sweep the Apply button runs, minus the confirmation dialog —
+    // which is the whole reason it needs its own entry: calibrating the chassis and wheel constants
+    // against a tip target is a measure/change/measure loop, and a modal dialog in the middle of it
+    // means a human has to sit there clicking through every iteration.
+    //   Unity -batchmode -nographics -quit -projectPath . \
+    //         -executeMethod RobotBalanceWindow.RunBatchApply
+    public static void RunBatchApply()
+    {
+        var log = new StringBuilder();
+        int changed = 0, total = 0;
+        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
+            total++;
+            if (Apply(path, log)) changed++;
+        }
+        if (total == 0)
+            throw new System.InvalidOperationException(
+                $"No robot prefabs with a RobotMotorController under {RoboSimPaths.RobotsFolder}.");
+        AssetDatabase.SaveAssets();
+        Debug.Log($"Robot Mass & Balance: {changed} of {total} prefab(s) updated " +
+                  $"(chassis {ChassisMass} kg, wheel {WheelMass} kg).\n{log}");
+    }
+
+    private static string Describe(Report r)
+    {
+        if (!string.IsNullOrEmpty(r.note)) return $"{r.name}\n  {r.note}\n";
+
+        var s = new StringBuilder();
+        s.AppendLine(r.name);
+        s.AppendLine($"  {r.totalMass:0.00} kg — chassis {r.chassisMass:0.00} " +
+                     $"({(r.totalMass > 0f ? r.chassisMass / r.totalMass : 0f):P0}), " +
+                     $"{r.wheelCount} wheels {r.wheelMass:0.00}, everything else {r.otherMass:0.00}");
+        s.AppendLine($"  half-track {r.halfTrack * 100f:0.} mm, nose/tail margin " +
+                     $"{r.noseMargin * 100f:0.}/{r.tailMargin * 100f:0.} mm " +
+                     $"(nose = root {(r.baseIsZ ? "+Z" : "+X")})");
+        s.AppendLine("  " + ThresholdLine("lift down", r, r.comHeight, out _));
+        if (r.liftTravel > 1e-3f)
+            s.AppendLine("  " + ThresholdLine($"lift up ({r.liftTravel * 100f:0.} mm)",
+                r, r.comHeightRaised, out _));
+        s.AppendLine($"  ground clearance {r.groundClearance * 100f:0.0} mm" +
+                     (string.IsNullOrEmpty(r.lowestPart) ? "" : $" (lowest: {r.lowestPart})"));
+        if (r.colliderlessLinks > 0)
+            s.AppendLine($"  {r.colliderlessLinks} colliderless link(s) carry " +
+                         $"{r.colliderlessMass:0.00} kg at their own origin");
+        return s.ToString();
+    }
 
     private void Measure()
     {
@@ -204,7 +317,7 @@ public class RobotBalanceWindow : EditorWindow
         if (reports.Count == 0) status = $"No robot prefabs with a RobotMotorController under {RoboSimPaths.RobotsFolder}.";
     }
 
-    private static Report Measure(GameObject prefab, string path)
+    internal static Report Measure(GameObject prefab, string path)
     {
         var r = new Report { path = path, name = prefab.name };
         RobotMotorController motor = prefab.GetComponent<RobotMotorController>();
@@ -237,17 +350,48 @@ public class RobotBalanceWindow : EditorWindow
         // The contact plane is the bottom of the lowest wheel sphere, and the half-track is the
         // widest lateral spread of the wheel centres. Both are measured off the wheels rather than
         // the chassis bounds, because it is the wheels the robot actually pivots over.
-        float radius = DrivetrainTuning.MeasureWheelRadius(wheels);
-        float lowest = float.PositiveInfinity;
+        //
+        // EVERYTHING FROM HERE IS IN THE ROOT'S SPACE, and that is load-bearing: `com` above came
+        // out of LinkCentre, which ends in InverseTransformPoint. Mixing a world height into this
+        // arithmetic is off by exactly the prefab root's own y — which on these four robots is
+        // -0.632 to +0.974 units, i.e. 63 to 97 mm of pure fiction. See GroundClearance.
         var centres = new List<Vector3>();
         foreach (ArticulationBody wheel in wheels)
+            centres.Add(LinkCentre(wheel, rootTransform, out _));
+
+        float lowest = WheelContactPlane(wheels, rootTransform);
+        if (float.IsPositiveInfinity(lowest))
         {
-            Vector3 c = LinkCentre(wheel, rootTransform, out _);
-            centres.Add(c);
-            lowest = Mathf.Min(lowest, c.y - radius);
+            // No sphere on any wheel link. Fall back to the old estimate — the link centroid minus
+            // the fitted radius — but say so, because that is only the tyre's bottom on a wheel link
+            // that carries nothing except its own sphere, which is the shape the rig builds today.
+            float radius = DrivetrainTuning.MeasureWheelRadius(wheels);
+            foreach (Vector3 c in centres) lowest = Mathf.Min(lowest, c.y - radius);
+            r.note = "no SphereCollider on any wheel link — contact plane estimated from the wheel " +
+                     "links' collider centroids minus the fitted radius, so ground clearance is " +
+                     "approximate.";
         }
-        r.halfTrack = HalfTrack(centres);
+        Footprint footprint = MeasureFootprint(centres);
+        r.halfTrack = footprint.halfTrack;
+        r.baseIsZ = footprint.baseIsZ;
         r.comHeight = com.y - lowest;
+
+        // Margins from the composite COM to the outermost contact lines, on BOTH axes. Signed
+        // subtraction, not a half-track or half-wheelbase: where the COM actually sits inside the
+        // footprint is the whole point, and every one of these robots is asymmetric.
+        //
+        // 654V_v3 is why the lateral pair is measured rather than assumed symmetric. Its centre of
+        // mass sits 42 mm to one side of a 127 mm half-track, so its weak side has only 85 mm of
+        // margin — and with the lift up that is a 0.28 g roll threshold where the symmetric figure
+        // says a comfortable 0.46. Reporting the average of a strong side and a weak one describes
+        // a robot that does not exist; the robot goes over on the weak side.
+        float comAlongBase = footprint.baseIsZ ? com.z : com.x;
+        r.noseMargin = footprint.baseMax - comAlongBase;
+        r.tailMargin = comAlongBase - footprint.baseMin;
+
+        float comAcrossTrack = footprint.baseIsZ ? com.x : com.z;
+        r.leftMargin = footprint.trackMax - comAcrossTrack;
+        r.rightMargin = comAcrossTrack - footprint.trackMin;
 
         // A COM at or below the contact patch is not a stable robot with a huge tip threshold, it
         // is a measurement that has gone wrong (or a robot with most of its mass on colliderless
@@ -264,18 +408,44 @@ public class RobotBalanceWindow : EditorWindow
             return r;
         }
 
-        r.tipG = r.halfTrack / r.comHeight;
+        r.tipG = TipG(r.halfTrack, r.comHeight);
 
         // The case the whole question is really about: a robot with a lift DOWN is not the robot
         // that tips. Drive every prismatic joint to its upper limit on paper and see where the
         // centre of mass ends up.
         float raisedMoment = LiftedMoment(root, rootTransform, out r.liftTravel);
         r.comHeightRaised = r.comHeight + raisedMoment / r.totalMass;
-        r.tipGRaised = r.comHeightRaised > 0.01f ? r.halfTrack / r.comHeightRaised : r.tipG;
+        r.tipGRaised = r.comHeightRaised > 0.01f ? TipG(r.halfTrack, r.comHeightRaised) : r.tipG;
 
         r.tractionG = DrivetrainTuning.MeasureFriction(wheels);
         r.groundClearance = GroundClearance(root, wheelSet, lowest, out r.lowestPart);
         return r;
+    }
+
+    // The plane the tyres actually touch, in the ROOT's space. Positive infinity if no wheel link
+    // carries a sphere, which the caller treats as "fall back and warn" rather than as a height.
+    //
+    // Read off the wheels' own SphereColliders rather than LinkCentre minus a fitted radius. Those
+    // two agree today only because the rig gives a wheel link exactly one collider and nothing else;
+    // add a hub or a gear to a wheel link and the volume-weighted centroid walks off the axle,
+    // taking the ground plane — and therefore every clearance number — with it. Averaging radii
+    // across wheels has the same shape of problem on a robot with two wheel sizes.
+    private static float WheelContactPlane(List<ArticulationBody> wheels, Transform root)
+    {
+        float lowest = float.PositiveInfinity;
+        foreach (ArticulationBody wheel in wheels)
+        {
+            if (wheel == null) continue;
+            foreach (SphereCollider sphere in wheel.GetComponentsInChildren<SphereCollider>(true))
+            {
+                if (sphere == null || sphere.isTrigger || !sphere.enabled) continue;
+                if (!sphere.gameObject.activeSelf) continue;
+                // Stop at a child link: its colliders belong to it, not to this wheel.
+                if (sphere.GetComponentInParent<ArticulationBody>(true) != wheel) continue;
+                lowest = Mathf.Min(lowest, LowestPoint(sphere, root));
+            }
+        }
+        return lowest;
     }
 
     // How far the lowest NON-WHEEL collider sits above the plane the wheels touch.
@@ -297,7 +467,7 @@ public class RobotBalanceWindow : EditorWindow
             ArticulationBody owner = col.GetComponentInParent<ArticulationBody>(true);
             if (owner == null || wheels.Contains(owner)) continue;
 
-            float bottom = LowestPoint(col);
+            float bottom = LowestPoint(col, root.transform);
             if (bottom >= lowest) continue;
             lowest = bottom;
             lowestPart = col.transform.parent != null
@@ -306,23 +476,42 @@ public class RobotBalanceWindow : EditorWindow
         return float.IsPositiveInfinity(lowest) ? 0f : lowest - contactPlane;
     }
 
-    // Lowest world-space point of a collider, projecting its oriented box onto world up rather
-    // than reading Collider.bounds — which, on a prefab asset with no PhysX shapes, is a
+    // Lowest point of a collider IN THE ROOT'S SPACE, projecting its oriented box onto the root's up
+    // axis rather than reading Collider.bounds — which, on a prefab asset with no PhysX shapes, is a
     // degenerate box at the origin and would report every part as buried under the floor.
-    private static float LowestPoint(Collider col)
+    //
+    // THE `root` ARGUMENT IS THE WHOLE POINT AND IS NOT OPTIONAL. This used to answer in WORLD space
+    // while its only caller compared the result against a contact plane in ROOT space, so every
+    // ground-clearance figure this window has ever printed was off by exactly the prefab root's own
+    // y position. Measured against the prefabs' real geometry: 654V_v3 reported -21.4 mm and is
+    // +1.6; 654V_v2 reported +81.8 and is +10.5; 654V_v1 reported -52.6 and is +10.6; the residual
+    // is the root y (-0.230, +0.713, -0.632 units) to within 0.1 mm on all four. Nothing was ever
+    // dragging on the floor. `comHeight` was never affected — LinkCentre already returns root space,
+    // so that subtraction was between two numbers in the same frame.
+    private static float LowestPoint(Collider col, Transform root)
     {
         Transform t = col.transform;
         Vector3 lossy = t.lossyScale;
         float uniform = Mathf.Max(Mathf.Abs(lossy.x), Mathf.Max(Mathf.Abs(lossy.y), Mathf.Abs(lossy.z)));
+
+        // A radius is a length, so it converts by the root's own scale, not by InverseTransformVector
+        // (which would shear it on a non-uniformly scaled root). Exact for the unit-scale roots the
+        // rig produces; on anything else it is the best a single scalar can be.
+        Vector3 rootLossy = root.lossyScale;
+        float rootUniform = Mathf.Max(Mathf.Abs(rootLossy.x),
+            Mathf.Max(Mathf.Abs(rootLossy.y), Mathf.Abs(rootLossy.z)));
+        if (rootUniform <= 1e-6f) rootUniform = 1f;
 
         Vector3 centre;
         Vector3 halfExtents;
         switch (col)
         {
             case SphereCollider sphere:
-                return t.TransformPoint(sphere.center).y - sphere.radius * uniform;
+                return root.InverseTransformPoint(t.TransformPoint(sphere.center)).y
+                       - sphere.radius * uniform / rootUniform;
             case CapsuleCollider capsule:
-                return t.TransformPoint(capsule.center).y - capsule.height * uniform * 0.5f;
+                return root.InverseTransformPoint(t.TransformPoint(capsule.center)).y
+                       - capsule.height * uniform * 0.5f / rootUniform;
             case BoxCollider box:
                 centre = t.TransformPoint(box.center);
                 halfExtents = box.size * 0.5f;
@@ -336,13 +525,14 @@ public class RobotBalanceWindow : EditorWindow
         }
 
         // Vertical half-extent of the oriented box: each local axis contributes its own half-size
-        // times how much of that axis points down. Using the local Y size alone would be wrong for
-        // a rotated part, which every C-channel on these robots is.
+        // times how much of that axis points down IN ROOT SPACE. Using the local Y size alone would
+        // be wrong for a rotated part, which every C-channel on these robots is; using world down
+        // would be wrong for a rotated root.
         float drop = 0f;
-        drop += Mathf.Abs((t.rotation * new Vector3(lossy.x, 0f, 0f)).y) * halfExtents.x;
-        drop += Mathf.Abs((t.rotation * new Vector3(0f, lossy.y, 0f)).y) * halfExtents.y;
-        drop += Mathf.Abs((t.rotation * new Vector3(0f, 0f, lossy.z)).y) * halfExtents.z;
-        return centre.y - drop;
+        drop += Mathf.Abs(root.InverseTransformVector(t.rotation * new Vector3(lossy.x, 0f, 0f)).y) * halfExtents.x;
+        drop += Mathf.Abs(root.InverseTransformVector(t.rotation * new Vector3(0f, lossy.y, 0f)).y) * halfExtents.y;
+        drop += Mathf.Abs(root.InverseTransformVector(t.rotation * new Vector3(0f, 0f, lossy.z)).y) * halfExtents.z;
+        return root.InverseTransformPoint(centre).y - drop;
     }
 
     // How much upward moment (kg * world units) the robot gains with every prismatic joint driven
@@ -475,9 +665,27 @@ public class RobotBalanceWindow : EditorWindow
         }
     }
 
-    // Widest separation of the wheel centres perpendicular to the wheelbase — i.e. the track. Found
-    // as the smaller spread of the two horizontal extents, since the longer one is the wheelbase.
-    private static float HalfTrack(List<Vector3> centres)
+    // The wheels' footprint: which horizontal axis is the TRACK (the shorter spread, the one a turn
+    // tips the robot over) and which is the WHEELBASE (the longer one, the one a reversal tips it
+    // over), plus where the outermost contact lines sit along the wheelbase.
+    //
+    // The two axes were not worth separating while only the roll threshold was reported — the old
+    // HalfTrack took the smaller spread and threw the larger one away with a one-line comment. They
+    // matter now because the question that started this was "why doesn't slamming reverse tip it",
+    // and that tips over the wheelbase, which is the LONGER of the two on every robot here. Reading
+    // a roll number and calling it the answer flatters the robot by however much longer it is than
+    // it is wide.
+    private struct Footprint
+    {
+        public float halfTrack;      // half the shorter horizontal spread
+        public float trackMin;       // outermost wheel centre across the track, root-local
+        public float trackMax;
+        public float baseMin;        // ...and along the wheelbase
+        public float baseMax;
+        public bool baseIsZ;         // wheelbase runs along root Z (the usual case) rather than X
+    }
+
+    private static Footprint MeasureFootprint(List<Vector3> centres)
     {
         float minX = float.PositiveInfinity, maxX = float.NegativeInfinity;
         float minZ = float.PositiveInfinity, maxZ = float.NegativeInfinity;
@@ -486,8 +694,22 @@ public class RobotBalanceWindow : EditorWindow
             minX = Mathf.Min(minX, c.x); maxX = Mathf.Max(maxX, c.x);
             minZ = Mathf.Min(minZ, c.z); maxZ = Mathf.Max(maxZ, c.z);
         }
-        return Mathf.Max(Mathf.Min(maxX - minX, maxZ - minZ) * 0.5f, 1e-4f);
+        float spreadX = maxX - minX, spreadZ = maxZ - minZ;
+
+        var f = new Footprint { baseIsZ = spreadZ >= spreadX };
+        f.halfTrack = Mathf.Max(Mathf.Min(spreadX, spreadZ) * 0.5f, 1e-4f);
+        f.baseMin = f.baseIsZ ? minZ : minX;
+        f.baseMax = f.baseIsZ ? maxZ : maxX;
+        f.trackMin = f.baseIsZ ? minX : minZ;
+        f.trackMax = f.baseIsZ ? maxX : maxZ;
+        return f;
     }
+
+    // Acceleration, in g, that puts the robot over an edge `margin` from its centre of mass when
+    // that centre sits `height` above the contact plane. Both are root-local units, so the ratio is
+    // dimensionless and the world scale cancels.
+    internal static float TipG(float margin, float height)
+        => height > 0.01f ? Mathf.Max(margin, 0f) / height : 0f;
 
     // --- Applying -------------------------------------------------------------------------------
 
@@ -530,17 +752,58 @@ public class RobotBalanceWindow : EditorWindow
             if (motor.rightWheels != null) foreach (ArticulationBody w in motor.rightWheels) if (w != null) wheels.Add(w);
             if (wheels.Count == 0) return false;
 
-            // Every mass is compared, not just the root's. Checking only the chassis meant a robot
-            // whose chassis was already right but whose wheels were not reported "unchanged" and
-            // skipped the save — so a corrected wheel mass could never reach it.
+            // Write first, decide afterwards. The mechanism floor is RELATIVE to the chassis mass,
+            // so "has anything changed" cannot be answered before the chassis mass is written — and
+            // the old check, which compared only the chassis and wheels, would have declared a robot
+            // "unchanged" and skipped the save on exactly the prefabs whose chassis was already
+            // right and whose aligner was still 0.034 kg.
             bool dirty = !Mathf.Approximately(rootBody.mass, ChassisMass);
             foreach (ArticulationBody wheel in wheels)
                 if (!Mathf.Approximately(wheel.mass, WheelMass)) dirty = true;
 
-            if (!dirty) { log.AppendLine($"  {root.name}: unchanged"); return false; }
-
             rootBody.mass = ChassisMass;
             foreach (ArticulationBody wheel in wheels) wheel.mass = WheelMass;
+
+            // ...and re-run the LIFT links' own rule, because MechanismBuildUtil.MinLiftMass is a
+            // build-time constant and the robots were built before it moved. It is the dominant
+            // balance lever now — a cascade stage is the only mass on these robots that travels
+            // 600 mm upward — so leaving it to "rebuild the robot" would mean the one number that
+            // decides whether a raised lift rolls the robot over could never be corrected in place.
+            //
+            // Re-DERIVED, not scaled: each stage is re-measured from its own geometry and the floor
+            // re-applied, so a stage that genuinely masses more than the floor keeps its own mass and
+            // this stays correct if the floor moves again.
+            //
+            // Identified from CascadeLift's OWN stage list rather than by joint shape. "Any prismatic
+            // link with travel" looks equivalent and is not: it also catches pneumatic slides, and
+            // PneumaticBuilder never applies this floor. Sweeping by shape put 0.9 kg on 654V_v3's
+            // goal aligner — a 34 g polycarbonate plate — which is not re-running the builder's rule,
+            // it is inventing a new one. The DR4B's ballast is likewise excluded: it is a mass PROXY
+            // for geometry that lives elsewhere in the hierarchy, so measuring its own empty node
+            // would zero it, and ApplyDr4bBallastTool owns that number.
+            var liftLinks = new HashSet<ArticulationBody>();
+            foreach (CascadeLift lift in root.GetComponentsInChildren<CascadeLift>(true))
+            {
+                if (lift.stages == null) continue;
+                foreach (CascadeLift.Stage stage in lift.stages)
+                    if (stage != null && stage.body != null) liftLinks.Add(stage.body);
+            }
+
+            var relifted = new List<string>();
+            foreach (ArticulationBody body in liftLinks)
+            {
+                float geometry = RobotMassFromGeometry.MassAndCentre(
+                    new[] { body.gameObject }, root.transform, WorldScaleFactor, out _, out _);
+                float wanted = Mathf.Max(geometry, MechanismBuildUtil.MinLiftMass);
+                if (Mathf.Abs(wanted - body.mass) <= 1e-3f) continue;
+
+                relifted.Add($"{body.name} {body.mass:0.##}->{wanted:0.##}");
+                body.mass = wanted;
+                body.ResetInertiaTensor();
+                dirty = true;
+            }
+
+            if (!dirty) { log.AppendLine($"  {root.name}: unchanged"); return false; }
 
             // The traction budget is mu*m*g, so every drive constant depends on the mass that just
             // changed. Re-bake in the same pass or edit-mode simulation (PhysicsSmokeTest) measures
@@ -548,6 +811,9 @@ public class RobotBalanceWindow : EditorWindow
             DrivetrainTuning.Result tuning = RigDrivetrainArticulation.ApplyDriveTuning(root, useUndo: false);
             log.AppendLine($"  {root.name}: chassis {ChassisMass} kg, {wheels.Count} wheels at " +
                            $"{WheelMass} kg — {RigDrivetrainArticulation.DescribeTuning(tuning)}");
+            if (relifted.Count > 0)
+                log.AppendLine($"    lift links re-massed (floor {MechanismBuildUtil.MinLiftMass} kg): " +
+                               string.Join(", ", relifted));
 
             PrefabUtility.SaveAsPrefabAsset(root, path);
             return true;

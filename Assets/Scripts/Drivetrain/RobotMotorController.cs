@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -38,6 +39,20 @@ using UnityEngine.InputSystem;
 //      with no sense of carrying any momentum at all. STEERING is exempt — the inner wheel of a
 //      moving turn is commanded slower than it spins by construction, and braking it is what used
 //      to stop the robot turning at speed. See DecideAuthority.
+//        That quadrant then has two ends, which one constant used to serve badly. A COAST — centre
+//      stick, an eased-off throttle, the inner wheel of a turn — keeps the wheel-type brake torque
+//      it was tuned with. A PLOW — the stick thrown through centre and held hard the other way —
+//      ramps to the traction limit, because that is what a motor at full reverse current does and
+//      because at a fifth of it no robot could ever be made to tip, however tall its lift. The ramp
+//      reads the RAW stick, not the slewed command, or full authority arrives after the stop is
+//      already over. See BrakeForceLimit and UpdateBrakingQuadrant.
+//
+//   Tipping is front-to-back ONLY. That asymmetry is deliberate and it is a design rule, not a
+//      tuning accident: a driver should be able to put a raised lift on its nose by braking too
+//      hard, because on a real robot they can — but nothing SIDEWAYS should ever be able to lay
+//      this robot over, because on a real robot with omni rollers it essentially cannot. The plow
+//      above is the first half; ApplyRollRelief is the second, cancelling roll about the robot's
+//      own forward axis and leaving pitch mathematically untouched.
 //
 // Sign convention: the rig tool aligns every wheel link's local +X with the wrapper's +X
 // (robot right), so a positive joint rotation about +X spins the tire such that its contact
@@ -118,6 +133,27 @@ public class RobotMotorController : MonoBehaviour
              "lives. Still under the friction cone, so the motor rather than the ground is the limit.")]
     [Range(0.1f, 1.5f)]
     public float tractionBrakeFraction = DrivetrainTuning.DefaultTractionBrakeFraction;
+    [Tooltip("How hard the motors may brake when the stick is slammed the OTHER WAY, as a fraction " +
+             "of the tyres' grip — the far end of a ramp whose near end is the brake fraction above. " +
+             "Unlike those, this is not sized by the wheels: an omni grips forwards as well as a " +
+             "traction wheel does, it is sideways that it gives up, so a straight-line slam is the " +
+             "one input where both wheel types spend everything. At 1.0 a full reversal skids at " +
+             "mu*g and puts a raised lift on its nose; drop it to soften that without touching the " +
+             "coast.")]
+    [Range(0.2f, 2f)]
+    public float plowFraction = DrivetrainTuning.DefaultPlowTractionFraction;
+
+    [Header("Roll Relief")]
+    [Tooltip("How much SIDEWAYS tipping is cancelled. 1 = the robot cannot go over on its side at " +
+             "all, from any cause: steering, a scrub, a side impact, a wheel riding up on something. " +
+             "Pitch is untouched — front-to-back tipping under braking and acceleration is real and " +
+             "stays exactly as it was. 0 disables this entirely.")]
+    [Range(0f, 1f)]
+    public float rollRelief = 1f;
+    [Tooltip("How stiffly the relief holds the robot level, in rad/s. Critically damped, so this is " +
+             "just 'how fast'. 12 settles a degree of roll in about a quarter second without " +
+             "fighting the 100 Hz step.")]
+    public float rollReliefFrequency = 12f;
 
     [Header("Input Shaping")]
     [Tooltip("Stick travel ignored around centre, then rescaled so full stick still reaches 1.0. " +
@@ -157,10 +193,25 @@ public class RobotMotorController : MonoBehaviour
     private ArticulationBody[] allWheels = new ArticulationBody[0];
     private DrivetrainTuning.Result tuning;
 
-    // Which authority each wheel's drive currently carries, so the per-step decision below only
+    // The articulation root, cached: the roll relief reads its attitude and pushes back on it every
+    // step, and GetComponent 100 times a second is the kind of thing that shows up on a phone.
+    private ArticulationBody rootBody;
+
+    // Roll inertia about the robot's own forward axis, and the largest roll torque the relief is
+    // allowed to ask for. Both measured once, in Initialise — see MeasureRollResistance.
+    private float rollInertia;
+    private float maxRollReliefTorque;
+
+    // The force limit each wheel's drive currently carries, so the per-step decision below only
     // writes an ArticulationDrive struct when it actually changes. Same reason MotorActuator keeps
     // its hold flag: this runs 100 times a second across every wheel.
-    private DriveAuthority[] wheelAuthority = new DriveAuthority[0];
+    //
+    // A float rather than the DriveAuthority enum it used to be, because the brake is no longer one
+    // of two constants — it slides between the coast torque and the plow torque with how far the
+    // stick has been thrown. The epsilon below is what keeps that from becoming six marshalled
+    // struct writes per step on stick noise.
+    private float[] wheelForceLimit = new float[0];
+    private float forceLimitEpsilon;
 
     // How many entries at the start of allWheels are left-side wheels. Awake fills allWheels left
     // side first, and the braking-quadrant check needs to know which command each wheel was given.
@@ -185,16 +236,102 @@ public class RobotMotorController : MonoBehaviour
     public float BrakeFraction => WheelTypeSettings.TractionWheels
         ? tractionBrakeFraction : omniBrakeFraction;
 
-    void Awake()
+    void Awake() => Initialise();
+
+    // --- Built-in self-overlap ----------------------------------------------------------------
+
+    // Stop the robot's own parts fighting each other.
+    //
+    // A robot is one articulation, and PhysX collides any two links that are not parent and child.
+    // GeneratePartColliders wraps every component in its own tight box, and on a real assembly
+    // neighbouring components are bolted THROUGH one another — so a handful of those boxes
+    // interpenetrate in the robot's rest pose and never stop. That is not a collision, it is a
+    // permanent contact the solver pushes apart every single step.
+    //
+    // WHAT IT COSTS, measured on a clean floor at full throttle into a full-stick turn:
+    //   654V_v3 had its 34 g goal aligner permanently 6.5 mm inside TWO drive wheels, plus two
+    //   outtake links inside each other. Clearing four pairs took the roll direction from 115
+    //   reversals in 3 s to ZERO, the accumulated rocking from 7.4 degrees to 0.0, and the speed it
+    //   kept through the turn from 1.83 u/s to 5.86. That chatter is what "wobbling all over the
+    //   place" is, and the two dragged wheels are why the same robot turned so badly.
+    //   654V_v1 had five pairs: its turn went from 62 to 162 degrees and 0.76 to 5.98 u/s.
+    //   654V_v2 and 360RpmDrivetrain have none, and measure bit-for-bit identically either way —
+    //   which is the control that says this changes nothing on a robot that was already clean.
+    //
+    // ONLY pairs that already overlap in the REST POSE are ignored, and that scoping is the whole
+    // argument for doing it at all: parts built into each other are parts real hardware bolts
+    // together, and bolted parts do not push each other apart. Anything that collides only once a
+    // mechanism moves — a claw closing onto the frame — still collides, because it does not overlap
+    // here. Robots arrive from player CAD (see the upload pipeline), so this has to be automatic
+    // rather than a note in a README; RobotSelfOverlapValidation reports the pairs so the geometry
+    // can be corrected at the source.
+    public static int IgnoreBuiltInSelfOverlaps(ArticulationBody root, List<string> report = null)
+    {
+        if (root == null) return 0;
+        Physics.SyncTransforms();
+
+        var colliders = new List<Collider>();
+        foreach (Collider c in root.GetComponentsInChildren<Collider>(true))
+            if (c != null && c.enabled && !c.isTrigger && c.gameObject.activeInHierarchy) colliders.Add(c);
+
+        // The owning link of each collider, resolved once. GetComponentInParent walks the hierarchy
+        // and this is an O(n^2) pass over a few hundred colliders.
+        var owners = new ArticulationBody[colliders.Count];
+        for (int i = 0; i < colliders.Count; i++)
+            owners[i] = colliders[i].GetComponentInParent<ArticulationBody>(true);
+
+        int ignored = 0;
+        for (int i = 0; i < colliders.Count; i++)
+        {
+            for (int j = i + 1; j < colliders.Count; j++)
+            {
+                ArticulationBody a = owners[i], b = owners[j];
+                if (a == null || b == null || a == b) continue;
+                // Parent and child of the same joint are never collided by PhysX anyway.
+                if (a.transform.IsChildOf(b.transform) || b.transform.IsChildOf(a.transform)) continue;
+                // Cheap reject first: ComputePenetration is a real geometry query and there are
+                // tens of thousands of pairs.
+                if (!colliders[i].bounds.Intersects(colliders[j].bounds)) continue;
+
+                if (!Physics.ComputePenetration(
+                        colliders[i], colliders[i].transform.position, colliders[i].transform.rotation,
+                        colliders[j], colliders[j].transform.position, colliders[j].transform.rotation,
+                        out _, out float depth)) continue;
+                if (depth <= RestPoseOverlapEpsilon) continue;
+
+                Physics.IgnoreCollision(colliders[i], colliders[j], true);
+                ignored++;
+                report?.Add($"{a.name}/{colliders[i].name} <-> {b.name}/{colliders[j].name} " +
+                            $"({depth * 100f:0.0} mm)");
+            }
+        }
+        return ignored;
+    }
+
+    // Below this, an "overlap" is two boxes touching at a shared face, not one part inside another.
+    // 0.001 units is 0.1 mm at this project's scale.
+    public const float RestPoseOverlapEpsilon = 0.001f;
+
+    // Everything Awake does, minus the input actions — public for the same reason
+    // Dr4bBallast.BakeDrive and JointCoupler.BakeDrive are: edit-mode Physics.Simulate never runs
+    // Awake, so a validator that skips this simulates a robot whose wheels have no drive baked, no
+    // tuning computed, and the project's default solver iterations instead of 16/8.
+    //
+    // Pair it with ApplyStep. A harness that calls neither is not testing the drivetrain — it is
+    // testing whatever numbers happen to be serialized on the prefab, which is how the turn check
+    // came to report 0.1 degrees of roll on a robot that wobbles in play.
+    public void Initialise()
     {
         // Firm contacts against the mass-1 pieces. solverIterations is a runtime-only
         // property (not serialized), so the rig tool's edit-time values never survive into
         // play mode — this is the authoritative place to set them.
         ArticulationBody root = GetComponent<ArticulationBody>();
+        rootBody = root;
         if (root != null)
         {
             root.solverIterations = solverIterations;
             root.solverVelocityIterations = solverVelocityIterations;
+            IgnoreBuiltInSelfOverlaps(root);
         }
 
         // Snapshot the player's feel prefs once. Entering the field scene always re-runs Awake, so
@@ -207,7 +344,7 @@ public class RobotMotorController : MonoBehaviour
         leftWheelCount = wheels.Count;
         if (rightWheels != null) foreach (ArticulationBody w in rightWheels) if (w != null) wheels.Add(w);
         allWheels = wheels.ToArray();
-        wheelAuthority = new DriveAuthority[allWheels.Length];
+        wheelForceLimit = new float[allWheels.Length];
 
         // Measure the robot, then derive the motor model from it, so a heavier or differently
         // geared robot is tuned correctly without anyone editing a prefab. Diagnostics come back
@@ -220,7 +357,8 @@ public class RobotMotorController : MonoBehaviour
             DrivetrainTuning.MeasureFriction(allWheels),
             Physics.gravity.y,
             driveForceTractionMultiple,
-            BrakeFraction);
+            BrakeFraction,
+            plowFraction);
 
         if (!autoTuneDrive)
         {
@@ -230,6 +368,12 @@ public class RobotMotorController : MonoBehaviour
             tuning.stallTorque = wheelStallTorque;
             tuning.damping = velocityDriveDamping;
         }
+
+        // Mirrors the bake below: every wheel leaves Awake carrying stallTorque, so that is what the
+        // change tracker starts from. Half a percent of stall is the noise floor — below it a
+        // difference is a drifting stick, not a decision worth a marshalled struct write.
+        forceLimitEpsilon = Mathf.Max(tuning.stallTorque * 0.005f, 1e-4f);
+        for (int i = 0; i < wheelForceLimit.Length; i++) wheelForceLimit[i] = tuning.stallTorque;
 
         // Bake the motor model into every wheel joint's X drive. Velocity drives need
         // stiffness 0 (no position spring) and damping > 0 (the velocity gain); forceLimit
@@ -256,6 +400,120 @@ public class RobotMotorController : MonoBehaviour
             wheel.jointFriction = wheelRollingResistance;
             wheel.angularDamping = wheelSpinDamping;
         }
+
+        MeasureRollResistance();
+    }
+
+    // --- Roll relief ------------------------------------------------------------------------------
+
+    // Nothing sideways may put this robot over. Front-to-back still can, and should.
+    //
+    // WHY THIS IS NOT CHEATING, and why the fix belongs here rather than in the tyre model. The sim
+    // has no omni rollers: every wheel is an isotropic mu-0.8 sphere that grips sideways exactly as
+    // hard as it grips forwards. A real omni's rollers make sideways travel nearly free, so a real
+    // skid-steer turn scrubs almost nothing. Ours has to break full lateral traction on all six
+    // wheels to yaw at all — which is also why driveForceTractionMultiple has to be 3 — and that
+    // lateral force lands at the contact patch, a long way below the centre of mass. The roll moment
+    // it makes is a pure artifact of the wheel model. Cancelling it is restoring the real robot, not
+    // protecting the sim one.
+    //
+    // WHY IT IS NOT GATED ON STEERING. It was, and that was too narrow a reading of the same
+    // argument. The isotropic-sphere tyre is wrong in every direction at once, not only while the
+    // turn stick is held: a straight-line drive that scrubs, a shove from another robot, a wheel
+    // riding up on a piece or a goal rim all put lateral load through the same contact patches and
+    // roll the robot for the same fictional reason. Gating on turnCommand fixed the one case the
+    // harness happened to drive and left every other one live, which is why the sim still rocked in
+    // play while the turn test read 0.0 degrees. The requirement is the simple one — sideways cannot
+    // tip this robot — so the relief is simply always on.
+    //
+    // ONLY ROLL. The torque is applied about the robot's own FORWARD axis, so pitch cannot be
+    // touched by construction: a slammed reversal still puts a raised lift on its nose, which is
+    // real and is what the plow exists to produce. Braking and acceleration tip this robot exactly
+    // as hard as they did before this existed — TipOverValidation pins both halves of that.
+    private void ApplyRollRelief(float dt)
+    {
+        if (rootBody == null || rollRelief <= 0f || rollInertia <= 0f || dt <= 0f) return;
+
+        Transform t = rootBody.transform;
+        Vector3 axis = t.forward;
+
+        // Roll = how far the robot's up has rotated about its own forward axis away from the most
+        // upright it could be at this heading. Projecting world up onto the plane normal to the roll
+        // axis is what keeps PITCH out of the measurement: nose-down attitude moves both vectors
+        // together and reads as zero roll, which is the whole point.
+        Vector3 upRef = Vector3.ProjectOnPlane(Vector3.up, axis);
+        if (upRef.sqrMagnitude < 1e-6f) return;   // nose straight up or down: roll is undefined
+        float rollDeg = Vector3.SignedAngle(upRef, Vector3.ProjectOnPlane(t.up, axis), axis);
+
+        // Clamped before it becomes a torque, so the angle term saturates instead of growing with
+        // how far over the robot already is: a PD term proportional to 90 degrees would fire it
+        // across the field trying to right itself. Past this angle the relief still pushes — it is
+        // now the only thing standing between a shove and a robot on its side — but it pushes with
+        // a bounded torque, so a robot that somehow gets there is levered back rather than launched.
+        float rollRad = Mathf.Clamp(rollDeg, -MaxRelievedRollDeg, MaxRelievedRollDeg) * Mathf.Deg2Rad;
+        float rollRate = Vector3.Dot(rootBody.angularVelocity, axis);
+
+        // Critically damped PD: omega^2 on the angle, 2*omega on the rate.
+        float omega = Mathf.Max(rollReliefFrequency, 0f);
+        float angularAccel = -(omega * omega * rollRad + 2f * omega * rollRate);
+        float torque = Mathf.Clamp(rollInertia * angularAccel * rollRelief,
+            -maxRollReliefTorque, maxRollReliefTorque);
+
+        rootBody.AddTorque(axis * torque, ForceMode.Force);
+    }
+
+    // Past this the angle term stops growing. See ApplyRollRelief.
+    public const float MaxRelievedRollDeg = 15f;
+
+    // The relief may never ask for more than this multiple of the robot's own static overturning
+    // moment. Above 1 so it can actually arrest a roll rather than merely balance one, but finite,
+    // because an unbounded corrective torque on the root is a robot that flips itself the other way.
+    public const float MaxRollReliefOverturnMultiple = 3f;
+
+    // What it takes to roll this robot, measured off its own geometry rather than assumed.
+    //
+    // Inertia is sum(m * d^2) with d the distance of each link from the roll axis — the forward line
+    // through the robot's centre. That ignores each link's own spin inertia, which is the right
+    // trade: the term that matters for roll is how far the mass sits from the centreline, and this
+    // is a gain scale with a hard clamp behind it, not a dynamics model.
+    //
+    // The clamp is sized from the half-track, because m*g*halfTrack IS the torque that holds the
+    // robot down on its outside wheels — the moment it would take to lift the inside pair off the
+    // floor. Sizing the ceiling off the robot means a 7 kg robot and a 12 kg one both get a relief
+    // proportional to what tipping them actually costs.
+    private void MeasureRollResistance()
+    {
+        rollInertia = 0f;
+        maxRollReliefTorque = 0f;
+        if (rootBody == null) return;
+
+        Transform t = rootBody.transform;
+        Vector3 origin = t.position;
+        Vector3 axis = t.forward;
+
+        float mass = 0f;
+        foreach (ArticulationBody body in rootBody.GetComponentsInChildren<ArticulationBody>(true))
+        {
+            if (body == null || body.mass <= 0f) continue;
+            Vector3 offset = body.transform.position - origin;
+            float d = Vector3.ProjectOnPlane(offset, axis).magnitude;
+            rollInertia += body.mass * d * d;
+            mass += body.mass;
+        }
+
+        // Half-track from the wheels themselves: the mean |lateral offset| of every wheel link.
+        float halfTrack = 0f;
+        int counted = 0;
+        foreach (ArticulationBody wheel in allWheels)
+        {
+            if (wheel == null) continue;
+            halfTrack += Mathf.Abs(Vector3.Dot(wheel.transform.position - origin, t.right));
+            counted++;
+        }
+        if (counted > 0) halfTrack /= counted;
+
+        maxRollReliefTorque = mass * Mathf.Abs(Physics.gravity.y) * halfTrack
+                              * MaxRollReliefOverturnMultiple;
     }
 
     void OnEnable()
@@ -282,6 +540,18 @@ public class RobotMotorController : MonoBehaviour
         if (leftJoystickAction != null) leftStickInput = leftJoystickAction.action.ReadValue<Vector2>();
         if (rightJoystickAction != null) rightStickInput = rightJoystickAction.action.ReadValue<Vector2>();
 
+        ApplyStep(Time.fixedDeltaTime);
+    }
+
+    // One drivetrain step: targets, slew, mix, drive, brake. Split out of FixedUpdate so an
+    // edit-mode harness can step the REAL control path — SetManualInput, then ApplyStep(dt) before
+    // each Physics.Simulate(dt) — instead of writing wheel drives directly and missing the slew,
+    // MixArcade's turn priority, DecideAuthority's turn exemption and the plow entirely.
+    //
+    // Reading the sticks stays in FixedUpdate: there is no input device behind a validator, and
+    // manualInput is the path a scripted routine is supposed to take anyway.
+    public void ApplyStep(float dt)
+    {
         // Arcade Drive (Left Stick controls Forward/Backward, Right Stick controls Turning).
         float throttleTarget;
         float turnTarget;
@@ -315,7 +585,6 @@ public class RobotMotorController : MonoBehaviour
         // limits the pull-up to brakeTorque while they spin, and below the moving gate they park
         // under Drive authority at target 0. Centre stick IS the brake pedal — no dwell, no
         // release, nothing for a stick swept through centre to accidentally trigger.
-        float dt = Time.fixedDeltaTime;
         throttleCommand = Slew(throttleCommand, throttleTarget,
             throttleRisePerSec, throttleFallPerSec, dt);
         turnCommand = Slew(turnCommand, turnTarget, turnRisePerSec, turnFallPerSec, dt);
@@ -329,7 +598,24 @@ public class RobotMotorController : MonoBehaviour
         ApplySide(leftWheels, leftDegPerSec);
         ApplySide(rightWheels, rightDegPerSec);
 
-        UpdateBrakingQuadrant(leftDegPerSec, rightDegPerSec);
+        // The same mix again on the RAW targets — what the driver's hands are asking for at this
+        // instant, before the slew. Only the brake reads these; see UpdateBrakingQuadrant for why it
+        // must not read the slewed command instead.
+        //
+        // Through MixArcade and the same per-side inversion, not straight off throttleTarget,
+        // because what the brake needs is the sign of the command AT THIS WHEEL. Comparing a stick
+        // axis against a joint velocity gets the reversal test exactly backwards on any robot whose
+        // side is inverted, and inverted sides are the reason those bools exist.
+        MixArcade(throttleTarget, turnTarget * turnRate, out float leftRaw, out float rightRaw);
+        float leftTargetDegPerSec = leftRaw * fullStickDegPerSec * (invertLeft ? -1f : 1f);
+        float rightTargetDegPerSec = rightRaw * fullStickDegPerSec * (invertRight ? -1f : 1f);
+
+        UpdateBrakingQuadrant(leftDegPerSec, rightDegPerSec,
+            leftTargetDegPerSec, rightTargetDegPerSec, fullStickDegPerSec);
+
+        // After the drives, because it reads the attitude the last step produced and pushes back on
+        // it — an external torque for this step, alongside the wheel torques, not instead of them.
+        ApplyRollRelief(dt);
     }
 
     // --- Braking quadrant ------------------------------------------------------------------------
@@ -348,7 +634,19 @@ public class RobotMotorController : MonoBehaviour
     // the motor curve instead of chattering on the brake.
     private const float BrakeSpeedFraction = 0.15f;
 
-    private void UpdateBrakingQuadrant(float leftDegPerSec, float rightDegPerSec)
+    // WHY THE BRAKE READS THE PRE-SLEW TARGET. The slew is what makes a keyboard tap a small input,
+    // and a full reversal takes 1/throttleFallPerSec + 1/throttleRisePerSec = 0.375 s to get through
+    // it. A 0.8 g stop from top speed is over in 0.18 s. Scale the plow torque by the SLEWED command
+    // and full braking authority arrives after the robot has already stopped — the peak force lands
+    // on a robot that is no longer moving, and nothing ever pitches.
+    //
+    // That is not just a tuning inconvenience, it is the wrong model. The slew shapes the speed
+    // TARGET, which is a statement about how fast the driver wants to end up going. A current-limited
+    // brake is a statement about how much voltage the controller is applying RIGHT NOW, and that
+    // follows the stick with no ramp at all. So the drive target keeps the slew and the brake limit
+    // does not.
+    private void UpdateBrakingQuadrant(float leftDegPerSec, float rightDegPerSec,
+        float leftTargetDegPerSec, float rightTargetDegPerSec, float fullStickDegPerSec)
     {
         if (allWheels.Length == 0) return;
         float movingDegPerSec = tuning.maxJointVelocity * Mathf.Rad2Deg * BrakeSpeedFraction;
@@ -361,14 +659,24 @@ public class RobotMotorController : MonoBehaviour
             // allWheels is filled left-side first by Awake, so leftWheelCount is the boundary.
             // Taking the command from here rather than reading xDrive.targetVelocity back keeps
             // this honest about what was just asked for, with no marshalling round-trip per wheel.
-            float commandDegPerSec = i < leftWheelCount ? leftDegPerSec : rightDegPerSec;
+            bool isLeft = i < leftWheelCount;
+            float commandDegPerSec = isLeft ? leftDegPerSec : rightDegPerSec;
+            float targetDegPerSec = isLeft ? leftTargetDegPerSec : rightTargetDegPerSec;
 
             // jointVelocity is in rad/s (joint state speaks radians); the drive target is deg/s.
             float spinDegPerSec = wheel.jointVelocity.dofCount > 0
                 ? wheel.jointVelocity[0] * Mathf.Rad2Deg : 0f;
 
-            SetAuthority(i, DecideAuthority(commandDegPerSec, spinDegPerSec, movingDegPerSec,
-                turnCommand, TurnAuthorityThreshold));
+            // WHICH quadrant is still decided by the slewed command, so the steering exemption and
+            // the parking hold behave exactly as before. Only HOW HARD the brake pulls, once it is
+            // in the braking quadrant, comes off the raw target.
+            DriveAuthority authority = DecideAuthority(commandDegPerSec, spinDegPerSec,
+                movingDegPerSec, turnCommand, TurnAuthorityThreshold);
+
+            SetForceLimit(i, authority == DriveAuthority.Drive
+                ? tuning.stallTorque
+                : BrakeForceLimit(targetDegPerSec, spinDegPerSec, fullStickDegPerSec,
+                    tuning.brakeTorque, tuning.plowTorque));
         }
     }
 
@@ -380,16 +688,16 @@ public class RobotMotorController : MonoBehaviour
     // stop is progressive — torque = damping * speed error, clamped to brakeTorque — and hands
     // back to Drive at target 0 below the moving gate, which is the parking hold.
 
-    private void SetAuthority(int index, DriveAuthority authority)
+    private void SetForceLimit(int index, float forceLimit)
     {
-        if (wheelAuthority[index] == authority) return;
+        if (Mathf.Abs(wheelForceLimit[index] - forceLimit) <= forceLimitEpsilon) return;
         ArticulationBody wheel = allWheels[index];
         if (wheel == null) return;
 
         ArticulationDrive d = wheel.xDrive;
-        d.forceLimit = authority == DriveAuthority.Brake ? tuning.brakeTorque : tuning.stallTorque;
+        d.forceLimit = forceLimit;
         wheel.xDrive = d;
-        wheelAuthority[index] = authority;
+        wheelForceLimit[index] = forceLimit;
     }
 
     // --- Input shaping -------------------------------------------------------------------------
@@ -477,6 +785,34 @@ public class RobotMotorController : MonoBehaviour
                           || Mathf.Abs(commandDegPerSec) < Mathf.Abs(spinDegPerSec);
         bool moving = Mathf.Abs(spinDegPerSec) > movingGateDegPerSec;
         return backDriven && moving ? DriveAuthority.Brake : DriveAuthority.Drive;
+    }
+
+    // How hard a wheel already in the braking quadrant may actually pull.
+    //
+    // DecideAuthority lumps three things together, because electrically they are the same thing: a
+    // wheel commanded into reverse, one commanded to a dead stop, and one merely commanded SLOWER
+    // than it is turning. Mechanically they are not. The last two are a COAST — the driver has taken
+    // their foot off — and they keep brakeTorque, which is what the two wheel-type brake fractions
+    // were sized against and what every measured roll-out distance is. The first is a PLOW: the
+    // driver has deliberately thrown the stick through centre and out the other side, and a real
+    // motor commanded hard against its own rotation puts down far more than a coast does.
+    //
+    // So this interpolates from one to the other with how far the stick has been thrown INTO the
+    // spin. Centre stick is the case to check the boundary on: targetDegPerSec is then exactly 0,
+    // the product is 0, `>= 0f` is true, and brakeTorque comes back untouched. The brake pedal is
+    // bit-for-bit what it was.
+    //
+    // The sign test is `spin * target < 0` — strictly opposing. A same-sign-but-smaller target is
+    // the trailing case, which is also the inner wheel of every moving turn, and handing that a plow
+    // torque would re-break moving turns the same way capping it at brakeTorque once did.
+    public static float BrakeForceLimit(float targetDegPerSec, float spinDegPerSec,
+        float fullStickDegPerSec, float brakeTorque, float plowTorque)
+    {
+        if (spinDegPerSec * targetDegPerSec >= 0f) return brakeTorque;
+        if (fullStickDegPerSec <= 1e-3f) return brakeTorque;
+
+        float stickThrow = Mathf.Clamp01(Mathf.Abs(targetDegPerSec) / fullStickDegPerSec);
+        return Mathf.Lerp(brakeTorque, plowTorque, stickThrow);
     }
 
     // Autonomy/test hook: drive without input devices (e.g. scripted routines, play-mode tests).

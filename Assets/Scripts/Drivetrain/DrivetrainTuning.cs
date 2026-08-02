@@ -56,9 +56,10 @@ public static class DrivetrainTuning
     // authority at the top, which is how a real drivetrain behaves. See Result.motorLimitedStick.
     public const float DefaultDriveForceTractionMultiple = 3.0f;
 
-    // Braking authority as a fraction of the tyres' grip, used whenever the command opposes (or
-    // trails) the wheels' spin — a hard reversal, and, with centre-stick as the brake pedal, every
-    // release of the sticks.
+    // Braking authority as a fraction of the tyres' grip, used whenever the command TRAILS the
+    // wheels' spin — an eased-off throttle, the inner wheel of a moving turn, and, with centre-stick
+    // as the brake pedal, every release of the sticks. A command that actively opposes the spin is
+    // no longer this number; it ramps toward DefaultPlowTractionFraction below.
     //
     // This is the braking quadrant, and a real motor is weakest there: driven backwards against
     // its own rotation it is limited by its current limit and its own back-EMF, nowhere near the
@@ -91,6 +92,30 @@ public static class DrivetrainTuning
     public const float DefaultOmniBrakeFraction = 0.2f;
     public const float DefaultTractionBrakeFraction = 0.7f;
 
+    // The OTHER end of the braking quadrant: what a wheel may pull when the driver has actively
+    // slammed the stick into reverse, as a fraction of the tyres' grip.
+    //
+    // The two fractions above are one number doing three jobs — centre-stick coast, an eased-off
+    // throttle, and a full reversal — and the coast is what they were sized for. That left a slam
+    // pulling 0.16 g on omnis, which is not a stop a driver can feel and, more to the point, is
+    // roughly a fifth of the longitudinal force it takes to put a robot on its nose. No robot could
+    // tip itself by driving, in any configuration, however hard the reversal.
+    //
+    // Splitting them is also the more honest motor model. The comment above is right that a
+    // back-driven motor is limited by its current draw and its own back-EMF — but both of those
+    // scale with the voltage the controller is applying, which is the COMMAND. A flat constant says
+    // a feathered reverse and a slammed one brake identically; they don't. So the limit now ramps
+    // from the coast fraction at centre stick to this at full stick, and only when the command
+    // genuinely OPPOSES the spin (a command that merely trails it is a coast, and is also the inner
+    // wheel of every moving turn — see BrakeForceLimit).
+    //
+    // 1.0 = right AT the friction cone, on purpose, and the one place in this file where the ground
+    // rather than the motor is meant to be the limit. A V5 at full reverse current genuinely has
+    // more torque than the tyres can put down, so a full slam SHOULD skid at mu*g — that is what
+    // makes it a slam. Everything below full stick stays motor-limited and progressive, which is
+    // where the "carries its momentum" feel lives and why it survives this change untouched.
+    public const float DefaultPlowTractionFraction = 1.0f;
+
     // Used when a robot's colliders/materials can't be measured (a robot rigged before
     // GeneratePartColliders, or a unit test with no scene). These are the 654V numbers.
     public const float FallbackWheelRadius = 0.37f;
@@ -101,7 +126,8 @@ public static class DrivetrainTuning
     {
         public float stallTorque;       // ArticulationDrive.forceLimit, per wheel
         public float damping;           // velocity-tracking gain == stallTorque / freeSpeed
-        public float brakeTorque;       // forceLimit while the command opposes/trails the spin
+        public float brakeTorque;       // forceLimit while the command trails the spin (the coast)
+        public float plowTorque;        // ...and at full stick INTO the spin (the slam)
         public float maxJointVelocity;  // rad/s
 
         // Diagnostics — not applied to anything, but they're what the validator asserts on and
@@ -121,15 +147,18 @@ public static class DrivetrainTuning
         public float motorLimitedStick;
 
         // Braking deceleration as a multiple of g, and the friction cone it has to stay inside.
-        // brakeG < tractionG is the invariant that keeps a stop motor-limited (progressive)
-        // instead of traction-limited (an instant skid).
+        // brakeG < tractionG is the invariant that keeps a COAST motor-limited (progressive)
+        // instead of traction-limited (an instant skid). plowG is allowed to reach tractionG —
+        // a full-stick reversal is meant to be the one input that spends everything the tyres have.
         public float brakeG;
+        public float plowG;
         public float tractionG;
     }
 
     public static Result Compute(float totalMass, float wheelRadius, int wheelCount,
         float maxWheelRpm, float friction, float gravity,
-        float driveForceTractionMultiple, float brakeTractionFraction = DefaultOmniBrakeFraction)
+        float driveForceTractionMultiple, float brakeTractionFraction = DefaultOmniBrakeFraction,
+        float plowTractionFraction = DefaultPlowTractionFraction)
     {
         // Everything is clamped rather than guarded-and-returned: a half-rigged robot must still
         // produce finite, non-negative values, because these go straight into PhysX and a NaN
@@ -143,6 +172,7 @@ public static class DrivetrainTuning
         float freeSpeed = Mathf.Max(maxWheelRpm * Mathf.PI * 2f / 60f, 0.01f); // rad/s — joint limits
         float freeSpeedDeg = Mathf.Max(maxWheelRpm * 6f, 0.01f);               // deg/s — drive targets
         float brakeFraction = Mathf.Max(brakeTractionFraction, 0f);
+        float plowFraction = Mathf.Max(plowTractionFraction, 0f);
 
         Result r = default;
         r.topSpeed = freeSpeed * radius;
@@ -172,9 +202,17 @@ public static class DrivetrainTuning
         // above stall torque: a motor cannot brake harder than it can drive.
         r.brakeTorque = Mathf.Min(r.tractionForce * brakeFraction * radius / wheels, r.stallTorque);
 
+        // The far end of that same ramp: what a full-stick reversal may pull. Same Min against stall
+        // torque (a motor cannot brake harder than it can drive), then a Max against brakeTorque so
+        // a plow fraction set below the brake fraction can't invert the ramp and make a slam WEAKER
+        // than letting go — the interpolation in BrakeForceLimit assumes plow >= brake.
+        r.plowTorque = Mathf.Min(r.tractionForce * plowFraction * radius / wheels, r.stallTorque);
+        r.plowTorque = Mathf.Max(r.plowTorque, r.brakeTorque);
+
         r.tractionG = g > 1e-6f && mass > 0f ? r.tractionForce / (mass * g) : 0f;
-        r.brakeG = g > 1e-6f && mass > 0f && radius > 0f
-            ? r.brakeTorque * wheels / (radius * mass * g) : 0f;
+        bool canExpressG = g > 1e-6f && mass > 0f && radius > 0f;
+        r.brakeG = canExpressG ? r.brakeTorque * wheels / (radius * mass * g) : 0f;
+        r.plowG = canExpressG ? r.plowTorque * wheels / (radius * mass * g) : 0f;
 
         // Headroom above free speed so a coasting or back-driven wheel isn't clamped by the joint
         // limit (which would read as an invisible brake).

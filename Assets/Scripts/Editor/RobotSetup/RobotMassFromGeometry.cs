@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Robotics.UrdfImporter;
 using UnityEditor;
 using UnityEngine;
@@ -153,6 +154,92 @@ public static class RobotMassFromGeometry
             volM3 += vRaw * meshLocalToRoot * m3PerUnit3;
         }
         return volM3 * density;
+    }
+
+    // Mass, geometric centre and world extent for a SET of part nodes, massed mesh by mesh with
+    // each mesh's OWN material density — a lift is aluminium channel plus motors plus plastic, and
+    // one blanket density over the lot is how a lift ends up weighing what a bag of screws does.
+    //
+    // TWO DIFFERENT WEIGHTINGS, on purpose. MASS skips meshes whose signed volume is garbage — the
+    // open, non-manifold sheets a router-cut plate exports as — because a wrong mass is worse than
+    // a missing one. The CENTRE cannot skip them: a plate still has a position, and dropping it
+    // would drag the answer toward whichever parts happened to be watertight, which on a lift is
+    // the motors and gears down at the bottom. So the centre is weighted by each mesh's BOUNDS
+    // volume, which over-states a thin plate equally wherever it sits, and a centroid only needs
+    // relative weights. Same approximation RobotBalanceWindow's ColliderVolume makes for convex
+    // hulls, for the same reason.
+    //
+    // `worldBounds` is axis-aligned and built from each mesh's own scaled bounds, so a rotated part
+    // inflates it — good enough for the radius-of-gyration estimate it exists for, not for contact.
+    // Returns kg; the out params are meaningless when nothing was found (worldBounds.size is zero).
+    public static float MassAndCentre(IEnumerable<GameObject> nodes, Transform robotRoot,
+        float scaleFactor, out Vector3 worldCentre, out Bounds worldBounds)
+    {
+        worldCentre = robotRoot != null ? robotRoot.position : Vector3.zero;
+        worldBounds = new Bounds(worldCentre, Vector3.zero);
+        if (nodes == null || robotRoot == null) return 0f;
+
+        float metersPerUnit = 1f / Mathf.Max(scaleFactor, 1e-6f);
+        float m3PerUnit3 = metersPerUnit * metersPerUnit * metersPerUnit;
+        Matrix4x4 worldToRoot = robotRoot.worldToLocalMatrix;
+
+        float kg = 0f;
+        Vector3 weighted = Vector3.zero;
+        float weight = 0f;
+        bool sawMesh = false;
+
+        foreach (GameObject go in nodes)
+        {
+            if (go == null) continue;
+
+            foreach (MeshFilter mf in go.GetComponentsInChildren<MeshFilter>(true))
+            {
+                Mesh mesh = mf.sharedMesh;
+                if (mesh == null) continue;
+                if (IsUnderNestedBody(mf.transform, go.transform)) continue;
+
+                // Density PER MESH, walking up from the mesh to the node — not one density for the
+                // whole node, which is what MassForLinkNode does and what its callers can get away
+                // with because they name the node after the part. These nodes are named for their
+                // ROLE ("ScoringMech", "FirstStageArms", "SecondStageArms"), which matches no
+                // material token at all, so a single lookup silently masses an aluminium C-channel
+                // assembly at the 1250 kg/m^3 default and the whole lift comes out weighing half
+                // what it does. The part names are one level down, where the CAD put them.
+                float density = RobotPartClassifier.DefaultDensity;
+                for (Transform t = mf.transform; t != null; t = t.parent)
+                {
+                    if (RobotPartClassifier.TryGetDensity(t.name, out float d)) { density = d; break; }
+                    if (t == go.transform) break;
+                }
+
+                float vRaw = GeneratePartColliders.ComputeMeshVolume(mesh);
+                if (vRaw > 0f && !float.IsNaN(vRaw))
+                {
+                    float meshLocalToRoot =
+                        Mathf.Abs((worldToRoot * mf.transform.localToWorldMatrix).determinant);
+                    kg += vRaw * meshLocalToRoot * m3PerUnit3 * density;
+                }
+
+                Bounds local = mesh.bounds;
+                Vector3 centre = mf.transform.TransformPoint(local.center);
+                Vector3 lossy = mf.transform.lossyScale;
+                var size = new Vector3(
+                    Mathf.Abs(local.size.x * lossy.x),
+                    Mathf.Abs(local.size.y * lossy.y),
+                    Mathf.Abs(local.size.z * lossy.z));
+                float v = size.x * size.y * size.z;
+                if (v <= 0f) continue;
+
+                weighted += centre * v;
+                weight += v;
+                var box = new Bounds(centre, size);
+                if (!sawMesh) { worldBounds = box; sawMesh = true; }
+                else worldBounds.Encapsulate(box);
+            }
+        }
+
+        if (weight > 0f) worldCentre = weighted / weight;
+        return kg;
     }
 
     // True when t is owned by an ArticulationBody strictly below linkRoot (a nested child link), so

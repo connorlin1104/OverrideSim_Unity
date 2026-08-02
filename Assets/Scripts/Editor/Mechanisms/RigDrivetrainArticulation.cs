@@ -41,9 +41,20 @@ public class RigDrivetrainArticulation
     // These were 24 and 1 — inherited from an older rig and never questioned — which put 66-68% of
     // every robot on one low chassis link and another 6 kg of ballast at axle height. The COM was
     // computed correctly the whole time; there was simply nothing left for a lift to move it with,
-    // so no shipped robot could tip itself by driving in any configuration. See RobotBalanceWindow,
-    // which reports the resulting tip thresholds and re-applies these to already-rigged robots.
-    internal const float RootMass = 7f;
+    // so no shipped robot could tip itself by driving in any configuration.
+    //
+    // Then 7 and 1, which was better and still not enough: the shipped robots came out at 13-20 kg
+    // against a real robot's 11.3 kg CEILING, and every extra kilogram of that was invented mass
+    // sitting at or below axle height. What makes this the lever rather than the lift's own mass is
+    // that a lift can only move the composite centre of mass in proportion to how much of the robot
+    // it IS — and a 5 kg cascade cannot outvote 15 kg of floor. Measured on the shipped fleet: at
+    // 7/1 a fully raised cascade tipped lengthwise at 0.71 g; at 4/0.5 the same robot tips at
+    // 0.54 g, inside the 0.8 g its tyres deliver with room to spare, and the whole robot finally
+    // weighs 12 kg instead of 18.
+    //
+    // See RobotBalanceWindow, which reports the resulting tip thresholds and re-applies these to
+    // already-rigged robots, and its RunBatchApply for the headless calibration loop.
+    internal const float RootMass = 4f;
 
     // NOT the real thing, on purpose. A VEX 2.75" omni is about 0.11 kg, and dropping the wheel
     // links to 0.15 to match made the drivetrain stop working: PhysicsSmokeTest went from turning
@@ -57,12 +68,14 @@ public class RigDrivetrainArticulation
     // so edit-mode simulation gets the project default of 6, and the wheels effectively stop
     // transmitting force.
     //
-    // 1 kg keeps the ratio at 7:1, better than the 24:1 this project ran at for its whole life, and
-    // it costs almost nothing in stability terms: a wheel's centre sits one radius above the
-    // contact patch, so it is weak ballast either way. Measured on 654V_v2 — with a raised cascade
-    // it tips at 0.69 g at 1 kg wheels versus 0.52 g at 0.15 kg, and both are inside the 0.8 g the
-    // tyres can deliver, which is the whole point. See RobotBalanceWindow.
-    internal const float WheelMass = 1f;
+    // THE RATIO IS THE CONSTRAINT, NOT THE ABSOLUTE MASS — which is what makes 0.5 safe when 0.15
+    // was not. Against a 4 kg chassis this is 8:1, essentially the 7:1 that was already proven, and
+    // it takes 3 kg of dead weight off an 8-wheel robot's axles. Re-validated at 4/0.5 rather than
+    // assumed: PhysicsSmokeTest turns 35.7 degrees (floor 15) and drives 19.3 units (floor 2), so
+    // the drive joint is still transmitting force with margin. Anything that widens this ratio
+    // further has to be re-validated the same way — that test is the only thing standing between a
+    // sensible-looking mass and a drivetrain that silently stops working.
+    internal const float WheelMass = 0.5f;
     // PROVISIONAL drive values, written while the wheel links are being built — before the
     // RobotMotorController (and therefore the robot's gearing, mass and wheel radius) is known.
     // ApplyDriveTuning re-bakes every drive from DrivetrainTuning at the end of the rig, so these
@@ -529,7 +542,8 @@ public class RigDrivetrainArticulation
             // checkbox on whichever machine ran the tool, and brakeTorque isn't baked into the
             // drive anyway (the forceLimit swap is a runtime decision) — this only shapes the
             // diagnostics below.
-            motor.omniBrakeFraction);
+            motor.omniBrakeFraction,
+            motor.plowFraction);
 
         // Honour the per-robot escape hatch here too, or the bake and the runtime would disagree
         // for exactly the robots someone deliberately hand-tuned.
@@ -591,7 +605,8 @@ public class RigDrivetrainArticulation
            $"peak force {t.peakForce:0.} of {t.tractionForce:0.} available traction " +
            $"({(t.tractionForce > 0f ? t.peakForce / t.tractionForce : 0f):P0}), " +
            $"top speed {t.topSpeed:0.0} u/s, 95% of it in {t.secondsTo95:0.00} s, " +
-           $"brakes at {t.brakeG:0.00} g on omni wheels (a robot with traction wheels stops harder) " +
+           $"coasts at {t.brakeG:0.00} g on omni wheels (a robot with traction wheels stops harder), " +
+           $"a slammed reversal plows at {t.plowG:0.00} g, " +
            $"inside a {t.tractionG:0.00} g friction cone.";
 
     // Wires already-present wheel parts into an ALREADY-rigged drivetrain: each part becomes a

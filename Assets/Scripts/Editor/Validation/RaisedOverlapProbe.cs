@@ -1,0 +1,107 @@
+using System.Collections.Generic;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+
+// TEMPORARY probe, not a validator. Answers one question:
+//
+//   RobotMotorController.Initialise scans for parts jammed inside each other and tells PhysX to
+//   ignore those pairs. It runs ONCE, at Awake, with every lift DOWN. Nothing re-runs it. So a pair
+//   that only overlaps once the lift is RAISED is never ignored — in the harness or in the game —
+//   and 66 Hz contact chatter between two links that cannot separate is exactly what "raised is
+//   very rough, not flat" describes.
+//
+// Prints, per robot, what is penetrating at the raised pose that was clear at rest.
+public static class RaisedOverlapProbe
+{
+    private const float StepSeconds = 0.01f;
+    private const int SettleSteps = 200;
+    private const int LiftRampSteps = 200;
+    private const float FloorSize = 400f;
+    private const float DropHeight = 2f;
+    private const string FloorMaterialPath = "Assets/ZeroBounce.physicMaterial";
+
+    public static void RunBatchValidate() => ValidationUtil.RunBatch("Probe Raised Overlaps", Run);
+
+    private static string Run()
+    {
+        // Physics.simulationMode is a PROJECT setting, not a scope-local one: in the editor the setter
+        // writes through to ProjectSettings/DynamicsManager.asset and it is saved to disk. Leaving it on
+        // Script means the shipped game never steps physics at all — nothing settles, no mechanism moves,
+        // the robot hangs wherever it spawned. Restore it no matter how this exits.
+        SimulationMode previousMode = Physics.simulationMode;
+        try { return Probe(); }
+        finally { Physics.simulationMode = previousMode; }
+    }
+
+    private static string Probe()
+    {
+        var report = new System.Text.StringBuilder();
+        report.AppendLine("overlaps present at the RAISED pose that the rest-pose scan never saw:");
+
+        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
+
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            var floor = new GameObject("Floor");
+            floor.transform.position = new Vector3(0f, -0.5f, 0f);
+            BoxCollider fc = floor.AddComponent<BoxCollider>();
+            fc.size = new Vector3(FloorSize, 1f, FloorSize);
+            fc.sharedMaterial = AssetDatabase.LoadAssetAtPath<PhysicsMaterial>(FloorMaterialPath);
+
+            GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, SceneManager.GetActiveScene());
+            instance.transform.position = new Vector3(0f, DropHeight, 0f);
+            Physics.SyncTransforms();
+
+            ArticulationBody root = instance.GetComponent<ArticulationBody>();
+            RobotMotorController motor = root.GetComponent<RobotMotorController>();
+
+            // Exactly what the game does: clear the rest-pose overlaps, once.
+            var restPairs = new List<string>();
+            motor.Initialise();
+            RobotMotorController.IgnoreBuiltInSelfOverlaps(root, restPairs);
+
+            var lifts = new List<ArticulationBody>();
+            foreach (ArticulationBody b in root.GetComponentsInChildren<ArticulationBody>(true))
+                if (b != root && b.jointType == ArticulationJointType.PrismaticJoint
+                    && b.linearLockX != ArticulationDofLock.LockedMotion
+                    && b.xDrive.upperLimit > b.xDrive.lowerLimit) lifts.Add(b);
+
+            Physics.simulationMode = SimulationMode.Script;
+            Step(motor, SettleSteps);
+            for (int i = 0; i <= LiftRampSteps; i++)
+            {
+                float t = i / (float)LiftRampSteps;
+                foreach (ArticulationBody b in lifts)
+                    b.SetDriveTarget(ArticulationDriveAxis.X,
+                        Mathf.Lerp(b.xDrive.lowerLimit, b.xDrive.upperLimit, t));
+                Step(motor, 1);
+            }
+            Step(motor, SettleSteps);
+
+            // Now ask again. Anything reported here overlaps ONLY when raised: the pairs that
+            // overlapped at rest are already on PhysX's ignore list and no longer report.
+            var raisedPairs = new List<string>();
+            int raised = RobotMotorController.IgnoreBuiltInSelfOverlaps(root, raisedPairs);
+
+            report.AppendLine($"  {prefab.name}: {restPairs.Count} at rest (cleared), " +
+                              $"{raised} NEW once raised over {lifts.Count} lift joint(s)");
+            foreach (string pair in raisedPairs) report.AppendLine($"      {pair}");
+        }
+        return report.ToString().TrimEnd();
+    }
+
+    private static void Step(RobotMotorController motor, int steps)
+    {
+        for (int i = 0; i < steps; i++)
+        {
+            motor.SetManualInput(0f, 0f);
+            motor.ApplyStep(StepSeconds);
+            Physics.Simulate(StepSeconds);
+        }
+    }
+}

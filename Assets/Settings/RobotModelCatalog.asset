@@ -43,7 +43,25 @@ MonoBehaviour:
     ownerCode: 654V-1104
     ownerLabel: 
     defaultButtonMap:
-      assignments: []
+      assignments:
+      - button: R1
+        mechanismId: spinningpart
+        mode: forward
+      - button: R2
+        mechanismId: spinningpart
+        mode: reverse
+      - button: L1
+        mechanismId: liftmotor
+        mode: forward
+      - button: L2
+        mechanismId: liftmotor
+        mode: reverse
+      - button: Up
+        mechanismId: movingforwards
+        mode: toggle
+      - button: Down
+        mechanismId: metalpart
+        mode: toggle
       styles: []
   - id: 654v-v2
     displayName: 654V v2
@@ -121,12 +139,35 @@ MonoBehaviour:
     - id: scoringmech
       displayName: ScoringMech
       type: motor
-    - id: component2-1
-      displayName: AlignerAdjust
-      type: pneumatic
     visibility: 0
     ownerCode: 
     ownerLabel: 
     defaultButtonMap:
-      assignments: []
-      styles: []
+      assignments:
+      - button: Up
+        mechanismId: cascademotor
+        mode: forward
+      - button: Down
+        mechanismId: cascademotor
+        mode: reverse
+      - button: R1
+        mechanismId: intakemech
+        mode: forward
+      - button: R2
+        mechanismId: intakemech
+        mode: reverse
+      - button: Left
+        mechanismId: outtake-1
+        mode: forward
+      - button: Right
+        mechanismId: outtake-1
+        mode: reverse
+      - button: R1
+        mechanismId: scoringmech
+        mode: forward
+      - button: R2
+        mechanismId: scoringmech
+        mode: reverse
+      styles:
+      - mechanismId: outtake-1
+        style: two

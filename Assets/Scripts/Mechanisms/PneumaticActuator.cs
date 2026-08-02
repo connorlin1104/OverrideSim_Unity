@@ -27,6 +27,31 @@ public class PneumaticActuator : MonoBehaviour
     public float stiffness = 20000f;
     [Tooltip("Velocity damping. Enough to kill ringing at the endpoints without feeling sluggish.")]
     public float damping = 500f;
+    [Tooltip("Most force the cylinder can put out, in this project's units (kg*unit/s^2, so 10x a " +
+             "real newton). 2000 is about 200 N, which is a 19 mm VEX bore at 100 psi. Leave it " +
+             "finite: an unlimited piston is an unlimited spring, and it fires the whole robot " +
+             "backwards off anything it runs into.")]
+    public float forceLimit = DefaultForceLimit;
+
+    // WHY THIS IS NOT float.MaxValue ANY MORE, which is what it was.
+    //
+    // The comment it replaces read "forceLimit is uncapped so the piston always reaches its target —
+    // no air-pressure stall", and as a statement about extending into free air that is fine. It is
+    // not what a position drive does when something blocks it. Stiffness is 20000; block the piston
+    // by 0.1 units and an uncapped drive answers with 2000 units of force, block it by a whole unit
+    // and it answers with 20000, and all of that goes through the joint into the chassis.
+    //
+    // MEASURED, on the bare-floor goal rig: 654V_v1 driving into a goal at 13.8 u/s with its aligner
+    // out — the plow is mounted on the piston — had its centre of mass thrown back out at 11.8 u/s,
+    // an 85% elastic rebound off a wall whose physics material has bounciness 0. Retracted, where the
+    // piston is not the leading contact, the same robot at the same speed rebounded 2.7. That is
+    // exactly the report: "everytime the bot has the aligner extended, and goes at it at any speed,
+    // it bounces off".
+    //
+    // 200 N is roughly two robot-weights at this scale (a 10 kg robot weighs 981 in these units), so
+    // the piston still shoves game pieces and still holds against a goal. It just cannot win an
+    // argument with a wall.
+    public const float DefaultForceLimit = 2000f;
     [Tooltip("Seconds the piston takes to travel end to end. 0 = snap, which is how a real VEX " +
              "cylinder behaves and is right for a jaw. Raise it for a big motion like a 180 degree " +
              "claw flip, which is over before the eye catches it and reads as 'nothing happened'.")]
@@ -49,14 +74,24 @@ public class PneumaticActuator : MonoBehaviour
             return;
         }
 
-        // Bake the cylinder model into the joint's X drive (struct: copy, modify, assign back).
-        // forceLimit is uncapped so the piston always reaches its target — no air-pressure stall.
-        // Set here at runtime, so it also overrides any lower cap baked into an older prefab's drive.
+        BakeDrive();
+    }
+
+    // Bake the cylinder model into the joint's X drive. Public for the same reason
+    // JointCoupler.BakeDrive and Dr4bBallast.BakeDrive are: edit-mode Physics.Simulate never runs
+    // Awake, so a validator that skips this drives the SERIALIZED xDrive — which on every shipped
+    // prefab still carries the float.MaxValue force limit this class used to write, and is therefore
+    // the exact configuration whose bounce is being measured.
+    public void BakeDrive()
+    {
+        if (body == null) body = GetComponent<ArticulationBody>();
+        if (body == null) return;
+
         ArticulationDrive d = body.xDrive;
         d.driveType = ArticulationDriveType.Target;
         d.stiffness = stiffness;
         d.damping = damping;
-        d.forceLimit = float.MaxValue;
+        d.forceLimit = forceLimit > 0f ? forceLimit : DefaultForceLimit;
         d.target = startExtended ? extendedTarget : retractedTarget;
         body.xDrive = d;
         IsExtended = startExtended;

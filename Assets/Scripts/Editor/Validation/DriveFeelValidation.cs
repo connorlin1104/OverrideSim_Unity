@@ -49,6 +49,7 @@ public static class DriveFeelValidation
         checks += AuthorityDecision();
         checks += ShippedTune();
         checks += WheelTypeBrakes();
+        checks += PlowRamp();
         checks += TuningInvariants();
         checks += ScaleInvariance();
         checks += DegenerateInputs();
@@ -322,15 +323,31 @@ public static class DriveFeelValidation
         // release commands, which is why it is the number the wheel type gets to change.
         ValidationUtil.Near(t.brakeTorque, 29.04f, 0.1f, "per-wheel braking-quadrant torque");
         ValidationUtil.Near(t.tractionG, 0.80f, 0.005f, "the tyres' grip is mu, so the friction cone is 0.8 g");
-        ValidationUtil.Near(t.brakeG, 0.16f, 0.005f, "an all-omni robot should brake at 0.2 of the friction cone");
+        ValidationUtil.Near(t.brakeG, 0.16f, 0.005f, "an all-omni robot should coast at 0.2 of the friction cone");
 
-        // THE invariant behind "a stop should feel progressive, not a skid": the motor, not the
-        // ground, has to be what limits it. Above the friction cone the tyres just slip, the
-        // deceleration pins at mu*g however hard the driver slams the stick, and every stop and
-        // direction change costs the same nothing. Below it the force builds with the command.
+        // The far end of the brake ramp: a slammed reversal, at the full traction budget — 2354.4
+        // over 6 wheels at r 0.37. This is the number that decides whether a robot can be made to
+        // tip by driving at all; at the coast's 0.16 g the longitudinal force is roughly a fifth of
+        // what it takes to lift a rear wheel, so no mass distribution could ever get there.
+        ValidationUtil.Near(t.plowTorque, 145.19f, 0.1f, "per-wheel torque for a full-stick reversal");
+        ValidationUtil.Near(t.plowG, 0.80f, 0.005f, "a slam should spend the whole friction cone");
+
+        // THE invariant behind "a stop should feel progressive, not a skid": for a COAST the motor,
+        // not the ground, has to be what limits it. Above the friction cone the tyres just slip, the
+        // deceleration pins at mu*g however far the stick has moved, and every release costs the
+        // same nothing. Below it the force builds with the command.
         ValidationUtil.Assert(t.brakeG < t.tractionG,
-            $"braking ({t.brakeG:0.00} g) must stay inside the friction cone ({t.tractionG:0.00} g) " +
-            "or a stop is traction-limited and instantaneous again");
+            $"coasting ({t.brakeG:0.00} g) must stay inside the friction cone ({t.tractionG:0.00} g) " +
+            "or letting go is traction-limited and instantaneous again");
+
+        // The plow is the deliberate exception, and it is bounded on both sides: never weaker than
+        // the coast (or slamming reverse would stop the robot LESS than letting go), never past the
+        // cone (which would be force the ground cannot transmit — the excess is a lie the solver
+        // would have to absorb).
+        ValidationUtil.Assert(t.plowG >= t.brakeG,
+            $"a slam ({t.plowG:0.00} g) must never brake softer than a release ({t.brakeG:0.00} g)");
+        ValidationUtil.Assert(t.plowG <= t.tractionG + 1e-4f,
+            $"a slam ({t.plowG:0.00} g) cannot exceed the friction cone ({t.tractionG:0.00} g)");
 
         // A wheel must be able to break traction. Below mu*m*g*r/N it cannot slip at all, and a
         // 6-wheel robot with isotropic (non-omni-modelled) wheels then cannot complete a point
@@ -345,7 +362,7 @@ public static class DriveFeelValidation
         ValidationUtil.Assert(t.motorLimitedStick > 0.15f,
             $"only the top {(1f - t.motorLimitedStick):P0} of stick travel may be traction-limited; " +
             "past that there is no fine control left");
-        return 12;
+        return 16;
     }
 
     // The wheel-type split — the difference between "the brake is too powerful" and a drivetrain
@@ -418,10 +435,78 @@ public static class DriveFeelValidation
     }
 
     // Distance to a standstill from top speed under a constant brakeG, in world units.
-    private static float RolloutUnits(DrivetrainTuning.Result t)
+    private static float RolloutUnits(DrivetrainTuning.Result t) => RolloutUnits(t, t.brakeG);
+
+    private static float RolloutUnits(DrivetrainTuning.Result t, float decelG)
     {
-        float decel = t.brakeG * G;
+        float decel = decelG * G;
         return decel > 1e-6f ? t.topSpeed * t.topSpeed / (2f * decel) : float.PositiveInfinity;
+    }
+
+    // The brake ramp itself — which of the braking quadrant's three situations gets which torque.
+    //
+    // This is the check that guards the user-visible promise made when the ramp was added: the
+    // coast is untouched and ONLY a deliberate reversal changed. Symbolic torques (10 and 100)
+    // rather than a real tune, on purpose — the point is which end of the ramp is selected and how
+    // it interpolates, and feeding it Shipped() would just be the formula agreeing with itself.
+    private static int PlowRamp()
+    {
+        const float brake = 10f, plow = 100f, full = 1440f;
+        float At(float target, float spin) =>
+            RobotMotorController.BrakeForceLimit(target, spin, full, brake, plow);
+
+        // THE one that must not move: centre stick against a spinning wheel is the brake pedal, and
+        // every roll-out distance in WheelTypeBrakes assumes it pulls exactly the coast torque.
+        ValidationUtil.Near(At(0f, full), brake, 1e-4f,
+            "centre stick must pull exactly the coast torque — the brake pedal is not a reversal");
+
+        // Trailing, not opposing: eased off the throttle, and also the inner wheel of every moving
+        // turn. Handing this a plow torque would re-break moving turns the same way capping the
+        // inner wheel at brake torque once did.
+        ValidationUtil.Near(At(full * 0.5f, full), brake, 1e-4f,
+            "a command that merely trails the spin is a coast, not a slam");
+
+        // Full stick the other way: the whole point of the split.
+        ValidationUtil.Near(At(-full, full), plow, 1e-4f, "a full-stick reversal must pull the plow torque");
+        ValidationUtil.Near(At(full, -full), plow, 1e-4f, "...in both directions");
+
+        // ...and it is a RAMP, so half a reversal is half of it. Without this the split could be a
+        // step function and every check above would still pass, which is the on/off throttle this
+        // drivetrain was retuned to get rid of.
+        ValidationUtil.Near(At(-full * 0.5f, full), 55f, 1e-3f, "half a reversal should pull half way up the ramp");
+        ValidationUtil.Near(At(-full * 0.25f, full), 32.5f, 1e-3f, "...and a quarter, a quarter of the way");
+
+        // A sensitivity slider above 1 can shape a target past full stick; the ramp must saturate
+        // rather than extrapolate past the traction budget.
+        ValidationUtil.Near(At(-full * 2f, full), plow, 1e-4f, "beyond full stick the ramp must clamp");
+
+        // A stopped wheel has no direction to oppose. It never reaches here (DecideAuthority's
+        // moving gate hands it to the parking hold first) — this pins the safe answer if it ever does.
+        ValidationUtil.Near(At(-full, 0f), brake, 1e-4f, "a stopped wheel cannot be reversing");
+
+        // Degenerate gearing: a robot with maxWheelRpm 0 must not divide by it.
+        ValidationUtil.Near(RobotMotorController.BrakeForceLimit(-full, full, 0f, brake, plow), brake, 1e-4f,
+            "a zero free speed must fall back to the coast torque, not a NaN force limit");
+
+        // The felt consequence, on the real tune: a slam has to actually stop the robot in a
+        // distance a driver reads as a stop. 0.55 u is 5.5 cm against the all-omni coast's 2.75 u.
+        DrivetrainTuning.Result shipped = Shipped();
+        ValidationUtil.Near(RolloutUnits(shipped, shipped.plowG), 0.551f, 0.01f,
+            "a slammed reversal's stopping distance from full speed");
+
+        // And the ordering that makes the wheel-type checkbox still mean something: a slam is the
+        // one input where both wheel types spend everything, so it must beat even the traction coast.
+        ValidationUtil.Assert(shipped.plowG > WithBrake(DrivetrainTuning.DefaultTractionBrakeFraction).brakeG,
+            "a slam must stop harder than a traction-wheel robot's coast, or the plow ramp is pointless");
+
+        // Pinned against the const itself, not its consequences: dropping the plow fraction to or
+        // below the traction brake fraction would make the two indistinguishable and pass most of
+        // the above through the Max clamp in Compute.
+        ValidationUtil.Assert(
+            DrivetrainTuning.DefaultPlowTractionFraction > DrivetrainTuning.DefaultTractionBrakeFraction,
+            "the plow fraction must exceed both coast fractions — it is the far end of their ramp");
+
+        return 12;
     }
 
     // The two structural properties the model rests on, checked across a spread of robots rather
@@ -523,7 +608,9 @@ public static class DriveFeelValidation
             ("negative gravity", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, -G, 3f)),
             ("zero multiple", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, G, 0f)),
             ("zero brake fraction", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, G, 3f, 0f)),
-            ("everything zero", DrivetrainTuning.Compute(0f, 0f, 0, 0f, 0f, 0f, 0f, 0f)),
+            ("zero plow fraction", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, G, 3f, 0.2f, 0f)),
+            ("inverted plow fraction", DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, G, 3f, 0.7f, 0.1f)),
+            ("everything zero", DrivetrainTuning.Compute(0f, 0f, 0, 0f, 0f, 0f, 0f, 0f, 0f)),
         };
 
         foreach ((string what, DrivetrainTuning.Result r) in cases)
@@ -531,11 +618,19 @@ public static class DriveFeelValidation
             ValidationUtil.Finite(r.stallTorque, $"{what}: stallTorque");
             ValidationUtil.Finite(r.damping, $"{what}: damping");
             ValidationUtil.Finite(r.brakeTorque, $"{what}: brakeTorque");
+            ValidationUtil.Finite(r.plowTorque, $"{what}: plowTorque");
             ValidationUtil.Finite(r.maxJointVelocity, $"{what}: maxJointVelocity");
             ValidationUtil.Finite(r.secondsTo95, $"{what}: secondsTo95");
             ValidationUtil.Finite(r.brakeG, $"{what}: brakeG");
+            ValidationUtil.Finite(r.plowG, $"{what}: plowG");
             ValidationUtil.Finite(r.tractionG, $"{what}: tractionG");
             ValidationUtil.Assert(r.maxJointVelocity > 0f, $"{what}: maxJointVelocity must stay positive or the wheels can't turn");
+
+            // The Max clamp in Compute, checked where it matters: a plow fraction set BELOW the
+            // brake fraction must not invert the ramp, or BrakeForceLimit interpolates backwards
+            // and a harder slam brakes softer. "inverted plow fraction" above is that case.
+            ValidationUtil.Assert(r.plowTorque >= r.brakeTorque - 1e-4f,
+                $"{what}: the plow torque must never fall below the coast torque");
         }
 
         // Unity reports gravity as NEGATIVE y, and callers pass Physics.gravity.y straight in.
@@ -544,7 +639,7 @@ public static class DriveFeelValidation
         DrivetrainTuning.Result down = DrivetrainTuning.Compute(Mass, Radius, Wheels, Rpm, Mu, -G,
             DrivetrainTuning.DefaultDriveForceTractionMultiple);
         ValidationUtil.Near(down.stallTorque, Shipped().stallTorque, 1e-3f, "gravity's sign must not change the tune");
-        return cases.Count * 8 + 1;
+        return cases.Count * 11 + 1;
     }
 
     // --- Shipped prefabs -----------------------------------------------------------------------
@@ -587,7 +682,8 @@ public static class DriveFeelValidation
                 DrivetrainTuning.MeasureFriction(wheels),
                 Physics.gravity.y,
                 motor.driveForceTractionMultiple,
-                motor.omniBrakeFraction);
+                motor.omniBrakeFraction,
+                motor.plowFraction);
 
             // The two design rules, checked against each REAL robot rather than one hand-written
             // configuration — a default that's fine for the 654V can still seize a robot with
@@ -634,7 +730,24 @@ public static class DriveFeelValidation
                 $"friction cone (mu {mu:0.##}), so a stop skids at the traction limit instead of " +
                 "building progressively with the command.");
 
-            checked_ += 6 + wheels.Count * 2;
+            // The plow is the far end of that same ramp, so it has to be above both ends of it.
+            // A prefab whose plow fraction had drifted under its brake fraction would silently fall
+            // back to a flat coast through the Max clamp in Compute — the pre-split drivetrain,
+            // with no symptom except that the robot stopped being able to tip.
+            ValidationUtil.Assert(motor.plowFraction > motor.tractionBrakeFraction,
+                $"'{name}' has Plow Fraction ({motor.plowFraction}) at or below Traction Brake " +
+                $"Fraction ({motor.tractionBrakeFraction}) — a slammed reversal would then be no " +
+                "harder than letting go, and no robot on this drivetrain could tip itself.");
+
+            // The reason the tip targets are reachable at all. Below the cone a slam is
+            // motor-limited and the robot can only ever decelerate at plowFraction * mu * g, which
+            // on the shipped geometry is short of the moment it takes to lift a rear wheel.
+            ValidationUtil.Assert(expected.plowG > 0.5f * expected.tractionG,
+                $"'{name}': a slammed reversal only reaches {expected.plowG:0.00} g against a " +
+                $"{expected.tractionG:0.00} g friction cone. Raise Plow Fraction (currently " +
+                $"{motor.plowFraction}) or the drivetrain cannot generate a tipping moment.");
+
+            checked_ += 8 + wheels.Count * 2;
         }
 
         if (checked_ == 0)
