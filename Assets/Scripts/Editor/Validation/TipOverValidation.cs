@@ -289,6 +289,35 @@ public static class TipOverValidation
         return false;
     }
 
+    // Every joint that is a LIFT: a prismatic whose travel axis is not locked and whose drive has
+    // somewhere to go. The same three conditions HasLiftTravel screens prefabs on, in the one place
+    // that answers the question, because three copies of a definition is three chances for a
+    // validator to be measuring a different set of joints than the one that selected the robot.
+    internal static List<ArticulationBody> LiftJoints(ArticulationBody root)
+    {
+        var found = new List<ArticulationBody>();
+        foreach (ArticulationBody b in root.GetComponentsInChildren<ArticulationBody>(true))
+            if (b != root && b.jointType == ArticulationJointType.PrismaticJoint
+                && b.linearLockX != ArticulationDofLock.LockedMotion
+                && b.xDrive.upperLimit > b.xDrive.lowerLimit) found.Add(b);
+        return found;
+    }
+
+    // Wind every lift from its bottom stop to its top one, driving the robot at zero throttle
+    // throughout so the wheels are held by the same control path they are held by in play.
+    internal static void RaiseLifts(ArticulationBody root, RobotMotorController motor)
+    {
+        List<ArticulationBody> lifts = LiftJoints(root);
+        for (int i = 0; i <= LiftRampSteps; i++)
+        {
+            float target = i / (float)LiftRampSteps;
+            foreach (ArticulationBody b in lifts)
+                b.SetDriveTarget(ArticulationDriveAxis.X,
+                    Mathf.Lerp(b.xDrive.lowerLimit, b.xDrive.upperLimit, target));
+            StepDriven(motor, 0f, 0f, 1);
+        }
+    }
+
     private static IEnumerable<string> RobotPaths()
     {
         if (!AssetDatabase.IsValidFolder(RoboSimPaths.RobotsFolder)) yield break;
@@ -547,12 +576,6 @@ public static class TipOverValidation
         // to actually MOVE has still been computed.
         if (jamAWheel) result.injectedJam = JamAWheel(root);
 
-        var lifts = new List<ArticulationBody>();
-        foreach (ArticulationBody b in root.GetComponentsInChildren<ArticulationBody>(true))
-            if (b != root && b.jointType == ArticulationJointType.PrismaticJoint
-                && b.linearLockX != ArticulationDofLock.LockedMotion
-                && b.xDrive.upperLimit > b.xDrive.lowerLimit) lifts.Add(b);
-
         Physics.simulationMode = SimulationMode.Script;
         StepDriven(motor, 0f, 0f, SettleSteps);
 
@@ -564,13 +587,7 @@ public static class TipOverValidation
         MeasureLateralBalance(root, out result.stowedComOffset, out _, out result.stowedComHeight,
             out _);
 
-        for (int i = 0; i <= LiftRampSteps; i++)
-        {
-            float t = i / (float)LiftRampSteps;
-            foreach (ArticulationBody b in lifts)
-                b.SetDriveTarget(ArticulationDriveAxis.X, Mathf.Lerp(b.xDrive.lowerLimit, b.xDrive.upperLimit, t));
-            StepDriven(motor, 0f, 0f, 1);
-        }
+        RaiseLifts(root, motor);
         StepDriven(motor, 0f, 0f, SettleSteps);
         result.settledTilt = Vector3.Angle(root.transform.up, Vector3.up);
         result.turnSign = turnSign;
@@ -591,11 +608,7 @@ public static class TipOverValidation
         // reason: the stages are near-massless (see MechanismBuildUtil.MinLiftMass) and hang off a
         // stiff position drive on a chassis tens of times heavier, which is the classic recipe for
         // a joint that rings at the solver's limit rather than holding still.
-        var liftLinks = new List<ArticulationBody>();
-        foreach (ArticulationBody b in root.GetComponentsInChildren<ArticulationBody>(true))
-            if (b != root && b.jointType == ArticulationJointType.PrismaticJoint
-                && b.linearLockX != ArticulationDofLock.LockedMotion
-                && b.xDrive.upperLimit > b.xDrive.lowerLimit) liftLinks.Add(b);
+        List<ArticulationBody> liftLinks = LiftJoints(root);
         var liftLast = new float[liftLinks.Count];
         var liftPrevRate = new float[liftLinks.Count];
         for (int k = 0; k < liftLinks.Count; k++)
@@ -809,22 +822,9 @@ public static class TipOverValidation
         motor.rollRelief = rollRelief;
         motor.Initialise();
 
-        var lifts = new List<ArticulationBody>();
-        foreach (ArticulationBody b in root.GetComponentsInChildren<ArticulationBody>(true))
-            if (b != root && b.jointType == ArticulationJointType.PrismaticJoint
-                && b.linearLockX != ArticulationDofLock.LockedMotion
-                && b.xDrive.upperLimit > b.xDrive.lowerLimit) lifts.Add(b);
-
         Physics.simulationMode = SimulationMode.Script;
         StepDriven(motor, 0f, 0f, SettleSteps);
-        for (int i = 0; i <= LiftRampSteps; i++)
-        {
-            float t = i / (float)LiftRampSteps;
-            foreach (ArticulationBody b in lifts)
-                b.SetDriveTarget(ArticulationDriveAxis.X,
-                    Mathf.Lerp(b.xDrive.lowerLimit, b.xDrive.upperLimit, t));
-            StepDriven(motor, 0f, 0f, 1);
-        }
+        RaiseLifts(root, motor);
         StepDriven(motor, 0f, 0f, SettleSteps);
 
         // Measured with the lift already UP: that is the worst case, the case the report was about,
