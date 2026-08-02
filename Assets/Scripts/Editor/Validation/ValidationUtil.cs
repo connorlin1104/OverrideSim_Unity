@@ -17,7 +17,7 @@ internal static class ValidationUtil
     {
         try
         {
-            EditorUtility.DisplayDialog(title, run(), "OK");
+            EditorUtility.DisplayDialog(title, RestoringPhysicsMode(run), "OK");
         }
         catch (Exception e)
         {
@@ -32,7 +32,7 @@ internal static class ValidationUtil
     {
         try
         {
-            Debug.Log(run());
+            Debug.Log(RestoringPhysicsMode(run));
         }
         catch (Exception e)
         {
@@ -41,6 +41,35 @@ internal static class ValidationUtil
             return;
         }
         EditorApplication.Exit(0);
+    }
+
+    // Every edit-mode validator flips Physics.simulationMode to Script so it can step physics by hand.
+    // That is NOT a scope-local switch: the setter writes through to ProjectSettings/DynamicsManager
+    // .asset and Unity saves it to disk. A validator that throws — or just forgets its own finally —
+    // therefore leaves the PROJECT on Script, and the game then never steps physics at all: nothing
+    // settles, no mechanism moves, the robot hangs wherever it spawned, every button looks dead. That
+    // shipped once, and no test caught it because every test drives physics by hand and so cannot tell
+    // the difference. Hence both halves below:
+    //
+    //   - the finally forces the mode back, making it impossible for any validator to leak it again.
+    //     It runs BEFORE EditorApplication.Exit, which does not run finally blocks.
+    //   - the entry-time value IS the asset's value, because nothing has flipped it yet this process.
+    //     Anything but FixedUpdate means the project is already broken, so heal it and then fail: a
+    //     suite that "passes" against a project the game cannot run in is worth nothing.
+    private static string RestoringPhysicsMode(Func<string> run)
+    {
+        SimulationMode projectMode = Physics.simulationMode;
+        try
+        {
+            if (projectMode != SimulationMode.FixedUpdate)
+                throw new InvalidOperationException(
+                    $"ProjectSettings/DynamicsManager.asset has m_SimulationMode = {projectMode}, not " +
+                    "FixedUpdate, so the game would never step physics: nothing settles, no mechanism " +
+                    "moves, the robot hangs where it spawned and every button looks dead. It has been " +
+                    "reset to FixedUpdate — keep that change, then run this again.");
+            return run();
+        }
+        finally { Physics.simulationMode = SimulationMode.FixedUpdate; }
     }
 
     public static void Assert(bool condition, string why)
