@@ -64,15 +64,29 @@ public static class ControlStyleValidation
 
         AssertModes(Motor, ControllerMapSettings.StyleTwoButton,
             ControllerMapSettings.ModeForward, ControllerMapSettings.ModeReverse);
-        AssertModes(Motor, ControllerMapSettings.StyleOneButton,
-            ControllerMapSettings.ModeToggle, ControllerMapSettings.ModeToggleReverse);
+        AssertModes(Motor, ControllerMapSettings.StyleOneButton, ControllerMapSettings.ModeToggle);
         AssertModes(Pneumatic, ControllerMapSettings.StyleTwoButton,
             ControllerMapSettings.ModeExtend, ControllerMapSettings.ModeRetract);
         AssertModes(Pneumatic, ControllerMapSettings.StyleOneButton, ControllerMapSettings.ModeToggle);
-        return 6;
+
+        // The check the old table failed: "1 button" has to mean one button, on BOTH types. It used
+        // to expose a latching forward and a latching reverse for a motor, so switching to
+        // one-button left two toggles on the diagram.
+        foreach (string type in new[] { Motor, Pneumatic })
+        {
+            ValidationUtil.Assert(
+                ControllerMapSettings.ModesFor(type, ControllerMapSettings.StyleOneButton).Length == 1,
+                $"one-button {type} control must expose exactly one function");
+            ValidationUtil.Assert(
+                ControllerMapSettings.ModesFor(type, ControllerMapSettings.StyleTwoButton).Length == 2,
+                $"two-button {type} control must expose exactly two functions");
+        }
+        return 10;
     }
 
-    // A motor's two hold buttons become two latching buttons and back, staying on the SAME buttons.
+    // A motor's two hold buttons collapse onto ONE latching button, and splitting back apart puts
+    // hold-reverse on a free button again. The button that survives is the one the mechanism was
+    // already on — a style flip must never send the player back to the diagram to find it.
     private static int MotorStyleFlip()
     {
         var map = new ButtonMap();
@@ -84,16 +98,17 @@ public static class ControlStyleValidation
             "style should read back as one-button");
         AssertHas(map, ControllerButton.R1, "intake", ControllerMapSettings.ModeToggle,
             "R1 should have become the latching toggle");
-        AssertHas(map, ControllerButton.R2, "intake", ControllerMapSettings.ModeToggleReverse,
-            "R2 should have become the latching reverse toggle");
-        ValidationUtil.Assert(CountFor(map, "intake") == 2, "flipping style must not add or drop a motor's buttons");
+        ValidationUtil.Assert(CountFor(map, "intake") == 1,
+            "one-button control must leave the motor on exactly ONE button — the bug was that it left two");
+        ValidationUtil.Assert(FindMode(map, "intake", ControllerMapSettings.ModeToggleReverse) == null,
+            "the retired latching reverse must not survive the flip");
 
         ControllerMapSettings.SetStyle(map, "intake", Motor, ControllerMapSettings.StyleTwoButton);
         AssertHas(map, ControllerButton.R1, "intake", ControllerMapSettings.ModeForward,
             "R1 should be hold-forward again");
         AssertHas(map, ControllerButton.R2, "intake", ControllerMapSettings.ModeReverse,
             "R2 should be hold-reverse again");
-        ValidationUtil.Assert(CountFor(map, "intake") == 2, "flipping back must not add or drop buttons");
+        ValidationUtil.Assert(CountFor(map, "intake") == 2, "splitting back apart should claim a second button");
         return 7;
     }
 
@@ -163,7 +178,24 @@ public static class ControlStyleValidation
             "a style choice should survive save/load");
         AssertHas(reloaded, ControllerButton.R1, "intake", ControllerMapSettings.ModeToggle,
             "the rewritten mode should survive save/load");
-        return 6;
+
+        // A map saved while one-button motors still had two functions. It must still read as
+        // one-button (so the popup offers the right row), the retired reverse must not be offered
+        // any more, and re-asserting the style must strip it — which is what the config screen's
+        // prune leans on to heal a device that already flipped a motor under the old table.
+        var stale = new ButtonMap();
+        ControllerMapSettings.AddAssignment(stale, ControllerButton.R1, "intake", ControllerMapSettings.ModeToggle);
+        ControllerMapSettings.AddAssignment(stale, ControllerButton.R2, "intake", ControllerMapSettings.ModeToggleReverse);
+        ValidationUtil.Assert(ControllerMapSettings.GetStyle(stale, "intake", Motor) == ControllerMapSettings.StyleOneButton,
+            "a map carrying the retired latching reverse should still read as one-button");
+        ValidationUtil.Assert(
+            Array.IndexOf(ControllerMapSettings.ModesFor(Motor, ControllerMapSettings.StyleOneButton),
+                ControllerMapSettings.ModeToggleReverse) < 0,
+            "the retired latching reverse must not be offered by any style");
+        ControllerMapSettings.SetStyle(stale, "intake", Motor, ControllerMapSettings.StyleOneButton);
+        ValidationUtil.Assert(CountFor(stale, "intake") == 1,
+            "re-asserting one-button on a stale map should drop the second toggle button");
+        return 9;
     }
 
     // Every mode a style can produce needs a caption, or the controller diagram mislabels a button

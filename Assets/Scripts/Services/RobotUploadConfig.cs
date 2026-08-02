@@ -29,10 +29,13 @@ public class RobotUploadConfig : ScriptableObject
              "generous cap is realistic — but a phone upload that size takes a while.")]
     public int maxUploadMegabytes = 250;
 
-    [Tooltip("Shown on the submit screen so players know what happens after they send a robot.")]
+    [Tooltip("Shown on the submit screen so players know what happens after they send a robot. Say " +
+             "plainly that it ships inside a new app version — 'arrives in an update' reads to a " +
+             "player as 'appears in the app I already have'.")]
     [TextArea(2, 4)]
     public string turnaroundNote =
-        "Your robot is set up by hand, so it takes a few days and arrives in an app update.";
+        "Your robot is set up by hand, so it takes a few days. It then ships inside the next " +
+        "version of the app — update, and it'll be in your robot list.";
 
     // Everything needed to actually upload. When false the submit screen still works as far as
     // picking a file, then says the destination hasn't been set up yet rather than failing mid-upload.

@@ -15,5 +15,5 @@ MonoBehaviour:
   storageBucket: overridesimunity.firebasestorage.app
   webApiKey: AIzaSyAXstt5-4pFW7tZwXOC9lZvH15KBQz6zM0
   maxUploadMegabytes: 200
-  turnaroundNote: Your robot is set up by hand, so it takes a few days and arrives
-    in an app update.
+  turnaroundNote: Your robot is set up by hand, so it takes a few days. It then ships
+    inside the next version of the app — update, and it'll be in your robot list.

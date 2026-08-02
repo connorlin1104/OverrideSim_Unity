@@ -67,9 +67,16 @@ public static class ControllerMapSettings
     public const string ModeForward = "forward";              // motor: hold to run forward
     public const string ModeReverse = "reverse";              // motor: hold to run reverse
     public const string ModeToggle = "toggle";                // motor: latch fwd on/off | piston: flip
-    public const string ModeToggleReverse = "toggle_reverse"; // motor: latch reverse on/off
     public const string ModeExtend = "extend";                // piston: go extended and stay
     public const string ModeRetract = "retract";              // piston: go retracted and stay
+
+    // RETIRED, and deliberately still here. One-button motor control used to expose TWO functions —
+    // a latching forward AND this latching reverse — so "1 button" left the mechanism on two
+    // buttons, both of them toggles, which is precisely what it claimed not to do. ModesFor no
+    // longer offers it, so nothing new can be bound to it; the constant, the router's case for it
+    // and its labels stay so a map already saved with one keeps driving the robot until the config
+    // screen next opens and prunes it (ControllerConfigScreen.PruneStaleAssignments).
+    public const string ModeToggleReverse = "toggle_reverse"; // motor: latch reverse on/off (legacy)
 
     // How many buttons drive one mechanism. What that means per type:
     //   motor  — one: press to spin, press again to stop | two: hold forward / hold reverse
@@ -323,12 +330,16 @@ public static class ControllerMapSettings
     // The ordered set of button functions a mechanism exposes in a given style. Switching style maps
     // the old list onto the new one POSITION BY POSITION, which is what lets button choices carry
     // over across a flip (a motor's forward button becomes its toggle button, not a fresh one).
+    //
+    // ONE STYLE, ONE BUTTON, for both types: the count in the name is the promise the screen makes.
+    // A one-button motor therefore runs one way only — press to spin, press again to stop — and a
+    // driver who needs to reverse it wants two-button, which is what that style is for.
     public static string[] ModesFor(string mechanismType, string style)
     {
         bool one = style == StyleOneButton;
         if (mechanismType == RobotMechanisms.TypePneumatic)
             return one ? new[] { ModeToggle } : new[] { ModeExtend, ModeRetract };
-        return one ? new[] { ModeToggle, ModeToggleReverse } : new[] { ModeForward, ModeReverse };
+        return one ? new[] { ModeToggle } : new[] { ModeForward, ModeReverse };
     }
 
     // A mechanism's control style: the player's explicit choice if there is one, else inferred from

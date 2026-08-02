@@ -24,14 +24,13 @@ using UnityEngine.InputSystem;
 //      wheels are slow the robot parks (Drive authority at target 0). What changed since is the
 //      strength. A single 0.56 g stop was applied to every robot, which is a traction-wheel
 //      number — on the all-omni drives almost everyone runs it pulled the robot up in 0.08 m and
-//      killed every turn the driver was still carrying. The stop is now sized by what the wheels
-//      ARE: all-omni rolls on 3.5x further (rollers have no sideways grip and little forwards), a
-//      robot with a set of traction wheels bites at the old 0.56 g. See DrivetrainTuning's two
-//      brake fractions and WheelTypeSettings.
+//      killed every turn the driver was still carrying. Every robot now brakes on the all-omni
+//      number instead, rolling on 3.5x further (rollers have no sideways grip and little forwards).
+//      See DrivetrainTuning's brake fractions and BrakeFraction below.
 //        Note this is NOT the retired "Coast When You Let Go" checkbox coming back. That offered
 //      the driver a choice between two drivetrains, one of which was wrong, and it took 60 ms to
-//      engage so a stick swept through centre triggered it. This is one drivetrain whose brake is
-//      sized by the hardware, engaged instantly, every time.
+//      engage so a stick swept through centre triggered it. This is one drivetrain with one brake,
+//      engaged instantly, every time.
 //   4. The braking quadrant. Asking for a direction (or a speed) the wheels are already spinning
 //      against is not the same as accelerating: a real motor driven backwards against its own
 //      rotation is current-limited and much weaker there. Without that distinction a reversal got
@@ -124,13 +123,13 @@ public class RobotMotorController : MonoBehaviour
              "This is also the brake pedal: centred sticks stop the robot with exactly this torque. " +
              "Low, because omni rollers have no sideways grip and a small contact patch forwards — " +
              "an all-omni robot rolls on when you let go, and that roll-out is the drift it has. " +
-             "Used unless the player ticks 'My Robot Has Traction Wheels'.")]
+             "Every robot brakes on this number — see Brake Fraction.")]
     [Range(0.1f, 1.5f)]
     public float omniBrakeFraction = DrivetrainTuning.DefaultOmniBrakeFraction;
-    [Tooltip("The same limit for a robot that runs A SET OF TRACTION WHEELS, chosen instead of Omni " +
-             "Brake Fraction when the player ticks 'My Robot Has Traction Wheels'. Rubber with a real " +
-             "contact patch can put a hard stop down, so this is where the firm, stays-put pull-up " +
-             "lives. Still under the friction cone, so the motor rather than the ground is the limit.")]
+    [Tooltip("PARKED. The same limit for a robot that runs A SET OF TRACTION WHEELS: rubber with a " +
+             "real contact patch can put a hard stop down, so this is where the firm, stays-put " +
+             "pull-up lives. Nothing selects it since the wheel-type box left Settings — the number " +
+             "is kept, and still validated against the omni one, so switching back is one line.")]
     [Range(0.1f, 1.5f)]
     public float tractionBrakeFraction = DrivetrainTuning.DefaultTractionBrakeFraction;
     [Tooltip("How hard the motors may brake when the stick is slammed the OTHER WAY, as a fraction " +
@@ -292,11 +291,12 @@ public class RobotMotorController : MonoBehaviour
     private float driveSensitivity = DriveFeelSettings.DefaultDriveSensitivity;
     private float turnSensitivity = DriveFeelSettings.DefaultTurnSensitivity;
 
-    // Which brake fraction this robot's wheels can actually put down. Not a feel preference — it is
-    // a statement about what the robot is built from, which is why it changes the physics and why
-    // there is no slider for it, only the two numbers above and a box that picks between them.
-    public float BrakeFraction => WheelTypeSettings.TractionWheels
-        ? tractionBrakeFraction : omniBrakeFraction;
+    // How hard this robot may brake. It used to be picked by a Settings checkbox — "My Robot Has
+    // Traction Wheels" — which asked the player a question about their hardware that the sim can't
+    // read off the model and that they had no reason to answer correctly. The box is gone, and with
+    // it the traction branch: every robot now brakes like the all-omni drive almost all of them are,
+    // which is what the box already defaulted to.
+    public float BrakeFraction => omniBrakeFraction;
 
     void Awake() => Initialise();
 

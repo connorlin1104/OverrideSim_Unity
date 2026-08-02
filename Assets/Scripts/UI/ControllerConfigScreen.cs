@@ -377,13 +377,30 @@ public class ControllerConfigScreen : MonoBehaviour
     }
 
     // Assignments and style choices for mechanisms the robot no longer has (re-import removed a
-    // joint) are dropped from the persisted map so they don't linger invisibly.
+    // joint) are dropped from the persisted map so they don't linger invisibly. So are assignments
+    // on a function the mechanism's CURRENT style doesn't expose.
+    //
+    // That second sweep is what heals the one-button motor: it used to expose a latching forward and
+    // a latching reverse, so switching a motor to "1 button" left two toggle buttons on the diagram
+    // — and once ModesFor stopped offering the reverse, no popup row existed to take it off again.
+    // Pruning here means opening the screen fixes a map saved under the old table, rather than
+    // needing Clear or Reset to Default.
     private void PruneStaleAssignments()
     {
         if (map == null || map.assignments == null) return;
         int removed = map.assignments.RemoveAll(a => a == null || FindMechanism(a.mechanismId) == null);
         if (map.styles != null)
             removed += map.styles.RemoveAll(s => s == null || FindMechanism(s.mechanismId) == null);
+
+        foreach (RobotModelCatalog.MechanismInfo mechanism in mechanisms)
+        {
+            if (mechanism == null || string.IsNullOrEmpty(mechanism.id)) continue;
+            string style = ControllerMapSettings.GetStyle(map, mechanism.id, mechanism.type);
+            var offered = new List<string>(ControllerMapSettings.ModesFor(mechanism.type, style));
+            removed += map.assignments.RemoveAll(a => a != null
+                && a.mechanismId == mechanism.id && !offered.Contains(a.mode));
+        }
+
         if (removed > 0) ControllerMapSettings.Save(robotId, map);
     }
 }

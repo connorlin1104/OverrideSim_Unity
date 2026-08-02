@@ -27,9 +27,18 @@ public class HomeScreenController : MonoBehaviour
     [SerializeField] private GameObject loadingOverlay;
 
     [Header("Model List")]
-    [Tooltip("Parent the model buttons are cloned under (has the VerticalLayoutGroup).")]
-    [SerializeField] private Transform modelListParent;
-    [Tooltip("Inactive template Button under the list parent; cloned once per catalog entry.")]
+    [Tooltip("Parent for the PUBLIC half of the picker (has the VerticalLayoutGroup).")]
+    [SerializeField] private Transform publicModelListParent;
+    [Tooltip("Parent for the PRIVATE half — the robots unlocked by a code entered under Account.")]
+    [SerializeField] private Transform privateModelListParent;
+    [Tooltip("Shown instead of the private column's rows when this device holds no codes.")]
+    [SerializeField] private GameObject privateEmptyLabel;
+    [Tooltip("Sizes the public column's scrolling viewport. Set from the row count — see ResizeModelColumns.")]
+    [SerializeField] private LayoutElement publicListViewport;
+    [Tooltip("The same, for the private column. Both are given the SAME height so the halves match.")]
+    [SerializeField] private LayoutElement privateListViewport;
+    [Tooltip("Inactive template Button under the public list; cloned once per catalog entry, into " +
+             "whichever column matches that entry's visibility.")]
     [SerializeField] private Button modelButtonTemplate;
     // Catalog AUTHORING — removing a model, and publishing a robot's default button layout — is
     // not something a player should be able to do: the catalog is a read-only asset in a build, so
@@ -79,22 +88,14 @@ public class HomeScreenController : MonoBehaviour
     [SerializeField] private Toggle reverseDriveToggle;
     [Tooltip("Checkbox for the lite field (persisted via FieldSceneSettings). Loads the stripped-down LiteScene instead of the full field — far cheaper to run.")]
     [SerializeField] private Toggle liteFieldToggle;
-    [Tooltip("Checkbox for traction wheels (persisted via WheelTypeSettings). Off = all omni, which rolls on when you let go; on = the motors may brake hard enough to pull the robot up and hold it.")]
-    [SerializeField] private Toggle tractionWheelsToggle;
 
-    [Header("Team Code")]
+    [Header("Robot Codes")]
     [Tooltip("Where the player types an owner code to reveal a private robot (RobotOwnerSettings).")]
-    [SerializeField] private TMP_InputField teamCodeInput;
-    [Tooltip("Feedback line under the code box: what the last Unlock did, and how many codes are held.")]
-    [SerializeField] private TMP_Text teamCodeStatusLabel;
-
-    [Header("Recovery ID")]
-    [Tooltip("Shows this device's uploader id — the only thing linking a player to robots they've sent in.")]
-    [SerializeField] private TMP_Text recoveryIdLabel;
-    [Tooltip("Copies the uploader id to the clipboard so the player can keep it somewhere safe.")]
-    [SerializeField] private Button copyRecoveryIdButton;
-    [Tooltip("Where a player pastes an uploader id from an old install to reclaim their submissions.")]
-    [SerializeField] private TMP_InputField recoveryIdInput;
+    [SerializeField] private TMP_InputField robotCodeInput;
+    [Tooltip("Feedback line under the code box: what the last Unlock did.")]
+    [SerializeField] private TMP_Text robotCodeStatusLabel;
+    [Tooltip("Lists the codes held on this device, and what each one unlocks, so they can be shared on.")]
+    [SerializeField] private TMP_Text yourCodesLabel;
 
     [Header("Robot Inbox")]
     [Tooltip("Where submissions go, and where the inbox is read from. Same asset as SubmitRobotScreen's.")]
@@ -103,6 +104,10 @@ public class HomeScreenController : MonoBehaviour
     [SerializeField] private GameObject inboxNotice;
     [Tooltip("Line inside the notice naming what arrived.")]
     [SerializeField] private TMP_Text inboxLabel;
+    [Tooltip("Body text under it: a note from the developer, and the whole message when a robot couldn't be set up.")]
+    [SerializeField] private TMP_Text inboxMessageLabel;
+    [Tooltip("Caption on the notice's button — 'Add it to my list' for an arrival, 'Got it' for a note.")]
+    [SerializeField] private TMP_Text inboxActionLabel;
 
     [Header("Controller Config")]
     [Tooltip("The Configure Controller sub-screen (button -> mechanism mapping).")]
@@ -143,10 +148,9 @@ public class HomeScreenController : MonoBehaviour
         InitReverseDriveControl();
         InitLiteFieldControl();
         InitDriveFeelControls();
-        InitTractionWheelsControl();
         SetTab(0);
-        ShowHeldCodeCount();
-        ShowRecoveryId();
+        SetCodeStatus(string.Empty);
+        ShowHeldCodes();
         CheckInbox();
     }
 
@@ -226,11 +230,13 @@ public class HomeScreenController : MonoBehaviour
 
     // --- Settings tabs ---
 
-    // Wired as persistent onClicks by the Build Home Scene tool.
+    // Wired as persistent onClicks by the Build Home Scene tool. Driving used to be tab 2; it held
+    // the drive-feel sliders (now under Controls), the drive-direction toggle (now under Robot >
+    // Match, beside the other things that are true of this robot) and a wheel-type checkbox that
+    // asked the player a physics question and is gone entirely.
     public void OnRobotTabPressed() => SetTab(0);
     public void OnControlsTabPressed() => SetTab(1);
-    public void OnDrivingTabPressed() => SetTab(2);
-    public void OnAccountTabPressed() => SetTab(3);
+    public void OnAccountTabPressed() => SetTab(2);
 
     // Show one page and point the shared ScrollRect at it.
     //
@@ -267,18 +273,31 @@ public class HomeScreenController : MonoBehaviour
 
     private void BuildModelList()
     {
-        if (catalog == null || modelListParent == null || modelButtonTemplate == null)
+        if (catalog == null || publicModelListParent == null || modelButtonTemplate == null)
         {
             Debug.LogWarning("HomeScreenController: catalog / model list references are not assigned; " +
                              "model list not built.", this);
             return;
         }
 
+        int privateCount = 0;
+
         // VisibleModels, not models: private entries stay out of the list until their owner enters
         // the code in Settings. Every other reader of the catalog filters the same way.
+        //
+        // The column an entry lands in is its VISIBILITY, not whether it needed a code to appear:
+        // a robot in the Private column is one that isn't listed for everyone, which is exactly the
+        // thing the split is there to tell the player.
         foreach (RobotModelCatalog.Entry entry in catalog.VisibleModels)
         {
-            Button clone = Instantiate(modelButtonTemplate, modelListParent);
+            bool isPrivate = entry.visibility == RobotModelCatalog.Visibility.Private;
+            // Fall back to the public column if the scene was built before the split, so a robot is
+            // never simply missing from the picker.
+            Transform column = isPrivate && privateModelListParent != null
+                ? privateModelListParent : publicModelListParent;
+            if (isPrivate) privateCount++;
+
+            Button clone = Instantiate(modelButtonTemplate, column);
             clone.name = "Model_" + entry.id;
             clone.gameObject.SetActive(true); // template itself stays inactive
 
@@ -293,7 +312,49 @@ public class HomeScreenController : MonoBehaviour
             modelButtons.Add(new KeyValuePair<Button, string>(clone, id));
         }
 
+        if (privateEmptyLabel != null) privateEmptyLabel.SetActive(privateCount == 0);
+        ResizeModelColumns();
         RefreshHighlight();
+    }
+
+    // How tall the picker's two columns are allowed to get before they start scrolling instead of
+    // growing. Four rows plus a sliver of the fifth: the part-row is the whole affordance — a column
+    // cut cleanly between rows reads as a complete list, and nobody scrolls a list they think they
+    // can already see all of.
+    private const float ModelColumnMaxHeight = 400f;
+
+    // The floor stops a single-robot column from collapsing to something that looks broken next to a
+    // full one, and matches the empty-state label's own height.
+    private const float ModelColumnMinHeight = 120f;
+
+    // Both columns get the SAME height — the taller one's, capped. Sizing them independently would
+    // put a short Private column next to a tall Public one, and two mismatched boxes read as a
+    // layout bug rather than as "you have fewer of these".
+    //
+    // Measured off the built rows rather than computed from a row count, so the row height, the
+    // spacing and the empty label's size all stay owned by the scene builder alone: this can't drift
+    // out of step with BuildHomeScene the way a duplicated 84f would.
+    private void ResizeModelColumns()
+    {
+        if (publicListViewport == null || privateListViewport == null) return;
+
+        float tallest = Mathf.Max(NaturalHeight(publicModelListParent),
+                                  NaturalHeight(privateModelListParent));
+        float height = Mathf.Clamp(tallest, ModelColumnMinHeight, ModelColumnMaxHeight);
+        publicListViewport.preferredHeight = height;
+        privateListViewport.preferredHeight = height;
+    }
+
+    // A scroll content's height comes from its ContentSizeFitter, which hasn't run yet on the frame
+    // the rows are created — so force it, or every column measures zero on the first build and the
+    // picker comes up at its minimum until something else dirties the layout.
+    private static float NaturalHeight(Transform list)
+    {
+        if (list == null) return 0f;
+
+        var rect = (RectTransform)list;
+        LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
+        return rect.rect.height;
     }
 
     // Destroy the current clones and rebuild the list — after a team code is entered or forgotten,
@@ -406,19 +467,6 @@ public class HomeScreenController : MonoBehaviour
         reverseDriveToggle.onValueChanged.AddListener(value => ReverseDriveSettings.Reversed = value);
     }
 
-    // --- Wheel type ---
-
-    // Same guarded pattern as the other toggles. RobotMotorController snapshots this at Awake along
-    // with the sensitivities, so it lands on the next Drive rather than mid-match — which is right:
-    // nobody swaps their wheels while driving.
-    private void InitTractionWheelsControl()
-    {
-        if (tractionWheelsToggle == null) return;
-
-        tractionWheelsToggle.SetIsOnWithoutNotify(WheelTypeSettings.TractionWheels);
-        tractionWheelsToggle.onValueChanged.AddListener(value => WheelTypeSettings.TractionWheels = value);
-    }
-
     // --- Drive feel ---
 
     // Same guarded pattern as the other settings controls. RobotMotorController snapshots these at
@@ -471,14 +519,14 @@ public class HomeScreenController : MonoBehaviour
             turnSensitivityLabel.text = $"Turn Sensitivity — {Mathf.RoundToInt(value * 100f)}%";
     }
 
-    // --- Team code (private robots) ---
+    // --- Robot codes (private robots) ---
 
     // Wired as a persistent onClick by the Build Home Scene tool. A code is only stored when it
     // actually matches a robot in this build: silently banking a typo'd code and showing no new
     // models would look identical to the feature being broken.
     public void OnUnlockCodePressed()
     {
-        string code = RobotOwnerSettings.Normalize(teamCodeInput != null ? teamCodeInput.text : null);
+        string code = RobotOwnerSettings.Normalize(robotCodeInput != null ? robotCodeInput.text : null);
         if (code.Length == 0)
         {
             SetCodeStatus("Type the code you were given, then press Unlock.");
@@ -498,8 +546,9 @@ public class HomeScreenController : MonoBehaviour
         }
 
         RobotOwnerSettings.AddCode(code);
-        if (teamCodeInput != null) teamCodeInput.text = string.Empty;
+        if (robotCodeInput != null) robotCodeInput.text = string.Empty;
         RebuildModelList();
+        ShowHeldCodes();
         SetCodeStatus(matches == 1 ? "Unlocked 1 robot." : $"Unlocked {matches} robots.");
     }
 
@@ -517,6 +566,7 @@ public class HomeScreenController : MonoBehaviour
         int count = held.Count;
         foreach (string code in new List<string>(held)) RobotOwnerSettings.RemoveCode(code);
         RebuildModelList();
+        ShowHeldCodes();
         SetCodeStatus(count == 1 ? "Forgot 1 code." : $"Forgot {count} codes.");
     }
 
@@ -536,66 +586,70 @@ public class HomeScreenController : MonoBehaviour
         return matches;
     }
 
-    private void ShowHeldCodeCount()
+    // Spell the held codes out, each with what it unlocks. A code is a bearer token meant to be
+    // passed on — that is the entire sharing model — and once it had been typed it existed nowhere
+    // the player could read it back, so losing the message it arrived in meant losing the ability to
+    // share their own robot. This is also the whole of the recovery story now: a new phone re-enters
+    // these lines, which is why they name the robot as well as the code.
+    private void ShowHeldCodes()
     {
-        int held = RobotOwnerSettings.AllCodes().Count;
-        if (held == 0) SetCodeStatus(string.Empty);
-        else SetCodeStatus(held == 1 ? "1 code entered on this device." : $"{held} codes entered on this device.");
+        if (yourCodesLabel == null) return; // older HomeScene built before this row existed
+
+        List<string> held = RobotOwnerSettings.AllCodes();
+        if (held.Count == 0)
+        {
+            yourCodesLabel.text = "No codes entered on this device.";
+            return;
+        }
+
+        var lines = new List<string>();
+        foreach (string code in held)
+        {
+            string unlocks = NamesUnlockedBy(RobotOwnerSettings.Normalize(code));
+            lines.Add(string.IsNullOrEmpty(unlocks)
+                // Held, valid, and pointing at a robot this version doesn't carry yet — an update
+                // away. Saying so beats listing a code next to nothing.
+                ? $"{code}  —  not in this version yet"
+                : $"{code}  —  {unlocks}");
+        }
+        yourCodesLabel.text = string.Join("\n", lines);
+    }
+
+    // Comma-separated display names of the private entries a code reveals. Reads the FULL catalog:
+    // the entry is visible precisely because this code is held, so filtering to VisibleModels would
+    // work but would also quietly hide the answer if a second code were forgotten mid-session.
+    private string NamesUnlockedBy(string normalizedCode)
+    {
+        if (catalog == null || catalog.models == null || string.IsNullOrEmpty(normalizedCode))
+            return string.Empty;
+
+        var names = new List<string>();
+        foreach (RobotModelCatalog.Entry entry in catalog.models)
+        {
+            if (entry == null || entry.visibility != RobotModelCatalog.Visibility.Private) continue;
+            if (!entry.OwnerCodes.Contains(normalizedCode)) continue;
+            names.Add(string.IsNullOrWhiteSpace(entry.displayName) ? entry.id : entry.displayName);
+        }
+        return string.Join(", ", names);
     }
 
     private void SetCodeStatus(string message)
     {
-        if (teamCodeStatusLabel != null) teamCodeStatusLabel.text = message;
+        if (robotCodeStatusLabel != null) robotCodeStatusLabel.text = message;
     }
 
-    // --- Recovery ID ---
-
-    // The uploader id is minted on the first submission and lives only in PlayerPrefs, so a reinstall
-    // or a new phone loses it — and with it the link between a player and the robot they sent in.
-    // Showing it, and letting them paste it back, IS the account system here: a bearer code they own,
-    // with no sign-up, no email and nothing to verify.
-    private void ShowRecoveryId()
-    {
-        if (recoveryIdLabel == null) return; // older HomeScene built before this row existed
-
-        string id = RobotUploadService.UploaderId;
-        recoveryIdLabel.text = string.IsNullOrEmpty(id)
-            ? "No ID yet — you get one when you send a robot in."
-            : id;
-        if (copyRecoveryIdButton != null) copyRecoveryIdButton.interactable = !string.IsNullOrEmpty(id);
-    }
-
-    // Wired as a persistent onClick by the Build Home Scene tool.
-    public void OnCopyRecoveryIdPressed()
-    {
-        string id = RobotUploadService.UploaderId;
-        if (string.IsNullOrEmpty(id)) return;
-
-        GUIUtility.systemCopyBuffer = id;
-        if (recoveryIdLabel != null) recoveryIdLabel.text = id + "   (copied)";
-    }
-
-    public void OnRestoreRecoveryIdPressed()
-    {
-        string typed = recoveryIdInput != null ? recoveryIdInput.text : null;
-        if (!RobotUploadService.AdoptUploaderId(typed))
-        {
-            if (recoveryIdLabel != null)
-                recoveryIdLabel.text = "That doesn't look like an ID — check for missing characters.";
-            return;
-        }
-
-        if (recoveryIdInput != null) recoveryIdInput.text = string.Empty;
-        ShowRecoveryId();
-        CheckInbox(); // the restored id may already have a robot waiting under it
-    }
+    // NOTE: a "Your ID" section used to live here — the uploader id shown to be written down, copied
+    // to the clipboard, and pasted back on a new device (RobotUploadService.AdoptUploaderId). It was
+    // an account system for a link the player never has to follow: what comes back from a submission
+    // is a CODE, the codes are listed above, and a new phone just re-enters them. The id is still
+    // minted and still used to check the inbox — it is simply no longer the player's to look after.
 
     // --- Robot inbox ---
 
-    // A submitted robot ships inside an app update, so nothing here downloads one: the inbox only says
-    // "it arrived" and hands over the code that reveals it. Deliberately silent about every failure —
-    // this runs at launch, and an offline start or an unconfigured build must not put an error on the
-    // home screen.
+    // A submitted robot ships inside a new app version, so nothing here downloads one. The inbox
+    // carries the two things that CAN come back: "it arrived, here's the code", and "it couldn't be
+    // set up, here's why". Deliberately silent about every failure of its own — this runs at launch,
+    // and an offline start or an unconfigured build must not put an error on the home screen.
     private void CheckInbox()
     {
         SetInboxNoticeVisible(false);
@@ -612,43 +666,109 @@ public class HomeScreenController : MonoBehaviour
         pendingInbox.Clear();
         if (!string.IsNullOrEmpty(error) || inbox == null || inbox.items == null) return;
 
-        // Only keep items that would actually change something. A code already entered, or one no
-        // robot in this build uses yet (the update carrying it hasn't landed), would make the notice
-        // a lie — "your robot is ready", tap, and nothing appears.
+        // Only keep items that would actually change something.
+        //
+        // An ARRIVAL is dropped when its code is already held, or when no robot in this build uses it
+        // yet (the version carrying it hasn't landed). Either would make the notice a lie — "your
+        // robot is ready", tap, and nothing appears.
+        //
+        // A NOTE has no such self-filter: nothing about the device changes when it's read, so it is
+        // dropped once it has been dismissed and not before.
         foreach (RobotInboxService.Item item in inbox.items)
         {
-            if (item == null || string.IsNullOrWhiteSpace(item.code)) continue;
-            if (RobotOwnerSettings.HasCode(item.code)) continue;
-            if (CountModelsWithCode(RobotOwnerSettings.Normalize(item.code)) == 0) continue;
+            if (RobotInboxService.IsArrival(item))
+            {
+                if (RobotOwnerSettings.HasCode(item.code)) continue;
+                if (CountModelsWithCode(RobotOwnerSettings.Normalize(item.code)) == 0) continue;
+            }
+            else if (RobotInboxService.IsNote(item))
+            {
+                if (RobotInboxSettings.HasSeen(RobotInboxService.KeyFor(item))) continue;
+            }
+            else
+            {
+                continue; // neither a code nor anything to say
+            }
             pendingInbox.Add(item);
         }
 
         if (pendingInbox.Count == 0) return;
 
+        ShowInboxNotice();
+        SetInboxNoticeVisible(true);
+    }
+
+    // The banner says one of two things, and the difference is whether anything can be unlocked.
+    private void ShowInboxNotice()
+    {
+        int arrivals = 0;
+        foreach (RobotInboxService.Item item in pendingInbox)
+        {
+            if (RobotInboxService.IsArrival(item)) arrivals++;
+        }
+
         if (inboxLabel != null)
         {
             RobotInboxService.Item first = pendingInbox[0];
             string title = string.IsNullOrWhiteSpace(first.robotName) ? "Your robot" : first.robotName;
-            inboxLabel.text = pendingInbox.Count == 1
-                ? $"{title} is ready."
-                : $"{title} and {pendingInbox.Count - 1} more are ready.";
+            int others = pendingInbox.Count - 1;
+
+            if (arrivals > 0)
+            {
+                inboxLabel.text = others == 0
+                    ? $"{title} is ready."
+                    : $"{title} and {others} more are ready.";
+            }
+            else
+            {
+                // No code to hand over: this is a message about a robot that couldn't be set up, and
+                // the headline must not promise otherwise.
+                inboxLabel.text = others == 0
+                    ? $"About {title}"
+                    : $"About {title}, and {others} more";
+            }
         }
-        SetInboxNoticeVisible(true);
+
+        // Every message in the batch, arrivals included: a note alongside a working robot ("the arm
+        // is simplified — the CAD had it as one piece") is worth as much as one about a failure, and
+        // until now the field was carried all the way from the JSON and then never shown.
+        if (inboxMessageLabel != null)
+        {
+            var notes = new List<string>();
+            foreach (RobotInboxService.Item item in pendingInbox)
+            {
+                if (!string.IsNullOrWhiteSpace(item.message)) notes.Add(item.message.Trim());
+            }
+            inboxMessageLabel.text = string.Join("\n\n", notes);
+            inboxMessageLabel.gameObject.SetActive(notes.Count > 0);
+        }
+
+        if (inboxActionLabel != null)
+            inboxActionLabel.text = arrivals > 0 ? "Add it to my list" : "Got it";
     }
 
-    // Wired as a persistent onClick by the Build Home Scene tool.
+    // Wired as a persistent onClick by the Build Home Scene tool. Adds every code the batch handed
+    // over and marks every note read, so one tap always clears the whole banner — a button that left
+    // part of the notice behind would look like it hadn't worked.
     public void OnInboxUnlockPressed()
     {
         int unlocked = 0;
         foreach (RobotInboxService.Item item in pendingInbox)
         {
-            if (RobotOwnerSettings.AddCode(item.code)) unlocked++;
+            if (RobotInboxService.IsArrival(item)) { if (RobotOwnerSettings.AddCode(item.code)) unlocked++; }
+            else RobotInboxSettings.MarkSeen(RobotInboxService.KeyFor(item));
         }
 
         pendingInbox.Clear();
         SetInboxNoticeVisible(false);
         RebuildModelList();
-        SetCodeStatus(unlocked == 1 ? "Unlocked 1 robot." : $"Unlocked {unlocked} robots.");
+        ShowHeldCodes();
+
+        // Only when something was actually unlocked: the Account status line is about codes, and
+        // "Unlocked 0 robots" after reading a message about a robot that DIDN'T work is the worst
+        // possible thing to say next.
+        if (unlocked > 0)
+            SetCodeStatus(unlocked == 1 ? "Unlocked 1 robot." : $"Unlocked {unlocked} robots.");
     }
 
     private void SetInboxNoticeVisible(bool visible)

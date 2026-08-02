@@ -183,6 +183,15 @@ public class BuildHomeScene
         // The config screen's Back / Control Style / Reset row now lives in a layout group so it
         // stays centred whatever subset of it is showing. No serialized ref, so check the object.
         if (FindDescendantRect(scene, "ConfigBottomRow") == null) return false;
+        // The model picker is two columns now; the split has no serialized ref of its own.
+        if (FindDescendantRect(scene, "ModelListSplit") == null) return false;
+        // Each column scrolls inside its own viewport rather than growing the whole Robot page. The
+        // viewports have serialized refs (below) but the list is only reparented under them here, so
+        // a scene built before the columns scrolled would keep its unbounded lists.
+        if (FindDescendantRect(scene, "PublicModelColumnViewport") == null) return false;
+        if (FindDescendantRect(scene, "PrivateModelColumnViewport") == null) return false;
+        // The inbox banner carries a developer message now, not just an arrival.
+        if (FindDescendantRect(scene, "InboxMessage") == null) return false;
 
         // Inverted checks: catalog authoring moved out of the game and into
         // Tools > RoboSim > Robot > Model Catalog. While these objects still exist in the committed
@@ -191,20 +200,33 @@ public class BuildHomeScene
         if (FindDescendantRect(scene, "SaveDefaultBindingsButton") != null) return false;
         if (FindDescendantRect(scene, "SmoothAccelerationToggle") != null) return false;
         if (FindDescendantRect(scene, "CoastOnReleaseToggle") != null) return false;
+        // ...and the same for the settings redesign: the single model list, the wheel-type box, the
+        // Driving tab and the whole Your ID section are all gone. Each of these would otherwise
+        // leave a scene that passes every remaining check while still shipping the removed control.
+        if (FindDescendantRect(scene, "ModelList") != null) return false;
+        if (FindDescendantRect(scene, "TractionWheelsToggle") != null) return false;
+        if (FindDescendantRect(scene, "SettingsPage_Driving") != null) return false;
+        if (FindDescendantRect(scene, "RecoveryIdLabel") != null) return false;
+        if (FindDescendantRect(scene, "RecoveryIdInput") != null) return false;
+        if (FindDescendantRect(scene, "TeamCodeInput") != null) return false;
 
         SerializedObject so = new SerializedObject(controller);
         SerializedObject configSo = new SerializedObject(configScreen);
         return IsRefSet(so, "catalog") && IsRefSet(so, "controllerConfig") &&
                IsRefSet(so, "controlsLayout") && IsRefSet(so, "loadingOverlay") &&
+               IsRefSet(so, "publicModelListParent") && IsRefSet(so, "privateModelListParent") &&
+               IsRefSet(so, "privateEmptyLabel") && IsRefSet(so, "modelButtonTemplate") &&
+               IsRefSet(so, "publicListViewport") && IsRefSet(so, "privateListViewport") &&
                IsRefSet(so, "automaticMatchloadToggle") && IsRefSet(so, "liteFieldToggle") &&
-               IsRefSet(so, "teamCodeInput") && IsRefSet(so, "teamCodeStatusLabel") &&
-               IsRefSet(so, "submitRobot") && IsRefSet(so, "recoveryIdLabel") &&
-               IsRefSet(so, "recoveryIdInput") && IsRefSet(so, "uploadConfig") &&
+               IsRefSet(so, "reverseDriveToggle") &&
+               IsRefSet(so, "robotCodeInput") && IsRefSet(so, "robotCodeStatusLabel") &&
+               IsRefSet(so, "yourCodesLabel") &&
+               IsRefSet(so, "submitRobot") && IsRefSet(so, "uploadConfig") &&
                IsRefSet(so, "inboxNotice") && IsRefSet(so, "inboxLabel") &&
+               IsRefSet(so, "inboxMessageLabel") && IsRefSet(so, "inboxActionLabel") &&
                IsRefSet(so, "settingsScroll") &&
                IsArrayFilled(so, "settingsTabButtons") && IsArrayFilled(so, "settingsTabPages") &&
                IsRefSet(so, "driveSensitivitySlider") && IsRefSet(so, "turnSensitivitySlider") &&
-               IsRefSet(so, "tractionWheelsToggle") &&
                IsRefSet(configSo, "controlStyleButton") &&
                IsRefSet(configSo, "resetDefaultsButton");
     }
@@ -383,7 +405,7 @@ public class BuildHomeScene
         Button settingsButton = CreateButton("SettingsButton", mainPanel.transform, "Settings", 52f, AccentColor);
         SetLayoutHeight(settingsButton.gameObject, 110f);
 
-        // Settings panel. Four tab pages instead of one flat column: the old layout was a single
+        // Settings panel. Three tab pages instead of one flat column: the old layout was a single
         // VerticalLayoutGroup ~2,300 units tall in a ~956 viewport — 2.4 screens of scrolling, with
         // no scrollbar and no grouping, so the robot picker, the joystick sliders, the team codes
         // and four sub-screen entry points all ran together and most of them were simply invisible.
@@ -396,8 +418,12 @@ public class BuildHomeScene
 
         const float TabRowHeight = 72f;
         const float BackRowHeight = 108f;
+        // Driving is gone as a tab of its own: once the wheel-type box was removed (it asked the
+        // player a hardware question that changed the physics) all it held was the two sensitivity
+        // sliders and the drive-direction toggle, which belong with the controls and with the robot
+        // respectively. A tab with two rows in it is a worse home for them than either.
         Button[] settingsTabs = CreateTabRow(settingsPanel, "SettingsTabs", TabRowHeight,
-            "Robot", "Controls", "Driving", "Account");
+            "Robot", "Controls", "Account");
 
         // The viewport is shared; only its content changes with the tab. Insets leave the tab row
         // above and the Back button below outside the scrolling area, so Back is always reachable
@@ -424,19 +450,52 @@ public class BuildHomeScene
         header.alignment = TextAlignmentOptions.MidlineLeft;
         SetLayoutHeight(header.gameObject, 56f);
 
-        GameObject modelList = CreateUIObject("ModelList", robotPage.transform);
-        Image listImage = modelList.AddComponent<Image>();
-        listImage.sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Background.psd");
-        listImage.type = Image.Type.Sliced;
-        listImage.color = ListColor;
-        VerticalLayoutGroup listLayout = AddVerticalLayout(modelList, 20, 14f);
-        listLayout.childAlignment = TextAnchor.UpperCenter;
-        LayoutElement listElement = modelList.AddComponent<LayoutElement>();
-        listElement.flexibleHeight = 0f; // inside the scroll view the list takes its natural height
+        // The picker is two columns, not one list: public robots on the left, the private ones this
+        // device has unlocked on the right. One undifferentiated list gave the player no way to tell
+        // a robot everybody gets from one they were personally given a code for — and the private
+        // column doubles as the visible proof that a code they typed in Account did something.
+        //
+        // Full width, split in half with a gap: same footprint as the old list, so the Match section
+        // below it stays where players are used to reaching for it.
+        GameObject modelSplit = CreateUIObject("ModelListSplit", robotPage.transform);
+        HorizontalLayoutGroup splitLayout = modelSplit.AddComponent<HorizontalLayoutGroup>();
+        splitLayout.padding = new RectOffset(0, 0, 0, 0);
+        splitLayout.spacing = 16f; // the padding between the halves
+        splitLayout.childAlignment = TextAnchor.UpperCenter;
+        splitLayout.childControlWidth = true;
+        splitLayout.childControlHeight = true;
+        splitLayout.childForceExpandWidth = true;  // each column takes exactly half
+        splitLayout.childForceExpandHeight = true; // and both are as tall as the taller one
+        LayoutElement splitElement = modelSplit.AddComponent<LayoutElement>();
+        splitElement.flexibleHeight = 0f; // inside the scroll view the split takes its natural height
 
-        Button template = CreateButton("ModelButtonTemplate", modelList.transform, "Model", 40f, NeutralColor);
+        // No ContentSizeFitter on the columns: a layout group already reports its preferred height
+        // up the chain, and a fitter inside the page's fitter is the layout thrash CreateScrollPage
+        // warns about. The fitters INSIDE the columns are on scroll contents, which no layout group
+        // controls, so they're the ordinary pattern rather than a nesting.
+        Transform publicList = CreateModelColumn(modelSplit.transform, "PublicModelColumn",
+            "PublicModelList", "Public", out LayoutElement publicViewport);
+        Transform privateList = CreateModelColumn(modelSplit.transform, "PrivateModelColumn",
+            "PrivateModelList", "Private", out LayoutElement privateViewport);
+
+        Button template = CreateButton("ModelButtonTemplate", publicList, "Model", 34f, NeutralColor);
         SetLayoutHeight(template.gameObject, 84f);
+        // Half-width rows carry names like "Krypton  (654V)". Autosize down rather than clip, with a
+        // small inset so nothing sits on the button's edge — the full-width list never needed this.
+        TextMeshProUGUI templateLabel = template.GetComponentInChildren<TextMeshProUGUI>(true);
+        templateLabel.enableAutoSizing = true;
+        templateLabel.fontSizeMin = 22f;
+        templateLabel.fontSizeMax = 34f;
+        templateLabel.rectTransform.offsetMin = new Vector2(10f, 6f);
+        templateLabel.rectTransform.offsetMax = new Vector2(-10f, -6f);
         template.gameObject.SetActive(false); // template stays inactive; controller clones it
+
+        // Shown in place of the private column's rows when this device holds no codes — an empty
+        // half-width box next to a full one reads as a bug rather than as "you have none yet".
+        TextMeshProUGUI privateEmpty = CreateText("PrivateEmptyLabel", privateList,
+            "Robots someone shares with you appear here once you enter their code under Account.", 22f);
+        privateEmpty.alignment = TextAlignmentOptions.Top;
+        SetLayoutHeight(privateEmpty.gameObject, 120f);
 
         // NOTE: an "Edit Models" button used to sit under the list, turning a row tap into a delete,
         // plus a "Make My Buttons the Default" button beside it. Both are gone from the game — see
@@ -449,6 +508,13 @@ public class BuildHomeScene
         Toggle autoMatchloadToggle = CreateToggle("AutomaticMatchloadToggle", robotPage.transform,
             "Automatic Matchloading", MatchLoadSettings.DefaultAutomatic);
         SetLayoutHeight(autoMatchloadToggle.gameObject, 64f);
+
+        // Which end of the robot the sticks treat as front (persisted via ReverseDriveSettings).
+        // It sits with the robot rather than with the controls because it is a fact about THIS
+        // robot — which end carries the intake — not a preference about the sticks.
+        Toggle reverseDriveToggle = CreateToggle("ReverseDriveToggle", robotPage.transform,
+            "Drive Backwards (swap which end is the front)", ReverseDriveSettings.DefaultReversed);
+        SetLayoutHeight(reverseDriveToggle.gameObject, 64f);
 
         // Lite field: checkbox (persisted via FieldSceneSettings). Drive loads the stripped-down
         // LiteScene — one of each field feature — instead of the full field. Build it with
@@ -489,10 +555,7 @@ public class BuildHomeScene
             "Edit Control Layout", 36f, AccentColor);
         SetLayoutHeight(editLayoutButton.gameObject, 80f);
 
-        // --- Driving page ---
-        GameObject drivingPage = CreateTabPage(content, "SettingsPage_Driving");
-
-        CreateSectionHeader(drivingPage.transform, "SectionDriveFeel", "Drive feel");
+        CreateSectionHeader(controlsPage.transform, "SectionDriveFeel", "Drive feel");
 
         // Drive/turn sensitivity, persisted via DriveFeelSettings and snapshotted by
         // RobotMotorController.Awake — so they take effect on the next Drive.
@@ -501,102 +564,77 @@ public class BuildHomeScene
         // They are gone on purpose: a drivetrain that ramps its throttle and rolls when released
         // isn't a preference, it is what a drivetrain does, and offering the alternative meant
         // shipping a mode that was wrong. Both behaviours are now unconditional for every robot.
-        CreateSliderRow(drivingPage.transform, "DriveSensitivityRow",
+        CreateSliderRow(controlsPage.transform, "DriveSensitivityRow",
             "DriveSensitivityLabel", "Drive Sensitivity", "DriveSensitivitySlider",
             DriveFeelSettings.MinDriveSensitivity, DriveFeelSettings.MaxDriveSensitivity,
             DriveFeelSettings.DefaultDriveSensitivity,
             out TextMeshProUGUI driveSensitivityLabel, out Slider driveSensitivitySlider);
 
-        CreateSliderRow(drivingPage.transform, "TurnSensitivityRow",
+        CreateSliderRow(controlsPage.transform, "TurnSensitivityRow",
             "TurnSensitivityLabel", "Turn Sensitivity", "TurnSensitivitySlider",
             DriveFeelSettings.MinTurnSensitivity, DriveFeelSettings.MaxTurnSensitivity,
             DriveFeelSettings.DefaultTurnSensitivity,
             out TextMeshProUGUI turnSensitivityLabel, out Slider turnSensitivitySlider);
 
-        TextMeshProUGUI driveFeelHint = CreateText("DriveFeelHint", drivingPage.transform,
+        TextMeshProUGUI driveFeelHint = CreateText("DriveFeelHint", controlsPage.transform,
             "How hard the sticks drive and turn. Every robot ramps its controls instead of snapping " +
             "to full. Changes apply the next time you press Drive.", 24f);
         driveFeelHint.alignment = TextAlignmentOptions.TopLeft;
         SetLayoutHeight(driveFeelHint.gameObject, 96f);
 
-        CreateSectionHeader(drivingPage.transform, "SectionWheels", "Your wheels");
-
-        // The one thing about a drivetrain the sim can't read off the model: every wheel is a sphere
-        // collider with one friction number, so only the driver knows whether their robot runs omnis
-        // or traction. It decides how hard the motors may brake — see WheelTypeSettings.
-        Toggle tractionWheelsToggle = CreateToggle("TractionWheelsToggle", drivingPage.transform,
-            "My Robot Has Traction Wheels", WheelTypeSettings.DefaultTractionWheels);
-        SetLayoutHeight(tractionWheelsToggle.gameObject, 64f);
-
-        TextMeshProUGUI wheelTypeHint = CreateText("WheelTypeHint", drivingPage.transform,
-            "Leave this off for an all-omni drive: letting go of the sticks rolls the robot on, and a " +
-            "turn keeps swinging, the way omnis really do. Tick it if you run a set of traction " +
-            "wheels — then the robot pulls up hard and stays put.", 24f);
-        wheelTypeHint.alignment = TextAlignmentOptions.TopLeft;
-        SetLayoutHeight(wheelTypeHint.gameObject, 110f);
-
-        CreateSectionHeader(drivingPage.transform, "SectionDriveFrame", "Which way is forward");
-
-        // Reverse drive direction: checkbox (persisted via ReverseDriveSettings). Flips which end of
-        // the robot the drive controls treat as front (intake-forward vs scoring-forward).
-        Toggle reverseDriveToggle = CreateToggle("ReverseDriveToggle", drivingPage.transform,
-            "Reverse Drive Direction", ReverseDriveSettings.DefaultReversed);
-        SetLayoutHeight(reverseDriveToggle.gameObject, 64f);
-
         // --- Account page ---
         GameObject accountPage = CreateTabPage(content, "SettingsPage_Account");
 
-        CreateSectionHeader(accountPage.transform, "SectionTeamCode", "Team code");
+        CreateSectionHeader(accountPage.transform, "SectionRobotCode", "Enter robot code");
 
-        // Team code: reveals private robots whose owner code matches. Private models ship inside the
-        // app but stay out of the picker until their owner types the code here (RobotOwnerSettings
-        // keeps the entered codes in PlayerPrefs).
-        TextMeshProUGUI teamCodeLabel = CreateText("TeamCodeLabel", accountPage.transform,
+        // A robot code reveals private robots whose owner code matches. Private models ship inside
+        // the app but stay out of the picker until someone types the code here (RobotOwnerSettings
+        // keeps the entered codes in PlayerPrefs). "Robot code" rather than "team code": one code
+        // can cover a whole team's robots, but what the player is holding is a code for a robot.
+        TextMeshProUGUI robotCodeHint = CreateText("RobotCodeHint", accountPage.transform,
             "Enter a code to unlock a robot someone shared with you.", 24f);
-        teamCodeLabel.alignment = TextAlignmentOptions.TopLeft;
-        SetLayoutHeight(teamCodeLabel.gameObject, 44f);
+        robotCodeHint.alignment = TextAlignmentOptions.TopLeft;
+        SetLayoutHeight(robotCodeHint.gameObject, 44f);
 
-        TMP_InputField teamCodeInput = CreateInputField("TeamCodeInput", accountPage.transform,
-            "Enter a code to unlock a robot", 30f);
-        SetLayoutHeight(teamCodeInput.gameObject, 66f);
+        TMP_InputField robotCodeInput = CreateInputField("RobotCodeInput", accountPage.transform,
+            "Enter robot code", 30f);
+        SetLayoutHeight(robotCodeInput.gameObject, 66f);
 
         Button unlockButton = CreateButton("UnlockCodeButton", accountPage.transform, "Unlock", 32f, AccentColor);
         SetLayoutHeight(unlockButton.gameObject, 64f);
 
-        TextMeshProUGUI teamCodeStatus = CreateText("TeamCodeStatus", accountPage.transform, string.Empty, 26f);
-        teamCodeStatus.alignment = TextAlignmentOptions.Center;
-        SetLayoutHeight(teamCodeStatus.gameObject, 40f);
+        TextMeshProUGUI robotCodeStatus = CreateText("RobotCodeStatus", accountPage.transform, string.Empty, 26f);
+        robotCodeStatus.alignment = TextAlignmentOptions.Center;
+        SetLayoutHeight(robotCodeStatus.gameObject, 40f);
+
+        CreateSectionHeader(accountPage.transform, "SectionYourCodes", "Your codes");
+
+        // The codes this device holds, spelled out. A code is a bearer token — the player is meant to
+        // pass it on to a teammate — and until now the only place it existed after being typed was
+        // inside PlayerPrefs, so anyone who lost the message it came in could never share it again.
+        // This is also what replaces the recovery ID: a new phone re-enters these, nothing else.
+        TextMeshProUGUI yourCodesLabel = CreateText("YourCodesLabel", accountPage.transform,
+            "No codes entered on this device.", 26f);
+        yourCodesLabel.alignment = TextAlignmentOptions.TopLeft;
+        yourCodesLabel.textWrappingMode = TextWrappingModes.Normal;
+        // Deliberately NOT SetLayoutHeight: this is the one row whose height depends on how many
+        // codes the player holds, and a fixed preferred height would clip the fourth one. Leaving
+        // preferredHeight unset lets TMP's own ILayoutElement report the wrapped text's height, so
+        // the row grows with the list; minHeight only keeps the empty state from collapsing.
+        LayoutElement codesElement = yourCodesLabel.gameObject.AddComponent<LayoutElement>();
+        codesElement.minHeight = 44f;
+        codesElement.flexibleHeight = 0f;
 
         Button forgetCodesButton = CreateButton("ForgetCodesButton", accountPage.transform,
             "Forget Codes", 30f, NeutralColor);
         SetLayoutHeight(forgetCodesButton.gameObject, 56f);
 
-        CreateSectionHeader(accountPage.transform, "SectionYourId", "Your ID");
-
-        // Recovery ID: the id the upload service minted for this device. It is the only link between a
-        // player and the robots they've sent in, it lives only in PlayerPrefs, and a reinstall wipes
-        // it — so it's shown here to be written down, and can be pasted back on a new device.
-        TextMeshProUGUI recoveryHint = CreateText("RecoveryIdHint", accountPage.transform,
-            "Keep this if you've sent a robot in — it's how a new phone finds it again.", 24f);
-        recoveryHint.alignment = TextAlignmentOptions.TopLeft;
-        SetLayoutHeight(recoveryHint.gameObject, 44f);
-
-        TextMeshProUGUI recoveryIdLabel = CreateText("RecoveryIdLabel", accountPage.transform,
-            "No ID yet", 24f);
-        SetLayoutHeight(recoveryIdLabel.gameObject, 40f);
-
-        Button copyRecoveryButton = CreateButton("CopyRecoveryIdButton", accountPage.transform,
-            "Copy My ID", 30f, NeutralColor);
-        SetLayoutHeight(copyRecoveryButton.gameObject, 60f);
-
-        TMP_InputField recoveryIdInput = CreateInputField("RecoveryIdInput", accountPage.transform,
-            "Paste an ID from an old device", 28f);
-        SetLayoutHeight(recoveryIdInput.gameObject, 64f);
-
-        Button restoreRecoveryButton = CreateButton("RestoreRecoveryIdButton", accountPage.transform,
-            "Restore", 30f, NeutralColor);
-        SetLayoutHeight(restoreRecoveryButton.gameObject, 60f);
-
+        // NOTE: a "Your ID" section used to sit here — the uploader id minted on the first
+        // submission, shown to be written down, with Copy and a paste-it-back Restore. It is gone.
+        // It was an account system nobody asked for, protecting a link (device -> submission) that
+        // the player never needs to follow: the robot comes back as a CODE, and the codes are listed
+        // right above. A new phone re-enters those. The id itself is still minted and still used to
+        // check the inbox, it just isn't a thing the player is asked to look after.
         CreateSectionHeader(accountPage.transform, "SectionSubmit", "Your own robot");
 
         // Entry point to the upload-your-own-robot screen.
@@ -606,7 +644,6 @@ public class BuildHomeScene
 
         // Only the first page starts visible; the controller swaps the rest in.
         controlsPage.SetActive(false);
-        drivingPage.SetActive(false);
         accountPage.SetActive(false);
 
         settingsPanel.SetActive(false); // controller shows it via OnSettingsPressed
@@ -641,12 +678,16 @@ public class BuildHomeScene
         so.FindProperty("mainPanel").objectReferenceValue = mainPanel;
         so.FindProperty("settingsPanel").objectReferenceValue = settingsPanel;
         so.FindProperty("loadingOverlay").objectReferenceValue = loadingOverlay;
-        so.FindProperty("modelListParent").objectReferenceValue = modelList.transform;
+        so.FindProperty("publicModelListParent").objectReferenceValue = publicList;
+        so.FindProperty("privateModelListParent").objectReferenceValue = privateList;
+        so.FindProperty("privateEmptyLabel").objectReferenceValue = privateEmpty.gameObject;
+        so.FindProperty("publicListViewport").objectReferenceValue = publicViewport;
+        so.FindProperty("privateListViewport").objectReferenceValue = privateViewport;
         so.FindProperty("modelButtonTemplate").objectReferenceValue = template;
         so.FindProperty("settingsScroll").objectReferenceValue = settingsScroll;
         SerializedProperty tabButtonsProp = so.FindProperty("settingsTabButtons");
         SerializedProperty tabPagesProp = so.FindProperty("settingsTabPages");
-        GameObject[] tabPages = { robotPage, controlsPage, drivingPage, accountPage };
+        GameObject[] tabPages = { robotPage, controlsPage, accountPage };
         tabButtonsProp.arraySize = settingsTabs.Length;
         tabPagesProp.arraySize = tabPages.Length;
         for (int i = 0; i < settingsTabs.Length; i++)
@@ -663,17 +704,16 @@ public class BuildHomeScene
         so.FindProperty("controlsOpacityLabel").objectReferenceValue = opacityLabel;
         so.FindProperty("automaticMatchloadToggle").objectReferenceValue = autoMatchloadToggle;
         so.FindProperty("reverseDriveToggle").objectReferenceValue = reverseDriveToggle;
-        so.FindProperty("tractionWheelsToggle").objectReferenceValue = tractionWheelsToggle;
         so.FindProperty("liteFieldToggle").objectReferenceValue = liteFieldToggle;
-        so.FindProperty("teamCodeInput").objectReferenceValue = teamCodeInput;
-        so.FindProperty("teamCodeStatusLabel").objectReferenceValue = teamCodeStatus;
-        so.FindProperty("recoveryIdLabel").objectReferenceValue = recoveryIdLabel;
-        so.FindProperty("copyRecoveryIdButton").objectReferenceValue = copyRecoveryButton;
-        so.FindProperty("recoveryIdInput").objectReferenceValue = recoveryIdInput;
+        so.FindProperty("robotCodeInput").objectReferenceValue = robotCodeInput;
+        so.FindProperty("robotCodeStatusLabel").objectReferenceValue = robotCodeStatus;
+        so.FindProperty("yourCodesLabel").objectReferenceValue = yourCodesLabel;
         so.FindProperty("uploadConfig").objectReferenceValue =
             AssetDatabase.LoadAssetAtPath<RobotUploadConfig>(UploadConfigPath);
         so.FindProperty("inboxNotice").objectReferenceValue = inboxParts.panel;
         so.FindProperty("inboxLabel").objectReferenceValue = inboxParts.label;
+        so.FindProperty("inboxMessageLabel").objectReferenceValue = inboxParts.message;
+        so.FindProperty("inboxActionLabel").objectReferenceValue = inboxParts.unlockLabel;
 
         // Controller config screen: same root object, wired to the diagram it opens.
         ControllerConfigScreen configScreen = homeRoot.AddComponent<ControllerConfigScreen>();
@@ -742,8 +782,7 @@ public class BuildHomeScene
         UnityEventTools.AddPersistentListener(configureButton.onClick, controller.OnConfigureControllerPressed);
         UnityEventTools.AddPersistentListener(settingsTabs[0].onClick, controller.OnRobotTabPressed);
         UnityEventTools.AddPersistentListener(settingsTabs[1].onClick, controller.OnControlsTabPressed);
-        UnityEventTools.AddPersistentListener(settingsTabs[2].onClick, controller.OnDrivingTabPressed);
-        UnityEventTools.AddPersistentListener(settingsTabs[3].onClick, controller.OnAccountTabPressed);
+        UnityEventTools.AddPersistentListener(settingsTabs[2].onClick, controller.OnAccountTabPressed);
         UnityEventTools.AddPersistentListener(unlockButton.onClick, controller.OnUnlockCodePressed);
         UnityEventTools.AddPersistentListener(forgetCodesButton.onClick, controller.OnForgetCodesPressed);
         UnityEventTools.AddPersistentListener(configParts.backButton.onClick, controller.OnConfigBackPressed);
@@ -755,8 +794,6 @@ public class BuildHomeScene
         UnityEventTools.AddPersistentListener(submitParts.chooseFile.onClick, submitScreen.OnChooseFilePressed);
         UnityEventTools.AddPersistentListener(submitParts.sharing.onClick, submitScreen.OnSharingPressed);
         UnityEventTools.AddPersistentListener(submitParts.send.onClick, submitScreen.OnSendPressed);
-        UnityEventTools.AddPersistentListener(copyRecoveryButton.onClick, controller.OnCopyRecoveryIdPressed);
-        UnityEventTools.AddPersistentListener(restoreRecoveryButton.onClick, controller.OnRestoreRecoveryIdPressed);
         UnityEventTools.AddPersistentListener(inboxParts.unlockButton.onClick, controller.OnInboxUnlockPressed);
     }
 
@@ -766,11 +803,13 @@ public class BuildHomeScene
     {
         public GameObject panel;
         public TextMeshProUGUI label;
+        public TextMeshProUGUI message;
         public Button unlockButton;
+        public TextMeshProUGUI unlockLabel;
     }
 
-    // A banner above the main panel saying a submitted robot has come back, with a button that enters
-    // the owner code the inbox handed over.
+    // A banner above the main panel carrying whatever came back about a submitted robot: that it has
+    // arrived, with a button that enters the owner code — or that it couldn't be set up, and why.
     //
     // It sits OUTSIDE the main panel rather than as a row inside it: it is hidden almost every launch,
     // and an empty row inside a fixed-height, middle-aligned layout leaves a visible gap. Built before
@@ -781,17 +820,33 @@ public class BuildHomeScene
 
         GameObject panel = CreatePanel("InboxNotice", canvas, new Vector2(760f, 176f));
         RectTransform rect = (RectTransform)panel.transform;
-        rect.anchoredPosition = new Vector2(0f, 266f); // the gap between the title and the main panel
+        // Top edge pinned, height driven by the fitter below, so a three-line failure note grows the
+        // banner DOWNWARD over the main panel — which this is drawn on top of anyway — instead of
+        // upward into the title. (176/2 recovers the centre-anchored position this used to have.)
+        rect.pivot = new Vector2(0.5f, 1f);
+        rect.anchoredPosition = new Vector2(0f, 266f + 88f);
         parts.panel = panel;
         AddVerticalLayout(panel, 16, 16f);
+        ContentSizeFitter panelFitter = panel.AddComponent<ContentSizeFitter>();
+        panelFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
         parts.label = CreateText("InboxLabel", panel.transform, "Your robot is ready.", 34f);
         parts.label.fontStyle = FontStyles.Bold;
         SetLayoutHeight(parts.label.gameObject, 56f);
 
+        // A note from the developer: an aside next to an arrival, or the whole point of the notice
+        // when a robot couldn't be set up. NO SetLayoutHeight — TMP reports its own preferred height
+        // once it knows its width, so a two-word note and a four-line explanation both fit exactly.
+        parts.message = CreateText("InboxMessage", panel.transform, string.Empty, 26f);
+        parts.message.alignment = TextAlignmentOptions.Top;
+        parts.message.color = new Color(TextColor.r, TextColor.g, TextColor.b, 0.85f);
+        parts.message.gameObject.SetActive(false); // shown only when there is something to say
+
         parts.unlockButton = CreateButton("InboxUnlockButton", panel.transform,
             "Add it to my list", 32f, AccentColor);
         SetLayoutHeight(parts.unlockButton.gameObject, 64f);
+        // The same button dismisses a note that has no code to add, so its caption is set at runtime.
+        parts.unlockLabel = parts.unlockButton.GetComponentInChildren<TextMeshProUGUI>(true);
 
         panel.SetActive(false); // shown only when the inbox actually has something waiting
         return parts;
@@ -1106,18 +1161,30 @@ public class BuildHomeScene
         header.fontStyle = FontStyles.Bold;
         SetLayoutHeight(header.gameObject, 66f);
 
+        // "Arrives in an update" was doing a lot of unexplained work: nothing about a robot can be
+        // processed in the app (every setup step is an Editor-only API), so the finished robot is
+        // built into the next version on the App Store and the player has to install that version
+        // before it shows up. Say so, because the alternative reading — "it appears in my app in a
+        // few days" — is what makes a working submission look broken.
         TextMeshProUGUI hint = CreateText("SubmitHint", content.transform,
-            "Send your robot's FBX or URDF and it gets set up for you, then arrives in an update.", 28f);
-        SetLayoutHeight(hint.gameObject, 76f);
+            "Send your robot's FBX or URDF and I'll set it up by hand — colliders, drivetrain and " +
+            "every mechanism. It then ships inside the next version of the app, so once you update " +
+            "you'll find it in your robot list. Usually a few days.", 26f);
+        SetLayoutHeight(hint.gameObject, 130f);
 
         parts.team = CreateInputField("TeamInput", content.transform, "Team (e.g. 654V)", 32f);
         SetLayoutHeight(parts.team.gameObject, 68f);
-        parts.robot = CreateInputField("RobotNameInput", content.transform, "Robot name", 32f);
+        // Optional because Select() fills it in from the file name — the field exists for the player
+        // who wants a nicer name than "654V_v3_final.fbx", not as a thing to demand.
+        parts.robot = CreateInputField("RobotNameInput", content.transform,
+            "Robot name (optional)", 32f);
         SetLayoutHeight(parts.robot.gameObject, 68f);
-        parts.contact = CreateInputField("ContactInput", content.transform, "Email or Discord", 32f);
+        // Email only. Discord was offered and shouldn't have been: replying there means a shared
+        // server or a DM request, neither of which exists as part of this flow.
+        parts.contact = CreateInputField("ContactInput", content.transform, "Your email", 32f);
         SetLayoutHeight(parts.contact.gameObject, 68f);
         parts.notes = CreateInputField("NotesInput", content.transform,
-            "Anything I should know (optional)", 32f);
+            "Any specific instructions? (optional)", 32f);
         SetLayoutHeight(parts.notes.gameObject, 68f);
 
         // Who may use the robot afterwards — the uploader's call, since it decides whether the finished
@@ -1694,6 +1761,75 @@ public class BuildHomeScene
 
         SetLayoutHeight(row, 60f);
         return row;
+    }
+
+    // One half of the split model picker: a titled, dark-filled column the controller clones model
+    // buttons into. Returns the LIST, not the column — the title is a sibling above it, so a title
+    // can never be mistaken for a row or destroyed by a list rebuild.
+    //
+    // The list SCROLLS inside the column rather than growing without bound. With the picker at its
+    // natural height, a player who has unlocked fifteen robots pushes Match, Field and every other
+    // Robot-page row down by a screen and a half — the picker stops being one section of a page and
+    // becomes the page. `viewportSize` is how the controller caps it: the column grows with its
+    // contents up to a limit and scrolls after that (see HomeScreenController.ResizeModelColumns).
+    private static Transform CreateModelColumn(Transform parent, string columnName, string listName,
+        string title, out LayoutElement viewportSize)
+    {
+        GameObject column = CreateUIObject(columnName, parent);
+        Image fill = column.AddComponent<Image>();
+        fill.sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Background.psd");
+        fill.type = Image.Type.Sliced;
+        fill.color = ListColor;
+        VerticalLayoutGroup columnLayout = AddVerticalLayout(column, 12, 10f);
+        columnLayout.childAlignment = TextAnchor.UpperCenter;
+
+        TextMeshProUGUI header = CreateText(columnName + "Title", column.transform,
+            title.ToUpperInvariant(), 24f);
+        header.fontStyle = FontStyles.Bold;
+        header.color = new Color(TextColor.r, TextColor.g, TextColor.b, 0.62f);
+        SetLayoutHeight(header.gameObject, 32f);
+
+        GameObject viewport = CreateUIObject(columnName + "Viewport", column.transform);
+        // Same scroll-catcher as CreateScrollingContent, for the same reason: a wheel or a drag is
+        // routed by raycasting the pointer and bubbling UP, so without a transparent target here the
+        // gaps between rows and the space past the last row are dead. The column's own fill can't
+        // stand in — it is this object's PARENT, and bubbling never travels back down.
+        Image catcher = viewport.AddComponent<Image>();
+        catcher.color = Color.clear;
+        catcher.raycastTarget = true;
+        viewport.AddComponent<RectMask2D>();
+        viewportSize = viewport.AddComponent<LayoutElement>();
+        viewportSize.flexibleHeight = 0f;
+        // Authored with a real height, not left at the -1 that means "ignored". The controller
+        // overwrites this on every list build — but a LayoutElement reporting -1 makes the column
+        // collapse to nothing, so if that call is ever missed the picker doesn't shrink, it VANISHES.
+        viewportSize.preferredHeight = 200f;
+
+        GameObject list = CreateUIObject(listName, column.transform);
+        list.transform.SetParent(viewport.transform, false);
+        RectTransform listRect = (RectTransform)list.transform;
+        listRect.anchorMin = new Vector2(0f, 1f);
+        listRect.anchorMax = new Vector2(1f, 1f);
+        listRect.pivot = new Vector2(0.5f, 1f);
+        listRect.anchoredPosition = Vector2.zero;
+        listRect.sizeDelta = Vector2.zero; // width from the viewport, height from the fitter
+        VerticalLayoutGroup listLayout = AddVerticalLayout(list, 0, 12f);
+        listLayout.childAlignment = TextAnchor.UpperCenter;
+        ContentSizeFitter listFitter = list.AddComponent<ContentSizeFitter>();
+        listFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        // NestedScrollRect, not ScrollRect: this sits inside the settings page's own vertical scroll,
+        // and a plain one would swallow every drag over the picker — including on the three-robot
+        // device where there is nothing here to scroll at all.
+        NestedScrollRect scroll = viewport.AddComponent<NestedScrollRect>();
+        scroll.horizontal = false;
+        scroll.vertical = true;
+        scroll.movementType = ScrollRect.MovementType.Clamped;
+        scroll.scrollSensitivity = 28f;
+        scroll.viewport = (RectTransform)viewport.transform;
+        scroll.content = listRect;
+
+        return list.transform;
     }
 
     // A quiet section heading with a rule under it, so related settings read as a group instead of

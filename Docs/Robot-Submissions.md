@@ -160,26 +160,64 @@ that size takes a while, so the screen shows progress and checks for a connectio
    `sharing` field — **Public** for "Anyone", **Private** with an owner code otherwise.
 6. Tell the player it's ready, by writing their inbox file (below).
 
-## Telling a player their robot arrived
+**When it doesn't work, say so.** Some submissions can't be made to drive: the export is one welded
+lump with nothing to pivot, the file is a render mesh with no separable components, half the assembly
+is missing, the archive has a URDF and no meshes. These are ordinary outcomes and the player is the
+only person who can fix any of them — so the same inbox carries a message instead of a code (below).
+Silence is the one reply that can't be recovered from: it is indistinguishable from never having
+looked, and the player has no way to tell which it was.
 
-The app can't download a finished robot — it ships inside the update — but it can say the robot is
-here and enter the code for them. Otherwise the only reply channel is the free-text contact field,
-and a typo there orphans a submission for good.
+## Telling a player what happened
 
-When the update carrying their robot goes out, upload a file to `inbox/<uploaderId>.json` in the same
-bucket, where `<uploaderId>` is the folder name their submission arrived under:
+The app can't download a finished robot — it ships inside a new app version — but it can say the
+robot is here and enter the code for them, or explain why it isn't coming. Otherwise the only reply
+channel is the free-text contact field, and a typo there orphans a submission for good.
+
+Upload a file to `inbox/<uploaderId>.json` in the same bucket, where `<uploaderId>` is the folder name
+their submission arrived under. One file, two kinds of item:
 
 ```json
-{ "items": [ { "robotName": "654V Claw", "code": "654V-8213", "message": "" } ] }
+{ "items": [
+    { "robotName": "654V Claw", "code": "654V-8213", "message": "" },
+    { "id": "lift-2026-08", "robotName": "654V Lift",
+      "message": "The arm came in as one solid piece, so nothing can pivot. Re-export with the arm as its own component and send it again." }
+] }
 ```
 
-At the next launch the home screen shows *"654V Claw is ready"* with a button that enters the code.
-Items are ignored when the code is already held or when no robot in that build uses it, so writing
-the file early is harmless — the notice simply appears once the update lands.
+An item **with a code is an arrival**: the home screen shows *"654V Claw is ready"* with a button that
+enters the code. Write it when the version carrying the robot goes out — though writing it early is
+harmless, because an item is ignored while no robot in the installed build uses its code, and the
+notice simply appears once the update lands. It is also ignored once the code is held, which is what
+stops it repeating.
+
+An item with **only a message is a note**: the same banner, the message in full, and a *Got it*
+button. Use it for a robot that couldn't be set up, and for an aside next to one that could ("the
+intake is simplified — the CAD had it as one piece"), which shows under the arrival line.
+
+A note has no code, so nothing about the device changes when it's read and it can't filter itself out
+the way an arrival does. It is remembered instead: by its `id` when it has one, and otherwise by a
+fingerprint of its own text. Two consequences worth knowing —
+
+- **Rewriting a note shows it again.** Correct a message and the player sees the correction. That is
+  the behaviour you want, and it is why `id` is optional.
+- **Give a note an `id` when you want the opposite** — to reword something already read without
+  putting it back on their screen. The id is the key, so the text can change under it freely.
+
+Leave old items in the file. Every one of them is filtered on the device, and the file is also what a
+player re-reads after a reinstall.
 
 The uploader id is the only thing guarding an inbox (the rules above make `/inbox` publicly
-readable), so it is treated as a secret. Players can see and copy theirs under **Settings → Your ID**,
-and paste it back on a new phone with **Restore** — that bearer code is the whole account system.
+readable). It is minted on the first submission and lives only in that device's PlayerPrefs, so a
+reinstall loses it — and that is now allowed to happen. There used to be a **Settings → Your ID**
+section where a player could copy the id and paste it back on a new phone; it was an account system
+standing in for nothing anyone needed. What a player actually carries across a reinstall is the owner
+**code** their finished robot came back as, and **Settings → Account** lists every code they hold
+alongside what it unlocks, so they can re-enter or pass one on.
+
+The practical consequence for you: an inbox notice is a one-shot. If the player reinstalls before
+seeing it, re-send them the code by email instead — and for the same reason, a message about a robot
+that couldn't be set up is worth sending by email as well as by inbox, since it is the one reply the
+player has to act on.
 
 ## Team codes
 

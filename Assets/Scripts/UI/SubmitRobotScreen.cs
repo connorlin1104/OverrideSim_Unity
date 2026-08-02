@@ -43,7 +43,7 @@ public class SubmitRobotScreen : MonoBehaviour
     private string selectedPath;
     private bool sending;
 
-    // Index into RobotUploadService.SharingOptions. Starts at 0, the most private choice.
+    // Index into RobotUploadService.SharingOptions. Starts at 0, the more private of the two.
     private int sharingIndex;
 
     // Device path: the inbox is cycled through rather than shown as a list, because a player almost

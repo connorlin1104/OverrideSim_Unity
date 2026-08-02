@@ -92,11 +92,16 @@ public static class DrivetrainTuning
     //   A SET OF TRACTION WHEELS (0.7 -> 0.56 g) bites. Rubber, a real contact patch, and grip in
     //   every direction, so the motors can hand the ground most of what they have: the same robot
     //   pulls up in 0.08 m and stays put. This is exactly the number the drivetrain shipped with
-    //   before the split, so ticking the box restores the old firm stop — 3.5x shorter.
+    //   before the split — the old firm stop, 3.5x shorter.
     //
     // Both stay under the 0.8 g friction cone, so a stop is always motor-limited (progressive)
-    // rather than traction-limited (an instant skid). The player picks which one applies — see
-    // WheelTypeSettings and RobotMotorController's two brake-fraction fields.
+    // rather than traction-limited (an instant skid).
+    //
+    // ONLY THE OMNI ONE IS LIVE. A Settings checkbox used to let the player declare their wheels and
+    // pick between them; it asked a hardware question that changed the physics and that a player had
+    // no reason to answer correctly, so it is gone and RobotMotorController.BrakeFraction is the omni
+    // number for every robot. The traction constant stays because it is the measured alternative and
+    // DriveFeelValidation still holds the two apart — see the retirement note in RoboSimSettings.
     public const float DefaultOmniBrakeFraction = 0.2f;
     public const float DefaultTractionBrakeFraction = 0.7f;
 

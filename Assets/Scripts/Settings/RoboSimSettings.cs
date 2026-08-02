@@ -115,42 +115,40 @@ public static class DriveFeelSettings
     private const string RetiredSmoothAccelerationKey = "SmoothAcceleration";
     private const string RetiredCoastOnReleaseKey = "DriveCoastOnRelease";
 
+    // "My Robot Has Traction Wheels" joins them. It asked the player a question about their hardware
+    // that the sim cannot read off the model, and answering it wrong changed the physics — so it is
+    // no longer theirs to answer, and RobotMotorController.BrakeFraction is the omni number for
+    // everyone. The wipe matters for the same reason as above: anyone who ticked the box has a 1 on
+    // disk, and there is no longer a control that could untick it.
+    private const string RetiredTractionWheelsKey = "TractionWheels";
+
+    private static readonly string[] RetiredKeys =
+    {
+        RetiredSmoothAccelerationKey, RetiredCoastOnReleaseKey, RetiredTractionWheelsKey,
+    };
+
     public static void ClearRetiredKeys()
     {
-        if (!PlayerPrefs.HasKey(RetiredSmoothAccelerationKey)
-            && !PlayerPrefs.HasKey(RetiredCoastOnReleaseKey)) return;
+        bool any = false;
+        foreach (string key in RetiredKeys) any |= PlayerPrefs.HasKey(key);
+        if (!any) return;
 
-        PlayerPrefs.DeleteKey(RetiredSmoothAccelerationKey);
-        PlayerPrefs.DeleteKey(RetiredCoastOnReleaseKey);
+        foreach (string key in RetiredKeys) PlayerPrefs.DeleteKey(key);
         PlayerPrefs.Save();
     }
 }
 
-// What the robot's wheels are made of — which is the one thing about a drivetrain the sim cannot
-// read off the model. Every wheel is a sphere collider with one friction coefficient, so omni and
-// traction are physically identical in there; only the driver knows which their robot runs.
+// RETIRED: WheelTypeSettings lived here. It stored whether the player's robot ran traction wheels
+// rather than omnis — the one thing about a drivetrain the sim cannot read off the model, since
+// every wheel is a sphere collider with one friction coefficient — and it picked between
+// DrivetrainTuning's two brake fractions.
 //
-// It matters because it decides how hard the motors are allowed to brake. An all-omni drive can't
-// put a hard stop down, so it rolls on when you let go — the drift an all-omni robot really has.
-// A set of traction wheels bites. See DrivetrainTuning's two brake fractions.
-//
-// Deliberately NOT a feel slider, and deliberately not the retired "Coast When You Let Go"
-// checkbox in a new hat: this is a statement about the hardware, and it has one right answer per
-// robot. Snapshotted at Awake with the rest of the drive feel, so it lands on the next Drive.
-public static class WheelTypeSettings
-{
-    public const string TractionWheelsPrefKey = "TractionWheels";
-
-    // Off by default because almost every robot is all-omni; the box is for the minority that
-    // isn't. That also makes the default the drifty one, which is the honest default.
-    public const bool DefaultTractionWheels = false;
-
-    public static bool TractionWheels
-    {
-        get => SettingsPrefs.GetBool(TractionWheelsPrefKey, DefaultTractionWheels);
-        set => SettingsPrefs.SetBool(TractionWheelsPrefKey, value);
-    }
-}
+// It is gone because it was a physics switch dressed as a preference: a player who ticked it (or
+// left it ticked from a robot they no longer drive) got a different stop with no way to tell that
+// was why. Every robot now brakes on the omni number, which is what the box defaulted to and what
+// almost every robot actually runs; DrivetrainTuning keeps both constants and DriveFeelValidation
+// keeps checking their ordering, so putting a per-robot answer back is a small change.
+// DriveFeelSettings.ClearRetiredKeys wipes the stored value.
 
 // Which field scene Drive loads: the full competition field, or the stripped-down "lite" field.
 //
@@ -408,5 +406,83 @@ public static class RobotOwnerSettings
     {
         PlayerPrefs.SetString(CodesPrefKey, JsonUtility.ToJson(list));
         PlayerPrefs.Save(); // flush now so a force-quit doesn't lose an unlock the player just typed
+    }
+}
+
+// Which inbox notices this device has already read.
+//
+// A notice that hands over an owner code needs no memory of its own: once the code is held, the item
+// filters itself out on the next launch. A notice that is only a MESSAGE — "I couldn't get your robot
+// running, here's what went wrong" — leaves no such trace, so without this it would reappear every
+// single launch, forever, with no way to make it stop.
+//
+// Keyed by RobotInboxService.KeyFor, which is the item's own id when it has one and a fingerprint of
+// its text otherwise. Fingerprinting on purpose: rewriting a message SHOULD show it again, because a
+// rewritten message is a new thing to say.
+public static class RobotInboxSettings
+{
+    public const string SeenPrefKey = "SeenInboxNotices";
+
+    [Serializable]
+    private class KeyList
+    {
+        public List<string> keys = new List<string>();
+    }
+
+    public static bool HasSeen(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return false;
+
+        foreach (string seen in Load().keys)
+        {
+            if (seen == key) return true;
+        }
+        return false;
+    }
+
+    // False when the key is blank or already recorded, so a caller can count what it actually did.
+    public static bool MarkSeen(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return false;
+        if (HasSeen(key)) return false;
+
+        KeyList list = Load();
+        list.keys.Add(key);
+        Save(list);
+        return true;
+    }
+
+    public static void Forget()
+    {
+        if (!PlayerPrefs.HasKey(SeenPrefKey)) return;
+
+        PlayerPrefs.DeleteKey(SeenPrefKey);
+        PlayerPrefs.Save();
+    }
+
+    private static KeyList Load()
+    {
+        string json = PlayerPrefs.GetString(SeenPrefKey, string.Empty);
+        if (string.IsNullOrEmpty(json)) return new KeyList();
+
+        try
+        {
+            KeyList list = JsonUtility.FromJson<KeyList>(json);
+            if (list == null) return new KeyList();
+            if (list.keys == null) list.keys = new List<string>();
+            return list;
+        }
+        catch (Exception)
+        {
+            // A corrupt pref re-shows an old notice, which is a far smaller harm than throwing on
+            // the launch path — so start clean rather than propagate.
+            return new KeyList();
+        }
+    }
+
+    private static void Save(KeyList list)
+    {
+        PlayerPrefs.SetString(SeenPrefKey, JsonUtility.ToJson(list));
+        PlayerPrefs.Save();
     }
 }

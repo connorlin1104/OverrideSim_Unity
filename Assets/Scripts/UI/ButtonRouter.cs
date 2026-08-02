@@ -93,12 +93,15 @@ public class ButtonRouter : MonoBehaviour
                     case ControllerMapSettings.ModeReverse:
                         binding.reverse.Add(reference.action);
                         break;
-                    // One-button control: pressing flips the latch on, pressing again flips it off;
-                    // pressing the opposite direction's button switches direction outright rather
-                    // than making the player stop first.
+                    // One-button control: pressing flips the latch on, pressing again flips it off.
                     case ControllerMapSettings.ModeToggle:
                         AddPressHandler(reference.action, () => binding.latch = binding.latch == 1 ? 0 : 1);
                         break;
+                    // Legacy only — the config screen no longer offers a latching reverse (see
+                    // ControllerMapSettings.ModeToggleReverse). Kept so a map saved under the old
+                    // two-function one-button table still drives the robot until the screen prunes
+                    // it; pressing the opposite direction's button switches direction outright
+                    // rather than making the player stop first.
                     case ControllerMapSettings.ModeToggleReverse:
                         AddPressHandler(reference.action, () => binding.latch = binding.latch == -1 ? 0 : -1);
                         break;

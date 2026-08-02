@@ -368,6 +368,12 @@ public static class DriveFeelValidation
     // The wheel-type split — the difference between "the brake is too powerful" and a drivetrain
     // that rolls on the way an all-omni drive really does.
     //
+    // The Settings checkbox that used to choose between these two is gone (see the retirement note
+    // in RoboSimSettings); every robot now brakes on the omni number. Both fractions are still
+    // checked, because both constants are still there and the ordering between them is the whole
+    // reason the shipped one is the drifty one — a retune that swapped them would silently give
+    // every robot the firm stop.
+    //
     // Asserted as ROLL-OUT DISTANCE, not as torque, because distance is the thing the driver
     // actually feels and the only form in which "considerable drift" is a checkable claim. Constant
     // deceleration is the right model here: the brake clamp binds from full speed all the way down
@@ -397,11 +403,12 @@ public static class DriveFeelValidation
         // driver can't use. Verified that way: mutating the fraction AND every pin with it leaves
         // exactly these two standing, and both fire.
         //
-        // The point of the checkbox: it has to change the stop by enough to see. Below ~2x the
-        // player would tick it, feel nothing, and conclude the setting is broken.
+        // The two fractions have to stay far enough apart to mean different things. If they ever
+        // converge, the second one has stopped being an alternative and should be deleted rather
+        // than kept parked.
         ValidationUtil.Assert(omniRollout > tractionRollout * 3f,
             $"the traction-wheel stop ({tractionRollout:0.00} u) must be at least 3x shorter than the " +
-            $"all-omni one ({omniRollout:0.00} u), or the checkbox does nothing a driver can feel");
+            $"all-omni one ({omniRollout:0.00} u), or the two fractions are the same setting twice");
 
         // ...and the other side of it, which is the failure mode of tuning drift by feel: a robot
         // that rolls for two thirds of a metre on a 240 RPM drive has stopped being drifty and
@@ -427,11 +434,7 @@ public static class DriveFeelValidation
             DrivetrainTuning.DefaultOmniBrakeFraction < DrivetrainTuning.DefaultTractionBrakeFraction,
             "omnis must be the weaker brake — they are the default, and they are the drifty one");
 
-        // The checkbox defaults to off, i.e. to omnis, because that is what almost every robot runs.
-        ValidationUtil.Assert(!WheelTypeSettings.DefaultTractionWheels,
-            "the traction-wheels box must default to OFF, so an unconfigured robot drifts like the omnis it has");
-
-        return 10;
+        return 9;
     }
 
     // Distance to a standstill from top speed under a constant brakeG, in world units.
@@ -717,13 +720,20 @@ public static class DriveFeelValidation
                     $"({d.damping:0.###}, expected {expected.damping:0.###}). Run " +
                     "Tools > RoboSim > Robot > Advanced > Apply Drive Tuning (All Prefabs).");
             }
-            // Whichever wheels this robot is declared to run, the stop has to stay motor-limited,
-            // and the traction option has to actually be the firmer one. A prefab that carried a
-            // hand-tuned pair the wrong way round would make the checkbox stop the robot LESS.
+            // What this robot ACTUALLY brakes on. The wheel-type checkbox is gone and BrakeFraction
+            // no longer branches, so this is the line that would catch a traction branch quietly
+            // finding its way back in — every robot ships on the omni number.
+            ValidationUtil.Assert(Mathf.Approximately(motor.BrakeFraction, motor.omniBrakeFraction),
+                $"'{name}' brakes on {motor.BrakeFraction} rather than its Omni Brake Fraction " +
+                $"({motor.omniBrakeFraction}) — the traction fraction is parked, not shipped.");
+
+            // The stop has to stay motor-limited, and the parked traction option has to remain the
+            // firmer of the two: a prefab carrying a hand-tuned pair the wrong way round would make
+            // the alternative stop the robot LESS, which is not an alternative worth keeping.
             ValidationUtil.Assert(motor.omniBrakeFraction < motor.tractionBrakeFraction,
                 $"'{name}' has Omni Brake Fraction ({motor.omniBrakeFraction}) at or above Traction " +
-                $"Brake Fraction ({motor.tractionBrakeFraction}) — ticking 'My Robot Has Traction " +
-                "Wheels' would then make the robot stop more slowly, not faster.");
+                $"Brake Fraction ({motor.tractionBrakeFraction}) — the firm stop is meant to be the " +
+                "firmer one.");
             float mu = DrivetrainTuning.MeasureFriction(wheels);
             ValidationUtil.Assert(motor.tractionBrakeFraction < 1f,
                 $"'{name}': a brake fraction of {motor.tractionBrakeFraction} is at or past the " +
@@ -747,7 +757,7 @@ public static class DriveFeelValidation
                 $"{expected.tractionG:0.00} g friction cone. Raise Plow Fraction (currently " +
                 $"{motor.plowFraction}) or the drivetrain cannot generate a tipping moment.");
 
-            checked_ += 8 + wheels.Count * 2;
+            checked_ += 9 + wheels.Count * 2;
         }
 
         if (checked_ == 0)
