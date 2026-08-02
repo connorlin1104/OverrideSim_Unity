@@ -155,6 +155,16 @@ public class RobotMotorController : MonoBehaviour
              "fighting the 100 Hz step.")]
     public float rollReliefFrequency = 12f;
 
+    [Tooltip("How much of the tyres' grip a wheel may be given while it is being BACK-DRIVEN — " +
+             "commanded slower than it is actually turning, which is the inner wheel of every moving " +
+             "turn. Read as a multiple of the traction limit, like Drive Force Traction Multiple, and " +
+             "capped by it: set it to that value (3) and this does nothing at all. Lower it and the " +
+             "inner wheel stops being able to lock itself against the robot's momentum, which is what " +
+             "makes a moving turn rough — but take it to 1 and the robot cannot yaw at speed at all, " +
+             "because the sim's isotropic wheels have to break lateral grip on every tyre to turn.")]
+    [Range(1f, 3f)]
+    public float backDriveTractionMultiple = DrivetrainTuning.DefaultBackDriveTractionMultiple;
+
     [Header("Load Transfer (visual)")]
     [Tooltip("How far the body leans under acceleration and braking, in degrees at the traction " +
              "limit. VISUAL ONLY — it moves nothing the physics can feel. 0 disables it.")]
@@ -243,6 +253,9 @@ public class RobotMotorController : MonoBehaviour
     // struct writes per step on stick noise.
     private float[] wheelForceLimit = new float[0];
     private float forceLimitEpsilon;
+
+    // The most a back-driven wheel may be given, derived from backDriveTractionMultiple in Initialise.
+    private float backDriveTorque;
 
     // How many entries at the start of allWheels are left-side wheels. Awake fills allWheels left
     // side first, and the braking-quadrant check needs to know which command each wheel was given.
@@ -403,6 +416,15 @@ public class RobotMotorController : MonoBehaviour
         // Mirrors the bake below: every wheel leaves Awake carrying stallTorque, so that is what the
         // change tracker starts from. Half a percent of stall is the noise floor — below it a
         // difference is a drifting stick, not a decision worth a marshalled struct write.
+        // stallTorque is peakForce*radius/wheels and peakForce is tractionForce*multiple, so dividing
+        // by the multiple gives exactly one traction limit's worth of torque at this wheel — which
+        // makes backDriveTractionMultiple read in the same units as the drive one, off the same
+        // measurement, with no second derivation to drift out of step with it.
+        backDriveTorque = Mathf.Min(
+            tuning.stallTorque * backDriveTractionMultiple
+                / Mathf.Max(driveForceTractionMultiple, 1e-3f),
+            tuning.stallTorque);
+
         forceLimitEpsilon = Mathf.Max(tuning.stallTorque * 0.005f, 1e-4f);
         for (int i = 0; i < wheelForceLimit.Length; i++) wheelForceLimit[i] = tuning.stallTorque;
 
@@ -889,10 +911,43 @@ public class RobotMotorController : MonoBehaviour
             DriveAuthority authority = DecideAuthority(commandDegPerSec, spinDegPerSec,
                 movingDegPerSec, turnCommand, TurnAuthorityThreshold);
 
-            SetForceLimit(i, authority == DriveAuthority.Drive
+            float limit = authority == DriveAuthority.Drive
                 ? tuning.stallTorque
                 : BrakeForceLimit(targetDegPerSec, spinDegPerSec, fullStickDegPerSec,
-                    tuning.brakeTorque, tuning.plowTorque));
+                    tuning.brakeTorque, tuning.plowTorque);
+
+            // NO WHEEL GETS MORE FORCE THAN ITS TYRE CAN CARRY WHILE IT IS BEING BACK-DRIVEN.
+            //
+            // Past the traction limit the extra force does not slow the wheel down, it LOCKS it, and
+            // a locked wheel dragged across the floor either skids steadily or breaks and regains
+            // grip every step or two. Both are what a driver calls rough.
+            //
+            // The case this is about is the steering exemption directly above. MixArcade gives the
+            // turn priority, so full throttle with full turn shaves the throttle away entirely and
+            // mixes to 1.0 and 0.0 — the inner side commanded to a DEAD STOP while the robot is
+            // still doing 5-6 u/s. DecideAuthority then exempts it from the braking quadrant because
+            // the turn stick is held, and hands it stallTorque: three times the tyres' grip, to
+            // enforce a stop the robot's own momentum is fighting. Measured on the shipped robots
+            // before this line existed, against the same robot spinning from a standstill:
+            //   654V_v3   28 wheel direction changes -> 75, mean slip 3.62 -> 6.31 u/s
+            //   654V_v1    4 -> 70
+            //   654V_v2    7 -> 1, but mean slip 2.79 -> 6.73 — the steady-skid version of the same
+            //              thing, a wheel locked hard enough that it never gets to snatch at all
+            // which is exactly the report: smooth spinning from rest, rough the moment it is moving.
+            //
+            // This is NOT the old "cap the inner wheel at brakeTorque", which is what gutted moving
+            // turns and is why the exemption was added. plowTorque is the traction limit itself —
+            // several times brakeTorque — so the inner wheel keeps every newton the ground will
+            // actually accept, and loses only the part that was never going anywhere but into
+            // locking it.
+            //
+            // Outside a turn this is a no-op by construction: a back-driven moving wheel is already
+            // on Brake authority, and BrakeForceLimit's ramp tops out at plowTorque.
+            if (Mathf.Abs(spinDegPerSec) > movingDegPerSec
+                && BackDriven(commandDegPerSec, spinDegPerSec))
+                limit = Mathf.Min(limit, backDriveTorque);
+
+            SetForceLimit(i, limit);
         }
     }
 
@@ -996,11 +1051,19 @@ public class RobotMotorController : MonoBehaviour
     {
         if (Mathf.Abs(turnCommand) >= turnThreshold) return DriveAuthority.Drive;
 
-        bool sameDirection = spinDegPerSec * commandDegPerSec > 0f;
-        bool backDriven = !sameDirection
-                          || Mathf.Abs(commandDegPerSec) < Mathf.Abs(spinDegPerSec);
         bool moving = Mathf.Abs(spinDegPerSec) > movingGateDegPerSec;
-        return backDriven && moving ? DriveAuthority.Brake : DriveAuthority.Drive;
+        return BackDriven(commandDegPerSec, spinDegPerSec) && moving
+            ? DriveAuthority.Brake : DriveAuthority.Drive;
+    }
+
+    // The wheel is turning the motor rather than the other way round. One definition, in one place,
+    // because UpdateBrakingQuadrant's traction cap has to agree with the authority decision exactly
+    // — a wheel this said was back-driven and that one did not would get stall torque to enforce a
+    // speed it is being dragged away from, which is the bug the cap exists to stop.
+    public static bool BackDriven(float commandDegPerSec, float spinDegPerSec)
+    {
+        bool sameDirection = spinDegPerSec * commandDegPerSec > 0f;
+        return !sameDirection || Mathf.Abs(commandDegPerSec) < Mathf.Abs(spinDegPerSec);
     }
 
     // How hard a wheel already in the braking quadrant may actually pull.

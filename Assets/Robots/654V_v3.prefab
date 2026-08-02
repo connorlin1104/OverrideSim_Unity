@@ -6308,6 +6308,7 @@ MonoBehaviour:
   omniBrakeFraction: 0.2
   tractionBrakeFraction: 0.7
   plowFraction: 1
+  backDriveTractionMultiple: 2
   rollRelief: 1
   rollReliefFrequency: 12
   inputDeadzone: 0.08

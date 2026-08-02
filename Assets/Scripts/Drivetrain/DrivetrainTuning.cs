@@ -56,6 +56,14 @@ public static class DrivetrainTuning
     // authority at the top, which is how a real drivetrain behaves. See Result.motorLimitedStick.
     public const float DefaultDriveForceTractionMultiple = 3.0f;
 
+    // The same budget, for a wheel that is being BACK-DRIVEN — commanded slower than it is actually
+    // turning, which is the inner wheel of every moving turn. Placeholder equal to the drive multiple
+    // (i.e. no limit at all, the behaviour that shipped) until TurnAuthoritySweepProbe has measured
+    // where between 1 and 3 the turn survives without the inner wheel locking. See
+    // RobotMotorController.backDriveTractionMultiple; 1.0 was measured to stop the robot yawing at
+    // speed entirely, so this is not free to lower.
+    public const float DefaultBackDriveTractionMultiple = DefaultDriveForceTractionMultiple;
+
     // Braking authority as a fraction of the tyres' grip, used whenever the command TRAILS the
     // wheels' spin — an eased-off throttle, the inner wheel of a moving turn, and, with centre-stick
     // as the brake pedal, every release of the sticks. A command that actively opposes the spin is
