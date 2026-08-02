@@ -64,6 +64,14 @@ public class BuildLiteFieldScene
         var report = new StringBuilder();
         Prune(scene, report);
 
+        // Pruning can take the floor out from under a piece. The lite field keeps one pin out of a
+        // stack and deletes the pins it was standing on, so a piece that rested correctly in the
+        // full field is left hanging — measured, PinYellowYellow1 was 85 mm in the air. Settling
+        // has to happen HERE, after the prune and before the save: settling SampleScene cannot fix
+        // it because the drop is created by the prune, and settling LiteScene by hand afterwards
+        // would be undone the next time this tool runs.
+        report.AppendLine(SettleFieldPieces.Settle());
+
         // Save As: the in-memory scene becomes LiteScene and SampleScene.unity on disk is untouched.
         if (!EditorSceneManager.SaveScene(scene, LiteScenePath))
             throw new IOException($"Build Lite Field Scene: failed to save {LiteScenePath}.");
