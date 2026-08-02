@@ -106,6 +106,8 @@ public class HomeScreenController : MonoBehaviour
     [SerializeField] private TMP_Text inboxLabel;
     [Tooltip("Body text under it: a note from the developer, and the whole message when a robot couldn't be set up.")]
     [SerializeField] private TMP_Text inboxMessageLabel;
+    [Tooltip("Sizes the message's scrolling viewport — see ShowInboxNotice. Hidden when there's no message.")]
+    [SerializeField] private LayoutElement inboxMessageViewport;
     [Tooltip("Caption on the notice's button — 'Add it to my list' for an arrival, 'Got it' for a note.")]
     [SerializeField] private TMP_Text inboxActionLabel;
 
@@ -694,8 +696,10 @@ public class HomeScreenController : MonoBehaviour
 
         if (pendingInbox.Count == 0) return;
 
-        ShowInboxNotice();
+        // Visible BEFORE the text is measured: layout doesn't rebuild on an inactive object, so a
+        // message sized while the dialog is hidden measures zero and comes up collapsed.
         SetInboxNoticeVisible(true);
+        ShowInboxNotice();
     }
 
     // The banner says one of two things, and the difference is whether anything can be unlocked.
@@ -732,19 +736,53 @@ public class HomeScreenController : MonoBehaviour
         // Every message in the batch, arrivals included: a note alongside a working robot ("the arm
         // is simplified — the CAD had it as one piece") is worth as much as one about a failure, and
         // until now the field was carried all the way from the JSON and then never shown.
+        //
+        // Each message is prefixed with its robot's name when the batch has more than one, because
+        // two paragraphs of instructions with nothing between them read as one long paragraph about
+        // whichever robot the headline named.
         if (inboxMessageLabel != null)
         {
             var notes = new List<string>();
             foreach (RobotInboxService.Item item in pendingInbox)
             {
-                if (!string.IsNullOrWhiteSpace(item.message)) notes.Add(item.message.Trim());
+                if (string.IsNullOrWhiteSpace(item.message)) continue;
+
+                string body = item.message.Trim();
+                notes.Add(pendingInbox.Count > 1 && !string.IsNullOrWhiteSpace(item.robotName)
+                    ? $"<b>{item.robotName.Trim()}</b>\n{body}"
+                    : body);
             }
             inboxMessageLabel.text = string.Join("\n\n", notes);
-            inboxMessageLabel.gameObject.SetActive(notes.Count > 0);
+            ShowInboxMessage(notes.Count > 0);
         }
 
         if (inboxActionLabel != null)
             inboxActionLabel.text = arrivals > 0 ? "Add it to my list" : "Got it";
+    }
+
+    // How much of a message is shown before it scrolls instead of growing the dialog. The developer
+    // writing it decides its length — a one-line aside and a numbered list of re-export steps are
+    // both legitimate — so the dialog cannot be sized to fit whatever arrives.
+    private const float InboxMessageMaxHeight = 340f;
+
+    private void ShowInboxMessage(bool visible)
+    {
+        if (inboxMessageViewport == null)
+        {
+            // No viewport ref (a scene built before the message scrolled): show the text as-is rather
+            // than hiding a failure explanation because the layout is old.
+            if (inboxMessageLabel != null) inboxMessageLabel.gameObject.SetActive(visible);
+            return;
+        }
+
+        inboxMessageViewport.gameObject.SetActive(visible);
+        if (!visible) return;
+
+        // Measure the text at its real width, then take the smaller of that and the cap: short
+        // messages get exactly their own height with no empty box under them, long ones scroll.
+        var textRect = (RectTransform)inboxMessageLabel.transform;
+        LayoutRebuilder.ForceRebuildLayoutImmediate(textRect);
+        inboxMessageViewport.preferredHeight = Mathf.Min(textRect.rect.height, InboxMessageMaxHeight);
     }
 
     // Wired as a persistent onClick by the Build Home Scene tool. Adds every code the batch handed

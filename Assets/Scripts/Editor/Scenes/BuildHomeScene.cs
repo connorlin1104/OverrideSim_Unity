@@ -190,8 +190,10 @@ public class BuildHomeScene
         // a scene built before the columns scrolled would keep its unbounded lists.
         if (FindDescendantRect(scene, "PublicModelColumnViewport") == null) return false;
         if (FindDescendantRect(scene, "PrivateModelColumnViewport") == null) return false;
-        // The inbox banner carries a developer message now, not just an arrival.
-        if (FindDescendantRect(scene, "InboxMessage") == null) return false;
+        // The inbox notice carries a developer message now, and is a centred dialog rather than the
+        // banner it used to be — a scene built before that has neither of these objects.
+        if (FindDescendantRect(scene, "InboxMessageViewport") == null) return false;
+        if (FindDescendantRect(scene, "InboxPanel") == null) return false;
 
         // Inverted checks: catalog authoring moved out of the game and into
         // Tools > RoboSim > Robot > Model Catalog. While these objects still exist in the committed
@@ -223,7 +225,8 @@ public class BuildHomeScene
                IsRefSet(so, "yourCodesLabel") &&
                IsRefSet(so, "submitRobot") && IsRefSet(so, "uploadConfig") &&
                IsRefSet(so, "inboxNotice") && IsRefSet(so, "inboxLabel") &&
-               IsRefSet(so, "inboxMessageLabel") && IsRefSet(so, "inboxActionLabel") &&
+               IsRefSet(so, "inboxMessageLabel") && IsRefSet(so, "inboxMessageViewport") &&
+               IsRefSet(so, "inboxActionLabel") &&
                IsRefSet(so, "settingsScroll") &&
                IsArrayFilled(so, "settingsTabButtons") && IsArrayFilled(so, "settingsTabPages") &&
                IsRefSet(so, "driveSensitivitySlider") && IsRefSet(so, "turnSensitivitySlider") &&
@@ -710,9 +713,10 @@ public class BuildHomeScene
         so.FindProperty("yourCodesLabel").objectReferenceValue = yourCodesLabel;
         so.FindProperty("uploadConfig").objectReferenceValue =
             AssetDatabase.LoadAssetAtPath<RobotUploadConfig>(UploadConfigPath);
-        so.FindProperty("inboxNotice").objectReferenceValue = inboxParts.panel;
+        so.FindProperty("inboxNotice").objectReferenceValue = inboxParts.overlay;
         so.FindProperty("inboxLabel").objectReferenceValue = inboxParts.label;
         so.FindProperty("inboxMessageLabel").objectReferenceValue = inboxParts.message;
+        so.FindProperty("inboxMessageViewport").objectReferenceValue = inboxParts.messageViewport;
         so.FindProperty("inboxActionLabel").objectReferenceValue = inboxParts.unlockLabel;
 
         // Controller config screen: same root object, wired to the diagram it opens.
@@ -801,32 +805,45 @@ public class BuildHomeScene
 
     private class InboxNoticeParts
     {
-        public GameObject panel;
+        public GameObject overlay;
         public TextMeshProUGUI label;
         public TextMeshProUGUI message;
+        public LayoutElement messageViewport;
         public Button unlockButton;
         public TextMeshProUGUI unlockLabel;
     }
 
-    // A banner above the main panel carrying whatever came back about a submitted robot: that it has
-    // arrived, with a button that enters the owner code — or that it couldn't be set up, and why.
+    // Whatever came back about a submitted robot: that it has arrived, with a button that enters the
+    // owner code — or that it couldn't be set up, and what to change so it can be.
     //
-    // It sits OUTSIDE the main panel rather than as a row inside it: it is hidden almost every launch,
-    // and an empty row inside a fixed-height, middle-aligned layout leaves a visible gap. Built before
-    // the loading overlay so the overlay stays the top-most canvas child.
+    // A DIALOG, not the banner this used to be. The banner was sized for one bold line and sat in the
+    // gap above the main panel; a real message ("the arm came in as one solid piece, so nothing can
+    // pivot — re-export with the arm as its own component") is four or five lines, and a panel that
+    // grows to fit one either walks up into the title or down over the Drive button. Neither is a
+    // layout that can be tuned into working, because the developer writing the message decides its
+    // length. So: centred, dimmed behind, message capped and scrolling, one button out.
+    //
+    // Built before the loading overlay so the overlay stays the top-most canvas child.
     private static InboxNoticeParts BuildInboxNotice(Transform canvas)
     {
         var parts = new InboxNoticeParts();
 
-        GameObject panel = CreatePanel("InboxNotice", canvas, new Vector2(760f, 176f));
-        RectTransform rect = (RectTransform)panel.transform;
-        // Top edge pinned, height driven by the fitter below, so a three-line failure note grows the
-        // banner DOWNWARD over the main panel — which this is drawn on top of anyway — instead of
-        // upward into the title. (176/2 recovers the centre-anchored position this used to have.)
-        rect.pivot = new Vector2(0.5f, 1f);
-        rect.anchoredPosition = new Vector2(0f, 266f + 88f);
-        parts.panel = panel;
-        AddVerticalLayout(panel, 16, 16f);
+        GameObject overlay = CreateUIObject("InboxNotice", canvas);
+        RectTransform overlayRect = (RectTransform)overlay.transform;
+        overlayRect.anchorMin = Vector2.zero;
+        overlayRect.anchorMax = Vector2.one;
+        overlayRect.offsetMin = Vector2.zero;
+        overlayRect.offsetMax = Vector2.zero;
+        // Dimmed rather than opaque: the home screen stays recognisable behind it, so this reads as
+        // something on top of the app instead of a screen the app has moved to. raycastTarget stays
+        // true, which is what stops a tap landing on Drive through the dim.
+        Image scrim = overlay.AddComponent<Image>();
+        scrim.color = new Color(BackgroundColor.r, BackgroundColor.g, BackgroundColor.b, 0.86f);
+        scrim.raycastTarget = true;
+        parts.overlay = overlay;
+
+        GameObject panel = CreatePanel("InboxPanel", overlay.transform, new Vector2(800f, 200f));
+        AddVerticalLayout(panel, 24, 18f);
         ContentSizeFitter panelFitter = panel.AddComponent<ContentSizeFitter>();
         panelFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
@@ -834,13 +851,41 @@ public class BuildHomeScene
         parts.label.fontStyle = FontStyles.Bold;
         SetLayoutHeight(parts.label.gameObject, 56f);
 
-        // A note from the developer: an aside next to an arrival, or the whole point of the notice
-        // when a robot couldn't be set up. NO SetLayoutHeight — TMP reports its own preferred height
-        // once it knows its width, so a two-word note and a four-line explanation both fit exactly.
-        parts.message = CreateText("InboxMessage", panel.transform, string.Empty, 26f);
-        parts.message.alignment = TextAlignmentOptions.Top;
-        parts.message.color = new Color(TextColor.r, TextColor.g, TextColor.b, 0.85f);
-        parts.message.gameObject.SetActive(false); // shown only when there is something to say
+        // The message scrolls inside a capped viewport. Its height is set at runtime from the text's
+        // own preferred height (HomeScreenController.ShowInboxNotice), so a one-line aside takes one
+        // line and a set of re-export instructions takes the cap and scrolls.
+        GameObject messageViewport = CreateUIObject("InboxMessageViewport", panel.transform);
+        Image messageCatcher = messageViewport.AddComponent<Image>();
+        messageCatcher.color = Color.clear;
+        messageCatcher.raycastTarget = true; // else the gaps between lines can't be dragged
+        messageViewport.AddComponent<RectMask2D>();
+        parts.messageViewport = messageViewport.AddComponent<LayoutElement>();
+        parts.messageViewport.flexibleHeight = 0f;
+        parts.messageViewport.preferredHeight = 120f; // authored default; the controller overwrites it
+
+        parts.message = CreateText("InboxMessage", messageViewport.transform, string.Empty, 26f);
+        parts.message.alignment = TextAlignmentOptions.TopLeft;
+        parts.message.color = new Color(TextColor.r, TextColor.g, TextColor.b, 0.88f);
+        RectTransform messageRect = parts.message.rectTransform;
+        messageRect.anchorMin = new Vector2(0f, 1f);
+        messageRect.anchorMax = new Vector2(1f, 1f);
+        messageRect.pivot = new Vector2(0.5f, 1f);
+        messageRect.anchoredPosition = Vector2.zero;
+        messageRect.sizeDelta = Vector2.zero;
+        ContentSizeFitter messageFitter = parts.message.gameObject.AddComponent<ContentSizeFitter>();
+        messageFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        // A plain ScrollRect here, not a NestedScrollRect: this dialog has no scroll view above it to
+        // hand a drag back to.
+        ScrollRect messageScroll = messageViewport.AddComponent<ScrollRect>();
+        messageScroll.horizontal = false;
+        messageScroll.vertical = true;
+        messageScroll.movementType = ScrollRect.MovementType.Clamped;
+        messageScroll.scrollSensitivity = 28f;
+        messageScroll.viewport = (RectTransform)messageViewport.transform;
+        messageScroll.content = messageRect;
+
+        messageViewport.SetActive(false); // shown only when there is something to say
 
         parts.unlockButton = CreateButton("InboxUnlockButton", panel.transform,
             "Add it to my list", 32f, AccentColor);
@@ -848,7 +893,7 @@ public class BuildHomeScene
         // The same button dismisses a note that has no code to add, so its caption is set at runtime.
         parts.unlockLabel = parts.unlockButton.GetComponentInChildren<TextMeshProUGUI>(true);
 
-        panel.SetActive(false); // shown only when the inbox actually has something waiting
+        overlay.SetActive(false); // shown only when the inbox actually has something waiting
         return parts;
     }
 

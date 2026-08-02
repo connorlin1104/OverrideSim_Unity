@@ -58,9 +58,10 @@ So the flow is: player uploads → you set it up in the editor → it ships in t
    `robot.fbx` would be refused.
 
    `{file}` rather than `{file=**}` keeps both folders flat — uploads are always one level under the
-   uid, so nobody has a reason to build a deep tree in the bucket. `SanitizeFileName` maps every
-   character outside `[A-Za-z0-9._-]` to `_`, including `/`, so an upload key can never gain a second
-   level and reach past the single-segment match.
+   per-player folder, so nobody has a reason to build a deep tree in the bucket. `SanitizeFileName`
+   maps every character outside `[A-Za-z0-9._-]` to `_`, including `/`, and the team and robot names
+   that make up the rest of the path go through a stricter filter still, so an upload key can never
+   gain a second level and reach past the single-segment match.
 
 4. In Unity, fill in `Assets/Settings/RobotUploadConfig.asset`:
    - **Storage Bucket** — from the Storage tab, e.g. `overridesim.firebasestorage.app`
@@ -79,10 +80,27 @@ So the flow is: player uploads → you set it up in the editor → it ships in t
 Until the bucket and key are set, the screen still opens and lets a player pick a file, and then says
 submitting isn't switched on yet — it never fails halfway through an upload.
 
-Uploads land as `uploads/<uid>/<filename>` with a `<filename>.json` sidecar next to it holding the
-team, robot name, contact, notes, **who the uploader wants to be able to use it**, app version and
-timestamp. Firebase does not notify you on its own; either check the Storage tab or add a Cloud
-Function on finalize to email yourself.
+Uploads land as `uploads/<TEAM>_<uploaderId>/<Robot>-<filename>`, with a `<...>.json` sidecar next to
+each one holding the team, robot name, contact, notes, **who the uploader wants to be able to use
+it**, app version and timestamp. Firebase does not notify you on its own; either check the Storage
+tab or add a Cloud Function on finalize to email yourself.
+
+The folder used to be the bare uploader id, which is a 28-character random string: a listing of
+twenty of them says nothing about whose robot any of them is, so every one had to be opened to find
+out. The team goes first so the listing sorts by team and a team's submissions sit together — but the
+id stays on the end, because it is what actually groups a player's uploads (a team name is typed
+fresh each time and two people can both write "654V"), and because it is the key their inbox is
+written under, so you can reply without opening the sidecar. **The id is everything after the LAST
+underscore**: the team is upper-cased and every non-alphanumeric character in it becomes `-`, so `_`
+appears exactly once. `NOTEAM_<id>` is what you get when the team field was left blank.
+
+The file carries the robot name for the same reason — a team that sends three robots would otherwise
+get three files called `export.fbx` and the last would silently replace the other two. Re-sending the
+*same* robot still overwrites, which is intended: a player who fixes their CAD is replacing what they
+sent, not adding to it.
+
+Submissions made before this change sit under a bare-id folder. Nothing migrates them and nothing
+needs to — the id is still in the name, and the sidecar still says whose it is.
 
 ## What it can cost, and capping it
 

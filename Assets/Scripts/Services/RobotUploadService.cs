@@ -131,8 +131,8 @@ public static class RobotUploadService
 
         // Keep the first uid we're ever given and keep USING it, rather than the uid this particular
         // sign-in returned. Anonymous sign-up mints a new uid every call, so the stored one is the only
-        // stable handle a player has — it names their upload folder, it is what their inbox is keyed
-        // on, and it is what a restore on a new device brings back.
+        // stable handle a player has — it ends their upload folder name and it is what their inbox is
+        // keyed on.
         string storedUid = PlayerPrefs.GetString(UploaderIdPrefKey, string.Empty);
         if (string.IsNullOrEmpty(storedUid))
         {
@@ -145,8 +145,12 @@ public static class RobotUploadService
         onProgress?.Invoke(0.05f);
 
         // --- 2. the model itself ---
-        string folder = $"uploads/{storedUid}";
-        string modelPath = $"{folder}/{SanitizeFileName(info.fileName)}";
+        // uploads/<TEAM>_<uploaderId>/<Robot>-<file> — see UploadFolderName. Flat, two segments under
+        // uploads/, because storage.rules matches exactly `uploads/{folder}/{file}` and a third
+        // segment would match no rule at all and be refused.
+        string folder = $"uploads/{UploadFolderName(info.teamName, storedUid)}";
+        string objectName = UploadFileName(info.robotName, info.fileName);
+        string modelPath = $"{folder}/{objectName}";
         using (UnityWebRequest upload = new UnityWebRequest(
                    string.Format(StorageUrl, config.storageBucket, UnityWebRequest.EscapeURL(modelPath)),
                    UnityWebRequest.kHttpVerbPOST))
@@ -173,7 +177,7 @@ public static class RobotUploadService
         onProgress?.Invoke(0.95f);
 
         // --- 3. the sidecar describing it (best effort: the model is already safely up) ---
-        string metaPath = $"{folder}/{SanitizeFileName(info.fileName)}.json";
+        string metaPath = $"{modelPath}.json";
         byte[] metaBytes = Encoding.UTF8.GetBytes(JsonUtility.ToJson(info, true));
         using (UnityWebRequest meta = new UnityWebRequest(
                    string.Format(StorageUrl, config.storageBucket, UnityWebRequest.EscapeURL(metaPath)),
@@ -232,6 +236,81 @@ public static class RobotUploadService
         if (bytes >= 1024L * 1024L) return $"{bytes / (1024f * 1024f):F0} MB";
         if (bytes >= 1024L) return $"{bytes / 1024f:F0} KB";
         return $"{bytes} bytes";
+    }
+
+    // The folder a submission lands in: the team the player typed, then their uploader id.
+    //
+    // The id alone is what this used to be, and it is unreadable — a Storage console listing of
+    // twenty 28-character random strings tells you nothing about whose robot any of them is, so
+    // every single one has to be opened to find out. The team goes first so the listing sorts by
+    // team and a team's submissions sit together.
+    //
+    // The id stays, on the end, for two reasons. It is what actually groups one player's uploads (a
+    // team name is typed fresh each time and is unfalsifiable — two people can both write "654V"),
+    // and it is the key their inbox is written under, so having it in the folder name means the
+    // reply can be addressed without opening the sidecar.
+    //
+    // '_' is the separator and is the ONE character the sanitized team can't contain, so the id is
+    // always everything after the LAST underscore, whatever the player typed.
+    public static string UploadFolderName(string teamName, string uploaderId)
+    {
+        string team = SanitizeTeamName(teamName);
+        if (string.IsNullOrWhiteSpace(uploaderId)) return team;
+
+        // Fold '_' out of the id as well, so "everything after the last underscore is the id" holds
+        // no matter what a future id format contains.
+        var id = new StringBuilder(uploaderId.Length);
+        foreach (char c in uploaderId.Trim())
+        {
+            if (char.IsLetterOrDigit(c) || c == '-') id.Append(c);
+            else if (c == '_') id.Append('-');
+        }
+        return id.Length == 0 ? team : $"{team}_{id}";
+    }
+
+    // The object name inside that folder. The team is on the folder, so this carries the ROBOT: a
+    // team that sends three of them otherwise gets three files called export.fbx, and the last one
+    // silently replaces the other two.
+    //
+    // Re-sending the same robot still overwrites, which is deliberate — a player who fixes their CAD
+    // and sends it again should replace what they sent, not accumulate.
+    public static string UploadFileName(string robotName, string fileName)
+    {
+        string file = SanitizeFileName(fileName);
+        string robot = SanitizeLabel(robotName);
+        if (robot.Length == 0) return file;
+        // Don't stutter when the player named the robot after the file, which is the common case —
+        // SubmitRobotScreen pre-fills the name from the file it picked.
+        if (file.ToUpperInvariant().StartsWith(robot)) return file;
+
+        return $"{robot}-{file}";
+    }
+
+    private const int MaxLabelLength = 24;
+    private const string NoTeamLabel = "NOTEAM";
+
+    private static string SanitizeTeamName(string name)
+    {
+        string cleaned = SanitizeLabel(name);
+        return cleaned.Length == 0 ? NoTeamLabel : cleaned;
+    }
+
+    // A player-typed word made safe to put in an object name: upper-cased so "654v" and "654V" list
+    // together, everything else folded to '-' so '_' can never be mistaken for the folder separator,
+    // and truncated because these fields are free text and someone will paste a sentence into one.
+    // Empty for a blank input — callers decide what a missing value should read as.
+    private static string SanitizeLabel(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return string.Empty;
+
+        var sb = new StringBuilder(name.Length);
+        foreach (char c in name.Trim().ToUpperInvariant())
+        {
+            if (char.IsLetterOrDigit(c)) sb.Append(c);
+            else if (sb.Length > 0 && sb[sb.Length - 1] != '-') sb.Append('-');
+            if (sb.Length >= MaxLabelLength) break;
+        }
+        return sb.ToString().Trim('-');
     }
 
     // Storage object names are a flat string, so a stray slash would silently create a subfolder and

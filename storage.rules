@@ -1,7 +1,13 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    match /uploads/{uid}/{file} {
+    // uploads/<TEAM>_<uploaderId>/<Robot>-<file>. The folder is named for readability in the Storage
+    // console; nothing here checks it, and nothing can — anonymous sign-up mints a new uid on every
+    // call, so the signed-in uid never matches the stored one a player's folder is named after.
+    // Treat /uploads as untrusted input, which it is anyway, being arbitrary player files.
+    //
+    // Exactly two segments: a third would match no rule at all and be refused.
+    match /uploads/{folder}/{file} {
       allow write: if request.auth != null
                    && request.resource.size < 250 * 1024 * 1024;
       allow read: if false;

@@ -67,6 +67,7 @@ public static class RobotInboxValidation
             CheckKeys(checks);
             CheckSeenMemory(checks);
             CheckParsing(checks);
+            CheckUploadPaths(checks);
         }
         finally
         {
@@ -213,5 +214,53 @@ public static class RobotInboxValidation
             "{\"items\":[{\"robotName\":\"654V Claw\",\"code\":\"654V-8213\",\"message\":\"\"}]}");
         checks.That(old != null && old.items.Count == 1 && RobotInboxService.IsArrival(old.items[0]),
             "An inbox file written before the `id` field stopped parsing.");
+    }
+
+    // The Storage path a submission lands at. Two properties have to hold, and both fail silently:
+    // the path must stay TWO segments under uploads/ (storage.rules matches exactly that, so a third
+    // segment is refused with a 403 the player sees as "the upload failed"), and the uploader id must
+    // still be recoverable from the folder name, since that is what the reply is addressed to.
+    private const string Uid = "aB3dEfGhIjKlMnOpQrStUvWxYz12";
+
+    private static void CheckUploadPaths(Checks checks)
+    {
+        string folder = RobotUploadService.UploadFolderName("654V", Uid);
+        checks.That(folder == "654V_" + Uid, $"An ordinary team folder is wrong: '{folder}'.");
+
+        // The rule that makes the id recoverable: the team contributes no underscore, ever, so the
+        // last one is always the separator. Test the shapes that would break it.
+        string[] awkward = { "654V", "654 V", "654_V", "654-V", "Team 654V!!", "  654v  ", "654/V" };
+        foreach (string team in awkward)
+        {
+            string name = RobotUploadService.UploadFolderName(team, Uid);
+            int split = name.LastIndexOf('_');
+            checks.That(split >= 0 && name.Substring(split + 1) == Uid,
+                $"The uploader id is not recoverable from '{name}' (team '{team}').");
+            checks.That(name.IndexOf('_') == split,
+                $"Team '{team}' put a second underscore in the folder name '{name}'.");
+            checks.That(name.IndexOf('/') < 0, $"Team '{team}' put a '/' in the folder name '{name}'.");
+        }
+
+        // A blank team still produces a usable, id-bearing folder rather than one starting with '_'.
+        string noTeam = RobotUploadService.UploadFolderName("   ", Uid);
+        checks.That(noTeam == "NOTEAM_" + Uid, $"A blank team gave '{noTeam}'.");
+
+        // Free text: someone will paste a sentence in. It must be cut, not carried.
+        string longTeam = RobotUploadService.UploadFolderName(
+            "The Best Robotics Team In The Entire World 654V", Uid);
+        checks.That(longTeam.LastIndexOf('_') <= 24,
+            $"A pasted sentence was not truncated: '{longTeam}'.");
+        checks.That(longTeam.EndsWith("_" + Uid), "Truncation ate the uploader id.");
+
+        // The file carries the robot so three robots from one team aren't three export.fbx.
+        checks.That(RobotUploadService.UploadFileName("Claw Bot", "export.fbx") == "CLAW-BOT-export.fbx",
+            "The robot name is not prefixed onto the file.");
+        checks.That(RobotUploadService.UploadFileName("", "export.fbx") == "export.fbx",
+            "A blank robot name still altered the file name.");
+        // No stutter when the name came from the file, which is what Select() pre-fills.
+        checks.That(RobotUploadService.UploadFileName("Claw", "claw.fbx") == "claw.fbx",
+            "A robot named after its file got the name twice.");
+        checks.That(RobotUploadService.UploadFileName("Claw/../..", "a/b.fbx").IndexOf('/') < 0,
+            "A '/' survived into the object name, which would add a path segment.");
     }
 }
