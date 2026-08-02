@@ -23,9 +23,15 @@ using UnityEngine.SceneManagement;
 // by. It reads as "the bot gets stuck inside the goal", and it shows up on a robot whose aligner/bumper
 // is RETRACTED, because an extended one holds the frame off the goal and it never reaches the shell.
 //
-// The fix is entirely in the collider sizes: thicken the ring panels so depenetration has a direction,
-// and widen them so neighbours cross at the corners and the ring closes. Nothing visible changes — these
-// colliders have no renderer; the goal you SEE is the MeshInstance children next to them.
+// The fix is in the collider sizes AND where the box sits inside its transform: thicken the ring panels
+// so depenetration has a direction, widen them so neighbours cross at the corners and the ring closes,
+// and offset each box INWARD by half the added thickness so its outer face does not move.
+//
+// That last part was missed on the first pass and is worth stating plainly, because "these colliders
+// have no renderer, so nothing visible changes" is only true if the surface stays put. A BoxCollider
+// grows about its centre and the generator puts that centre on the tuned radius, so thickening alone
+// pushed the face a robot touches 0.045 units proud of the goal you can SEE — 6% of a 0.705-unit
+// stake's radius. The goal collided bigger than it looked. See GoalShellSpec.RingPanelCenter.
 //
 // FieldSetupTools now generates goals this way. This tool retro-fits the goals already saved in the
 // scenes, so nobody has to re-run the interactive goal builder and re-enter its tuned radii. Idempotent:
@@ -87,6 +93,11 @@ public static class SealGoalShell
         alreadyOk = 0;
         skipped = 0;
 
+        // Panels are fitted against their NEIGHBOURS, so they have to be handled a ring at a time
+        // rather than one at a time. A ring is the set of same-prefix siblings under one goal, in
+        // index order — `GoalWall_Outer_Octagon_0..7` under this goal is one, the lower base another.
+        var rings = new Dictionary<string, SortedList<int, BoxCollider>>();
+
         foreach (GameObject root in scene.GetRootGameObjects())
         {
             foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
@@ -98,7 +109,7 @@ public static class SealGoalShell
                 Vector3 size = box.size;
 
                 // The generator writes (width, thickness, height) — thickness on Y, and by a long way the
-                // smallest axis. Anything else is a hand-edited or renamed collider, and widening the
+                // smallest axis. Anything else is a hand-edited or renamed collider, and resizing the
                 // wrong axis of one would push a wall through the goal it belongs to.
                 if (size.y > size.x || size.y > size.z)
                 {
@@ -109,13 +120,46 @@ public static class SealGoalShell
                     continue;
                 }
 
-                if (size.y >= GoalShellSpec.RingThickness - GoalShellSpec.Epsilon) { alreadyOk++; continue; }
+                if (!GoalShellSpec.TrySplitPanelName(t.name, out string prefix, out int index))
+                {
+                    Debug.LogWarning($"Seal Goal Shells: '{t.name}' has no trailing _index, so it cannot be " +
+                                     "placed in a ring and its corners cannot be fitted. Left alone.", t);
+                    skipped++;
+                    continue;
+                }
 
+                // Two goals in a scene both have a 'GoalWall_Outer_Octagon_3'. Key on the parent's
+                // instance id as well, or every goal's panels land in one bucket and each is fitted
+                // against a neighbour from a different goal entirely.
+                string key = (t.parent != null ? t.parent.GetEntityId().ToString() : "-") + "/" + prefix;
+                if (!rings.TryGetValue(key, out SortedList<int, BoxCollider> ring))
+                    rings[key] = ring = new SortedList<int, BoxCollider>();
+                ring[index] = box;
+            }
+        }
+
+        foreach (SortedList<int, BoxCollider> ring in rings.Values)
+        {
+            var panels = new List<BoxCollider>(ring.Values);
+
+            // Thickness and the inward offset first: FitRingWidths reads each neighbour's outer
+            // FACE, which is where its centre is plus half its thickness. Fit before setting those
+            // and every panel is fitted against where its neighbour used to be.
+            foreach (BoxCollider box in panels)
+            {
+                if (GoalShellSpec.IsPanelAtSpec(box)) { alreadyOk++; continue; }
                 Undo.RecordObject(box, "Seal Goal Shell");
-                box.size = new Vector3(size.x + GoalShellSpec.CornerOverlap, GoalShellSpec.RingThickness, size.z);
+                box.size = new Vector3(box.size.x, GoalShellSpec.RingThickness, box.size.z);
+                box.center = GoalShellSpec.RingPanelCenter;
                 EditorUtility.SetDirty(box);
                 changed++;
             }
+
+            changed += GoalShellSpec.FitRingWidths(panels, box =>
+            {
+                Undo.RecordObject(box, "Seal Goal Shell");
+                EditorUtility.SetDirty(box);
+            });
         }
         return changed;
     }
@@ -131,11 +175,193 @@ internal static class GoalShellSpec
     // push a penetrating robot part back out of.
     public const float RingThickness = 0.1f;
 
-    // Added to each ring panel's WIDTH so neighbouring panels overlap at the octagon's corners instead of
-    // leaving a slot. The shipped goals' corner gaps measure ~0.125 units and close at +0.15; +0.2 keeps
-    // margin for goals regenerated at other radii. It only spreads panels along the ring, so the goal's
-    // footprint is unchanged apart from a little extra material buried in each corner.
-    public const float CornerOverlap = 0.2f;
+    // What the panels were before any of this. Kept as a named constant because the offset below is
+    // derived from it, and because GoalShellValidation builds its "reproduce the bug" fixture at
+    // exactly this thickness — one number, one place.
+    public const float LegacyRingThickness = 0.01f;
+
+    // WHERE THE EXTRA THICKNESS GOES, and the thing that was missed the first time.
+    //
+    // A BoxCollider grows symmetrically about its centre, and the generator puts a panel's centre ON
+    // the tuned radius: it rotates the wall by i*45 degrees and then steps out along its own local
+    // +Y by that vertex's radius, so local +Y is the panel's OUTWARD normal (verified against the
+    // shipped scene: up . outward = 1.0000 on all eight panels of every ring).
+    //
+    // So thickening from 0.01 to 0.1 about an unmoved centre pushed the OUTER face — the one a robot
+    // actually touches — 0.045 units further out. The header above claims "nothing visible changes",
+    // and on a 0.705-unit stake that claim was wrong by 6%: the collision shell stood proud of the
+    // goal you can see, and a robot stopped 4.5 mm short of touching it.
+    //
+    // Offsetting the box inward by half the increase puts the outer face back exactly where the old
+    // thin panel's outer face was, so sealing genuinely does not move the surface. All the new
+    // material goes INWARD, into the goal's interior, where nothing but the robot part this was
+    // meant to push back out ever is. It also slightly INCREASES the corner overlap the seal exists
+    // for (the ring gets marginally smaller while the panels keep their width), so this cannot
+    // reopen what CornerOverlap closed — measured: worst corner margin -0.088 -> -0.107.
+    public static readonly Vector3 RingPanelCenter =
+        new Vector3(0f, -(RingThickness - LegacyRingThickness) * 0.5f, 0f);
+
+    // How far past the corner seam a panel end is allowed to stand once it has been fitted. Small,
+    // and only there so a float rounding error cannot reopen the slot the fit just closed.
+    //
+    // THIS REPLACES A BLANKET +0.2 ON EVERY PANEL'S WIDTH, which is what made the collision shell
+    // stand proud of the goal you can see. Eight flat panels on an octagon need each one WIDER than
+    // its edge to meet at the vertices — but how much wider is a different number for every ring,
+    // and adding one constant to all of them overshoots wherever the ring is already nearly closed.
+    // Measured on the shipped Neutral goals (cardinal radius 0.705, diagonal 0.785): the cardinal
+    // panels need +0.015 of width to reach the corner and were being given +0.2, leaving each end
+    // 0.093 units — 9.3 mm — outside the octagon, at all eight corners, on every goal. That is the
+    // "one axis scaled too much so it pokes out the sides and the bottom is wrong".
+    //
+    // FitRingWidths computes the real number per panel instead. See it for why this is done against
+    // the neighbours' actual planes rather than from the radii.
+    //
+    // WHY IT IS 0.06 AND NOT SMALLER. Each panel end gets HALF of this (the seal is added to a
+    // width, which grows both ends), so the seam overlap is CornerSeal/2 — and at 0.02 that came out
+    // at exactly 0.01 units, which is m_DefaultContactOffset to the digit. A corner whose overlap
+    // equals the contact offset is a corner PhysX has no material to work with at: the panels meet,
+    // measurably, and a robot arriving at 8 u/s still finds nothing there. 0.06 puts three contact
+    // offsets of real wall in every seam while still standing only 3 mm proud of the visible goal,
+    // against the 9.3 mm the old blanket +0.2 produced.
+    public const float CornerSeal = 0.06f;
+
+    // A panel narrower than twice the wall's thickness is a sliver, not a wall. Used only as the
+    // "this ring's radii are inconsistent" tripwire in FitRingWidths.
+    public const float MinPanelWidth = RingThickness * 2f;
+
+    // Fit every panel in one ring so its ends land exactly on its neighbours' OUTER faces.
+    //
+    // Against the neighbours' real transforms, not the tuned radii, for two reasons. The radii are
+    // arguments to a builder window that nobody re-enters — the shipped goals are scene objects and
+    // the numbers that made them are gone. And the Alliance goals' diagonal panels carry an 18-degree
+    // tilt (FieldSetupTools, outerDiagTilt), so their faces are not vertical and there is no single
+    // radius that describes where the seam is: it moves with height. Reading the planes handles the
+    // tilted case for free, which an analytic octagon formula does not.
+    //
+    // The result depends only on where the neighbours' outer FACES are, and widening a panel does not
+    // move its own outer face — so this is idempotent by construction. That retires the "only widen a
+    // panel that is still thin" special case the additive version needed, which was itself a guard
+    // against the goal's footprint growing by 0.2 every time anyone ran the repair.
+    //
+    // `ring` must be in index order and is treated as a closed loop.
+    public static int FitRingWidths(IList<BoxCollider> ring, System.Action<BoxCollider> beforeChange = null)
+    {
+        if (ring == null || ring.Count < 3) return 0;
+
+        // Fit at each panel's MID-HEIGHT first, then escalate only the corners that are still open.
+        //
+        // On an untilted ring the seam is a vertical line and the two are the same number. On the
+        // Alliance goals' upper ring the diagonals are tilted 18 degrees (FieldSetupTools,
+        // outerDiagTilt), so the seam slopes and the reach at the panel's bottom edge is far longer
+        // than at its top: fitting every panel to the worst edge took the shipped Alliance cardinals
+        // from 0.7 to 1.22 units, which is a bigger overhang than the blanket constant this replaces.
+        // Fit to the middle, then let the closure check below buy back only what is actually needed.
+        int changed = 0;
+        for (int i = 0; i < ring.Count; i++)
+            changed += FitOne(ring, i, atEdges: false, beforeChange);
+
+        // Anything still open gets the full-height fit. `ring` is a closed loop, so pair i with i+1.
+        for (int i = 0; i < ring.Count; i++)
+        {
+            BoxCollider a = ring[i], b = ring[(i + 1) % ring.Count];
+            if (a == null || b == null) continue;
+            if (Physics.ComputePenetration(a, a.transform.position, a.transform.rotation,
+                    b, b.transform.position, b.transform.rotation, out _, out _)) continue;
+
+            changed += FitOne(ring, i, atEdges: true, beforeChange);
+            changed += FitOne(ring, (i + 1) % ring.Count, atEdges: true, beforeChange);
+        }
+        return changed;
+    }
+
+    private static int FitOne(IList<BoxCollider> ring, int i, bool atEdges,
+        System.Action<BoxCollider> beforeChange)
+    {
+        {
+            BoxCollider panel = ring[i];
+            if (panel == null) return 0;
+
+            float half = 0f;
+            foreach (int step in new[] { -1, 1 })
+            {
+                BoxCollider neighbour = ring[(i + step + ring.Count) % ring.Count];
+                if (neighbour == null) continue;
+                half = Mathf.Max(half, ReachTo(panel, neighbour, atEdges));
+            }
+            if (half <= 0f) return 0;
+
+            float width = 2f * half + CornerSeal;
+
+            // A RING WHOSE RADII DO NOT DESCRIBE A CONSISTENT OCTAGON. The Alliance goals' upper ring
+            // puts its diagonal faces at 0.62 against cardinals at 0.45 — 1.38x, where a regular
+            // octagon is 1.08 — so the two cardinal planes very nearly meet each other and the
+            // diagonal between them is fitted down to 0.037, thinner than the wall is thick. The fit
+            // is right; the shape is the problem. Shrinking to it would pull the collision surface
+            // well inside the diagonal face a robot can see and let it clip the visible corner, which
+            // is a worse failure than the overhang this exists to remove. Leave those alone and say so.
+            if (width < MinPanelWidth && width < panel.size.x)
+            {
+                Debug.LogWarning($"Seal Goal Shells: '{panel.name}' fits its neighbours at only " +
+                                 $"{width:0.000} units wide (under {MinPanelWidth}), because this ring's " +
+                                 "cardinal and diagonal radii do not describe a consistent octagon — its " +
+                                 "neighbours' planes cross before they reach it. Left at its current " +
+                                 $"{panel.size.x:0.000}; its corners stay sealed, but they overhang.", panel);
+                return 0;
+            }
+
+            if (Mathf.Abs(panel.size.x - width) <= Epsilon) return 0;
+            // The escalation pass only ever grows a panel. Without this it would happily SHRINK one
+            // whose mid-height fit was already wider than its edge fit, reopening what it was called
+            // to close.
+            if (atEdges && width < panel.size.x) return 0;
+
+            beforeChange?.Invoke(panel);
+            panel.size = new Vector3(width, panel.size.y, panel.size.z);
+            return 1;
+        }
+    }
+
+    // The half-width `panel` needs for its end to reach `neighbour`'s outer face plane.
+    //
+    // Sampled on the panel's OUTER edge specifically, and that is what bounds the protrusion: there
+    // the end lands exactly ON the neighbour's outer plane, and every point deeper into the wall
+    // lands INSIDE it, which is overlap rather than overhang.
+    //
+    // `atEdges` picks the height. A vertical seam gives the same answer everywhere, so it only
+    // matters for the Alliance goals' 18-degree diagonals, where the seam slopes and the two ends of
+    // the panel want very different widths. Mid-height is the default because the worst edge
+    // over-widens badly (0.7 -> 1.22 on the shipped Alliance cardinals); the edges are used only to
+    // buy back a corner that mid-height left open. See FitRingWidths.
+    private static float ReachTo(BoxCollider panel, BoxCollider neighbour, bool atEdges)
+    {
+        Transform p = panel.transform, q = neighbour.transform;
+
+        // Local +Y is the outward normal on both — the generator steps each panel out along its own
+        // +Y by the tuned radius (verified against the shipped scene: up . outward = 1.0000).
+        Vector3 outward = q.TransformDirection(Vector3.up).normalized;
+        Vector3 onNeighbourFace = q.TransformPoint(neighbour.center + Vector3.up * (neighbour.size.y * 0.5f));
+
+        Vector3 along = p.TransformDirection(Vector3.right).normalized;
+        float denominator = Vector3.Dot(along, outward);
+        if (Mathf.Abs(denominator) < 1e-4f) return 0f;   // parallel: no corner between these two
+
+        float outerY = panel.center.y + panel.size.y * 0.5f;
+        float half = panel.size.z * 0.5f;
+        float reach = 0f;
+        foreach (float edgeZ in atEdges ? new[] { -half, half } : new[] { 0f })
+        {
+            Vector3 basePoint = p.TransformPoint(new Vector3(panel.center.x, outerY, panel.center.z + edgeZ));
+            float x = Vector3.Dot(onNeighbourFace - basePoint, outward) / denominator;
+            reach = Mathf.Max(reach, Mathf.Abs(x));
+        }
+        return reach;
+    }
+
+    // How far `panel`'s end stands OUTSIDE `neighbour`'s outer face plane — the overhang the fit
+    // exists to remove. Negative means the end stops short of the plane (a gap in the ring).
+    // Shared with GoalShellValidation so the check and the repair cannot disagree about the number.
+    public static float CornerOverhang(BoxCollider panel, BoxCollider neighbour)
+        => panel == null || neighbour == null ? 0f : panel.size.x * 0.5f - ReachTo(panel, neighbour, false);
 
     // The inner pocket keeps the original thin panels — see the header for why.
     public const float PocketThickness = 0.01f;
@@ -145,4 +371,30 @@ internal static class GoalShellSpec
     // The two shells a ROBOT can hit. The inner pocket is not one of them.
     public static bool IsRingWall(string objectName) =>
         objectName.StartsWith("GoalWall_Outer_Octagon") || objectName.StartsWith("GoalWall_Lower_Base_Octagon");
+
+    // 'GoalWall_Outer_Octagon_5' -> ("GoalWall_Outer_Octagon", 5). The index is what orders a ring,
+    // and the order is what decides which two panels are a given panel's neighbours.
+    public static bool TrySplitPanelName(string objectName, out string prefix, out int index)
+    {
+        prefix = objectName;
+        index = -1;
+        if (string.IsNullOrEmpty(objectName)) return false;
+
+        int underscore = objectName.LastIndexOf('_');
+        if (underscore <= 0 || underscore == objectName.Length - 1) return false;
+        if (!int.TryParse(objectName.Substring(underscore + 1), out index)) return false;
+
+        prefix = objectName.Substring(0, underscore);
+        return true;
+    }
+
+    // A panel is sealed only if it is BOTH thick enough and offset inward. Shared by the repair (as
+    // its idempotency marker) and the validator (as its per-panel check), because a panel that is
+    // thick but not offset is exactly the half-done state the first pass of this work shipped — and
+    // if the two disagreed about it, the repair would report "already at spec" on precisely the
+    // panels the validator was failing.
+    public static bool IsPanelAtSpec(BoxCollider box) =>
+        box != null
+        && box.size.y >= RingThickness - Epsilon
+        && (box.center - RingPanelCenter).sqrMagnitude <= Epsilon * Epsilon;
 }

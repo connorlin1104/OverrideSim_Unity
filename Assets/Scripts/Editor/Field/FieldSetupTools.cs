@@ -306,7 +306,14 @@ public class FixGoals : EditorWindow
             // CornerOverlap widens each panel until neighbours cross at the corners and the ring is
             // closed. See GoalShellValidation, which fails on any ring that still has a gap.
             float wallThickness = GoalShellSpec.RingThickness;
-            float cornerOverlap = GoalShellSpec.CornerOverlap;
+
+            // Each ring's panels are collected as they are built and fitted together at the end:
+            // how much wider than its edge a panel has to be to reach the corner depends on where
+            // its NEIGHBOURS are, so it cannot be decided while building one panel in isolation.
+            // See GoalShellSpec.FitRingWidths — a flat constant here is what left every corner
+            // standing ~9 mm outside the goal's own silhouette.
+            var outerRing = new List<BoxCollider>();
+            var lowerRing = new List<BoxCollider>();
 
             // The INNER POCKET is deliberately left alone. Its six panels already meet, nothing but game
             // pieces ever touches them, and thickening them would eat into the pocket the stack sits in —
@@ -349,8 +356,15 @@ public class FixGoals : EditorWindow
                 BoxCollider box = wall.AddComponent<BoxCollider>();
                 float currentWidth = isCardinal ? cardWidth : diagWidth;
 
-                box.size = new Vector3(currentWidth + cornerOverlap, wallThickness, outerHeight);
+                box.size = new Vector3(currentWidth, wallThickness, outerHeight);
+                // The Translate above stepped out along local +Y, so +Y is this panel's OUTWARD
+                // normal and the tuned radius is where its CENTRE now sits. Offsetting the box
+                // inward by half the added thickness keeps its outer face on that radius instead of
+                // standing the shell proud of the goal you can see. See GoalShellSpec.
+                box.center = GoalShellSpec.RingPanelCenter;
+                outerRing.Add(box);
             }
+            GoalShellSpec.FitRingWidths(outerRing);
 
             // ===================================================================
             // STEP 2B: LOWER BASE RIM GENERATION (8 PIECES - UNTILTED)
@@ -378,8 +392,11 @@ public class FixGoals : EditorWindow
                     BoxCollider box = wall.AddComponent<BoxCollider>();
                     float currentWidth = isCardinal ? lowerCardWidth : lowerDiagWidth;
 
-                    box.size = new Vector3(currentWidth + cornerOverlap, wallThickness, lowerHeight);
+                    box.size = new Vector3(currentWidth, wallThickness, lowerHeight);
+                    box.center = GoalShellSpec.RingPanelCenter;   // see the outer ring above
+                    lowerRing.Add(box);
                 }
+                GoalShellSpec.FitRingWidths(lowerRing);
             }
 
             // ===================================================================

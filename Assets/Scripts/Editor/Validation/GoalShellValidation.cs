@@ -39,7 +39,15 @@ public static class GoalShellValidation
     private const float CardinalWidth = 0.5f;
     private const float DiagonalWidth = 0.3f;
     private const float PanelHeight = 0.75f;
-    private const float OldThickness = 0.01f;
+
+    // The Neutral/Central stakes: a well-formed octagon (diagonal/cardinal = 1.11, against a regular
+    // octagon's 1.08), and the ring a robot spends the match driving into. FieldSetupTools' own
+    // numbers.
+    private const float NeutralCardinalRadius = 0.705f;
+    private const float NeutralDiagonalRadius = 0.785f;
+    private const float NeutralCardinalWidth = 0.8f;
+    private const float NeutralDiagonalWidth = 0.4f;
+    private const float OldThickness = GoalShellSpec.LegacyRingThickness;
 
     [MenuItem("Tools/RoboSim/Validation/Validate Goal Shell", false, 17)]
     private static void RunInteractive()
@@ -97,23 +105,111 @@ public static class GoalShellValidation
         // The real repair, driven through the real entry point rather than a copy of its arithmetic.
         Scene fixtureScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
         List<BoxCollider> ring = BuildRings(OldThickness);
+        float[] outerFaceBefore = OuterFaceRadii(ring);
         int sealedPanels = SealGoalShell.SealOpenScene(fixtureScene, out _, out int skipped);
         ValidationUtil.Assert(skipped == 0, "the fixture's panels must be the shape the repair understands");
-        ValidationUtil.Assert(sealedPanels == 16,
-            "the repair must have actually touched all 16 panels of both fixture rings — one that silently " +
-            "matched nothing would leave the check below testing the fixture's own construction, and one " +
-            "that matched only the outer ring would leave the lower base rim open on the real field");
+        // At least one change per panel across both rings. Not an equality: the repair now counts
+        // two kinds of change — bringing a panel to thickness/offset spec, and fitting its width to
+        // its neighbours — so a panel needing both is counted twice. The point of the check is that
+        // it did not silently match NOTHING (which would leave everything below testing the
+        // fixture's own construction) or match only the outer ring (which would leave the lower base
+        // rim open on the real field).
+        ValidationUtil.Assert(sealedPanels >= 16,
+            $"the repair only made {sealedPanels} changes across 16 fixture panels in two rings — it has " +
+            "matched nothing, or matched only one of the two rings");
         ValidationUtil.Assert(OpenCorners(ring) == 0,
             "...and after sealing, NO corner may be open. That is the whole fix: a robot has to meet one " +
             "continuous wall, not eight panels with slots between them");
 
-        // Idempotence, because this gets re-run every time anyone regenerates a goal — and it WIDENS.
+        // ...and the sealing must not have MOVED the wall while it was closing it. This is the check
+        // the first pass of this work did not have, and its absence is how the shell ended up
+        // standing 0.045 units proud of the goal you can see: a BoxCollider grows about its centre,
+        // the generator puts that centre on the tuned radius, so thickening alone pushes the face a
+        // robot touches outward by half the increase. Asserted per panel and at full precision,
+        // because the whole claim of this repair is that it changes collision behaviour and nothing
+        // else — 4.5 mm on a 0.705-unit stake is 6% of its radius.
+        float[] outerFaceAfter = OuterFaceRadii(ring);
+        for (int i = 0; i < ring.Count; i++)
+            ValidationUtil.Near(outerFaceAfter[i], outerFaceBefore[i], GoalShellSpec.Epsilon,
+                $"'{ring[i].name}': sealing moved the panel's OUTER face, so the collision shell no " +
+                "longer sits where the goal's visual surface does. The box must be offset inward by " +
+                "half the added thickness — see GoalShellSpec.RingPanelCenter");
+
+        // Idempotence, because this gets re-run every time anyone regenerates a goal — and it RESIZES.
         int secondPass = SealGoalShell.SealOpenScene(fixtureScene, out int alreadyOk, out _);
         ValidationUtil.Assert(secondPass == 0 && alreadyOk == 16,
-            "re-running the repair must be a no-op. It widens panels, so a second pass that 'fixed' them " +
-            "again would grow every goal a little each time anyone ran the tool");
+            $"re-running the repair must be a no-op, but the second pass made {secondPass} change(s) and " +
+            $"found {alreadyOk} of 16 panels already at spec (first pass widths: " +
+            $"{string.Join(", ", ring.ConvertAll(b => b.size.x.ToString("0.00000")))}). It resizes panels, " +
+            "so a second pass that 'fixed' them again would change every goal a little each time anyone ran it");
 
-        return 6;
+        // AND NO PANEL MAY STAND OUTSIDE THE CORNER IT MEETS. This is the check the blanket +0.2
+        // width bonus needed and never had: it closed every corner, and it closed them by leaving
+        // each panel end 0.093 units past the seam on the shipped Neutral goals — a collision shell
+        // wider than the goal you can see, at all eight corners, which is what a driver hits.
+        //
+        // Closed AND flush are different properties, and a future "just add a bit more width" must
+        // not be able to pass by trading one for the other. Checked on a NEUTRAL-radius ring: that is
+        // the well-formed octagon the stakes actually use, and the shape the fit is meant for. The
+        // Alliance fixture above deliberately is NOT flush — see MinPanelWidth.
+        Scene neutralScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        List<BoxCollider> neutral = BuildRings(OldThickness, 0f,
+            NeutralCardinalRadius, NeutralDiagonalRadius, NeutralCardinalWidth, NeutralDiagonalWidth);
+        ValidationUtil.Assert(OpenCorners(neutral) == 8,
+            "TAUTOLOGY GUARD: the Neutral-radius fixture must start with all eight corners open too, " +
+            "or the flush check below is measuring a ring that never needed fitting");
+        SealGoalShell.SealOpenScene(neutralScene, out _, out int neutralSkipped);
+        ValidationUtil.Assert(neutralSkipped == 0,
+            "the Neutral fixture's panels must be the shape the repair understands");
+        ValidationUtil.Assert(OpenCorners(neutral) == 0, "the Neutral fixture's corners must close");
+
+        for (int i = 0; i < neutral.Count; i++)
+        {
+            BoxCollider left = neutral[(i - 1 + neutral.Count) % neutral.Count];
+            BoxCollider right = neutral[(i + 1) % neutral.Count];
+            float overhang = Mathf.Max(GoalShellSpec.CornerOverhang(neutral[i], left),
+                                       GoalShellSpec.CornerOverhang(neutral[i], right));
+            ValidationUtil.Assert(overhang <= GoalShellSpec.CornerSeal + GoalShellSpec.Epsilon,
+                $"'{neutral[i].name}' ends {overhang:0.000} units OUTSIDE its neighbour's outer face " +
+                $"(limit {GoalShellSpec.CornerSeal}). The corner is sealed, but the seal is sticking out " +
+                "past the goal's own silhouette — fit each panel to its neighbours' planes instead of " +
+                "adding a constant to every width. See GoalShellSpec.FitRingWidths.");
+        }
+
+        // The half-sealed state specifically: thick, but never offset inward. That is what the
+        // shipped scenes were in, and the repair has to recognise it as WORK TO DO rather than as
+        // "already at spec".
+        Scene halfScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        List<BoxCollider> halfSealed = BuildRings(GoalShellSpec.RingThickness);
+        float[] halfFaceBefore = OuterFaceRadii(halfSealed);
+        int repaired = SealGoalShell.SealOpenScene(halfScene, out _, out _);
+        ValidationUtil.Assert(repaired >= 16,
+            "a panel that is already THICK but has never been offset inward must still be repaired — " +
+            "that is exactly the state the shipped field was left in, and treating it as sealed is how " +
+            "it stayed that way");
+        ValidationUtil.Assert(OuterFaceRadii(halfSealed)[0] < halfFaceBefore[0] - 0.04f,
+            "...and it must actually pull the outer face back in, by half the thickness it had gained");
+
+        // 17 as before, + 3 for the Neutral fixture's guard/skip/closed checks, + one flush check per
+        // panel in it.
+        return 17 + 3 + 8;
+    }
+
+    // Each panel's outward face distance from the ring's axis. Measured through the panel's own
+    // rotation and box centre rather than assumed, because "which way is out" is precisely what the
+    // offset depends on: the generator steps each wall out along its LOCAL +Y, which is what makes
+    // +Y the outward normal (verified on the shipped scene at 1.0000 for all eight).
+    private static float[] OuterFaceRadii(List<BoxCollider> ring)
+    {
+        var radii = new float[ring.Count];
+        for (int i = 0; i < ring.Count; i++)
+        {
+            Transform t = ring[i].transform;
+            Vector3 face = t.TransformPoint(ring[i].center + Vector3.up * (ring[i].size.y * 0.5f));
+            // The fixture's rings are centred on the world origin in X/Y; Z is the ring's height.
+            radii[i] = new Vector2(face.x, face.y).magnitude;
+        }
+        return radii;
     }
 
     // --- 2. The real field ---------------------------------------------------------------------------
@@ -141,6 +237,11 @@ public static class GoalShellValidation
                     if (panel.size.y < GoalShellSpec.RingThickness - GoalShellSpec.Epsilon)
                         failures.Add($"{ring.Key}: '{panel.name}' is only {panel.size.y} thick — a robot " +
                                      "part that penetrates one this thin can be pushed back out the wrong side");
+                    else if (!GoalShellSpec.IsPanelAtSpec(panel))
+                        failures.Add($"{ring.Key}: '{panel.name}' is thick enough but its box centre is " +
+                                     $"{panel.center} instead of {GoalShellSpec.RingPanelCenter} — all the " +
+                                     "added thickness went outward, so the collision shell stands proud of " +
+                                     "the goal's visual surface and the robot stops short of touching it");
                 }
 
                 int open = OpenCorners(ring.Value);
@@ -221,7 +322,20 @@ public static class GoalShellValidation
     // them, so the real repair recognises them. BOTH rings exist because the repair handles both, and a
     // fixture with only one would not notice it silently skipping the lower base rim on the real field.
     // The outer ring is what comes back, and it is the one the corner checks are made against.
-    private static List<BoxCollider> BuildRings(float thickness)
+    // `extraWidth` reproduces a HALF-sealed panel: one an earlier pass already thickened and widened
+    // but never offset inward. Defaults to 0, which is the original pre-repair goal.
+    private static List<BoxCollider> BuildRings(float thickness, float extraWidth = 0f)
+        => BuildRings(thickness, extraWidth, CardinalRadius, DiagonalRadius, CardinalWidth, DiagonalWidth);
+
+    // Radii and widths are parameters because the two goal families are geometrically different
+    // animals, and the corner fit behaves differently on each. The Alliance numbers (0.45 / 0.62)
+    // put the diagonal faces 1.38x the cardinal radius where a regular octagon is 1.08, so the
+    // cardinal planes nearly meet and the diagonals fit down to slivers; the Neutral numbers
+    // (0.705 / 0.785) are a well-formed octagon where every panel fits cleanly. Testing only the
+    // first would leave the ordinary case unproven, and only the second would miss the edge case
+    // that the min-width tripwire exists for.
+    private static List<BoxCollider> BuildRings(float thickness, float extraWidth,
+        float cardinalRadius, float diagonalRadius, float cardinalWidth, float diagonalWidth)
     {
         List<BoxCollider> outer = null;
         float ringZ = 0f;
@@ -234,10 +348,11 @@ public static class GoalShellValidation
                 GameObject wall = new GameObject($"{prefix}_{i}");
                 wall.transform.position = new Vector3(0f, 0f, ringZ);   // the two rings sit at different heights
                 wall.transform.rotation = Quaternion.Euler(0f, 0f, i * 45f);
-                wall.transform.Translate(0f, cardinal ? CardinalRadius : DiagonalRadius, 0f, Space.Self);
+                wall.transform.Translate(0f, cardinal ? cardinalRadius : diagonalRadius, 0f, Space.Self);
 
                 BoxCollider box = wall.AddComponent<BoxCollider>();
-                box.size = new Vector3(cardinal ? CardinalWidth : DiagonalWidth, thickness, PanelHeight);
+                box.size = new Vector3((cardinal ? cardinalWidth : diagonalWidth) + extraWidth,
+                    thickness, PanelHeight);
                 ring.Add(box);
             }
             outer ??= ring;
