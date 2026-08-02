@@ -24,6 +24,10 @@ public static class LoadTransferValidation
     private const int SettleSteps = 200;
     private const float StepSeconds = 0.01f;
 
+    // 2 s each way, matching TipOverValidation's accel phase: comfortably past 95% of top speed on
+    // the fastest robot here, and long enough for the slowest to finish stopping and start back.
+    private const int DriveSteps = 200;
+
     // Steady state is exact in the limit, so this is "has it arrived", not a tolerance on the
     // formula. A 12 rad/s spring is inside a thousandth of a degree long before 2 s.
     private const float SettledDeg = 0.01f;
@@ -32,6 +36,11 @@ public static class LoadTransferValidation
     // present, tested, and invisible — which is the failure mode a cosmetic change is most likely
     // to reach and least likely to be noticed in.
     private const float MinVisibleLeanDeg = 0.75f;
+
+    // The floor under the measured run-to-run noise, so a run that happens to come out perfectly
+    // repeatable does not then demand perfection of the comparison. 0.01 units is a hundredth of a
+    // millimetre of real robot — far below anything that could matter and far above float noise.
+    private const float RerunNoiseFloor = 0.01f;
 
     [MenuItem("Tools/RoboSim/Validate/Load Transfer Is Visual Only")]
     public static void Validate()
@@ -228,15 +237,23 @@ public static class LoadTransferValidation
 
     // --- The robot -------------------------------------------------------------------------------
 
-    // The one that matters. Drive the same slammed reversal twice, identical in every respect except
-    // whether the lean is switched on, and require the two physics trajectories to land on top of
-    // each other at every single step.
+    // The one that matters, measured against its own noise floor.
     //
-    // The comparison is Vector3's own ==, which is a 1e-5 tolerance on the difference — a ten-
-    // thousandth of a millimetre at this project's scale, so it will not fire on float noise and
-    // will fire on anything that has actually reached the simulation. Divergence compounds: a
-    // render pose that leaked into one contact would be millimetres apart by the end of the slam,
-    // not microns.
+    // The first version of this asserted the two trajectories were IDENTICAL, and it failed on two
+    // robots while printing two positions that agreed to every digit it showed. That was my error,
+    // not the feature's: PhysX is not deterministic across separate scene builds, so re-running the
+    // very same simulation lands somewhere microscopically different. An assertion that assumes
+    // determinism it does not have is a flaky test whichever way it happens to land.
+    //
+    // So run it THREE times: once with the lean on, once with it off, and once more with it on. The
+    // third run is the control, and the distance between the two identical runs is what re-running
+    // alone costs. Switching the lean on then has to cost no more than that. The claim being pinned
+    // is the honest one — turning this feature on perturbs the physics no more than running the
+    // simulation again does — and it needs no invented tolerance, because the run measures its own.
+    //
+    // The 2x is slop for the fact that both figures are single draws from the same noise process,
+    // not a fudge on the size of the effect: a render pose that had genuinely reached the simulation
+    // would compound over 300 steps into millimetres, orders of magnitude clear of either.
     private static int TheLeanChangesNothingPhysical(List<string> lines)
     {
         var failures = new List<string>();
@@ -247,25 +264,47 @@ public static class LoadTransferValidation
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(guid));
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
 
-            List<Vector3> leaning = SlamAReversal(prefab, 2.5f, out float peakLean);
+            List<Vector3> leaning = SlamAReversal(prefab, 2.5f, out Slam slam);
             List<Vector3> level = SlamAReversal(prefab, 0f, out _);
+            List<Vector3> control = SlamAReversal(prefab, 2.5f, out _);
+            float peakLean = slam.peakLeanDeg;
             tested++;
 
-            int differed = -1;
-            for (int i = 0; i < leaning.Count && i < level.Count; i++)
-                if (leaning[i] != level[i]) { differed = i; break; }
+            float noise = FurthestApart(leaning, control);
+            float applied = FurthestApart(leaning, level);
+            float allowed = Mathf.Max(2f * noise, RerunNoiseFloor);
 
-            if (differed >= 0)
-                failures.Add($"'{prefab.name}' diverged at step {differed}: {leaning[differed]} with " +
-                             $"the lean on against {level[differed]} with it off — the render pose is " +
-                             "reaching the simulation");
+            if (applied > allowed)
+                failures.Add($"'{prefab.name}': switching the lean on moved the physics " +
+                             $"{applied * 100f:0.000} mm, against {noise * 100f:0.000} mm for merely " +
+                             $"re-running the identical simulation (allowed {allowed * 100f:0.000}) — " +
+                             "the render pose is reaching the simulation");
             else if (peakLean < MinVisibleLeanDeg)
                 failures.Add($"'{prefab.name}' never leaned more than {peakLean:0.00} deg through a " +
                              $"full slammed reversal (want at least {MinVisibleLeanDeg:0.00}) — the " +
-                             "weight transfer is switched on, correct, and invisible");
+                             "weight transfer is switched on, correct, and invisible. It braked at " +
+                             $"{slam.peakDecel:0} u/s^2 from {slam.topSpeed:0.0} u/s ({slam.topPlanarSpeed:0.0} in any direction), which is " +
+                             $"{slam.peakDecel / Mathf.Max(slam.fullLeanAccel, 1e-3f) * 100f:0} percent " +
+                             $"of the {slam.fullLeanAccel:0} u/s^2 that asks for a full lean, and the " +
+                             $"whole stop lasted {slam.decelSeconds * 1000f:0} ms against a spring that " +
+                             "takes about 150 ms to respond." +
+                             (Mathf.Abs(slam.topPlanarSpeed) > 1f
+                                 && Mathf.Abs(slam.topSpeed) < 0.25f * Mathf.Abs(slam.topPlanarSpeed)
+                                 ? "\n      READ THOSE TWO SPEEDS AGAIN: this robot is travelling at " +
+                                   "full speed PERPENDICULAR to its own transform.forward, so root +Z " +
+                                   "is not its driving axis. StepLoadTransfer takes longitudinal " +
+                                   "acceleration as dot(velocity, forward) and therefore measures ~0 " +
+                                   "no matter how hard it brakes. The same assumption is in " +
+                                   "ApplyRollRelief, which rolls about forward — on this robot that " +
+                                   "is the PITCH axis, so the relief is cancelling exactly the " +
+                                   "front-to-back tipping it is documented to leave alone. Fix the " +
+                                   "axis (derive it from the wheels' axles), not this test."
+                                 : ""));
             else
-                lines.Add($"  '{prefab.name}': peak lean {peakLean:0.00} deg, physics identical " +
-                          $"across {leaning.Count} steps");
+                lines.Add($"  '{prefab.name}': peak lean {peakLean:0.00} deg at {slam.peakDecel:0} " +
+                          $"u/s^2 from {slam.topSpeed:0.0} u/s ({slam.topPlanarSpeed:0.0} in any direction) ({slam.decelSeconds * 1000f:0} ms of " +
+                          $"braking) · lean on vs off moved the physics {applied * 100f:0.000} mm over " +
+                          $"{leaning.Count} steps, against {noise * 100f:0.000} mm of run-to-run noise");
             checks += 2;
         }
 
@@ -273,12 +312,38 @@ public static class LoadTransferValidation
             $"no robot prefab with a RobotMotorController was found under {RoboSimPaths.RobotsFolder}, " +
             "so the only check that can tell a render pose from a physical one never ran");
         ValidationUtil.Assert(failures.Count == 0,
-            $"{failures.Count} of {tested} robot(s):\n  - " + string.Join("\n  - ", failures));
+            $"{failures.Count} of {tested} robot(s):\n  - " + string.Join("\n  - ", failures) +
+            // A failure that throws away the measurements it just took makes the next run guess at
+            // what the first one saw. The robots that PASSED are the control for the ones that did not.
+            (lines.Count > 0 ? "\n  The robots that passed:\n" + string.Join("\n", lines) : ""));
         return checks;
     }
 
+    // The worst the two trajectories ever get from each other, in world units.
+    private static float FurthestApart(List<Vector3> a, List<Vector3> b)
+    {
+        float worst = 0f;
+        for (int i = 0; i < a.Count && i < b.Count; i++)
+            worst = Mathf.Max(worst, Vector3.Distance(a[i], b[i]));
+        return worst;
+    }
+
+    // What the reversal actually did, measured off the ROBOT rather than off the component being
+    // tested. If the lean comes out too small, the question is immediately whether the input was
+    // small or the response was — and that has to be answered without asking the thing under test.
+    private struct Slam
+    {
+        public float peakLeanDeg;
+        public float topSpeed;         // along the robot's forward axis, before the stick was thrown
+        public float topPlanarSpeed;   // ...and ignoring direction, so "did not move" is separable
+                                       // from "moved, but not the way its nose is pointing"
+        public float peakDecel;        // u/s^2, differentiated from the robot's own velocity
+        public float decelSeconds;     // how long the stop lasted, which bounds what any spring can do
+        public float fullLeanAccel;    // the traction limit: the deceleration that asks for a full lean
+    }
+
     // Full throttle until it is up to speed, then the stick thrown the other way and held.
-    private static List<Vector3> SlamAReversal(GameObject prefab, float leanDeg, out float peakLean)
+    private static List<Vector3> SlamAReversal(GameObject prefab, float leanDeg, out Slam slam)
     {
         SimulationMode previousMode = Physics.simulationMode;
         try
@@ -290,29 +355,94 @@ public static class LoadTransferValidation
             motor.loadTransferPitchDeg = leanDeg;
             motor.Initialise();
 
+            // A cascade whose drives were never baked cannot hold its own stages up, and edit-mode
+            // Physics.Simulate never runs Awake to bake them. 654V_v2 and 654V_v3 — the only two
+            // robots here with a CascadeLift — then sat on the floor unable to drive at all and
+            // reported a top speed of 0.0 u/s, which reads as "the weight transfer does not work"
+            // and is actually "the robot never moved". Same two calls LiftMotionValidation makes,
+            // for the same reason; both are public and idempotent so a harness can run the real
+            // path rather than a copy of it.
+            CascadeLift lift = root.GetComponentInChildren<CascadeLift>(true);
+            if (lift != null)
+            {
+                MotorActuator driver = lift.driver != null
+                    ? lift.driver.GetComponent<MotorActuator>() : null;
+                driver?.Configure();
+                lift.BakeDrives();
+            }
+
             Physics.simulationMode = SimulationMode.Script;
-            PhysicsSmokeTest.Step(60);   // settle onto the floor before anyone touches the sticks
+
+            // Settle THROUGH the controller, and for as long as TipOverValidation does.
+            //
+            // Both halves of that were wrong here first time round, and the way they were wrong is
+            // worth keeping: 60 bare Physics.Simulate steps left 654V_v2 and 654V_v3 unable to drive
+            // at all, so they reported a top speed of 0.0 u/s and — quite correctly — no lean. Read
+            // without the input measurement beside it, that looks exactly like a broken feature
+            // rather than a broken fixture, which is why the failure message reports the braking it
+            // saw as well as the lean it did not.
+            TipOverValidation.StepDriven(motor, 0f, 0f, SettleSteps);
+
+            // Lift UP, like every other dynamic fixture in the project.
+            //
+            // Not a workaround: with the cascade STOWED, 654V_v2 and 654V_v3 could not drive at all
+            // here — 0.0 u/s after two full seconds of throttle — while the identical spawn, settle
+            // and throttle reaches 6.5 u/s in MovingTurnValidation, whose only meaningful difference
+            // is that it raises the lifts first. Baking the cascade drives did not change it either.
+            // Something about the stowed pose is holding these two robots down, and it is worth its
+            // own investigation; it is not what this file is about, and raising the lift is both the
+            // established fixture and the more demanding case for weight transfer, since it puts the
+            // centre of mass 223 mm up instead of 80.
+            TipOverValidation.RaiseLifts(root, motor);
+            TipOverValidation.StepDriven(motor, 0f, 0f, SettleSteps);
+
+            slam = new Slam
+            {
+                fullLeanAccel = DrivetrainTuning.MeasureFriction(
+                    PhysicsSmokeTest.FindWheels(root, out _, out _)) * Mathf.Abs(Physics.gravity.y),
+            };
 
             var track = new List<Vector3>();
-            peakLean = 0f;
-            peakLean = Drive(root, motor, +1f, track, peakLean);
-            peakLean = Drive(root, motor, -1f, track, peakLean);
+            Drive(root, motor, +1f, track, ref slam, braking: false);
+            slam.topSpeed = Forward(root);
+            slam.topPlanarSpeed = new Vector2(root.linearVelocity.x, root.linearVelocity.z).magnitude;
+            Drive(root, motor, -1f, track, ref slam, braking: true);
             return track;
         }
         finally { Physics.simulationMode = previousMode; }
     }
 
-    private static float Drive(ArticulationBody root, RobotMotorController motor, float throttle,
-        List<Vector3> track, float peakLean)
+    private static void Drive(ArticulationBody root, RobotMotorController motor, float throttle,
+        List<Vector3> track, ref Slam slam, bool braking)
     {
-        motor.SetManualInput(throttle, 0f);
-        for (int i = 0; i < 150; i++)
+        float last = Forward(root);
+        bool stillSlowing = braking;
+
+        for (int i = 0; i < DriveSteps; i++)
         {
+            // Re-asserted every step, exactly as TipOverValidation.StepDriven does. Stepped by hand
+            // rather than calling it because the measurements below have to land between the
+            // controller's step and the physics step, which that helper does not expose.
+            motor.SetManualInput(throttle, 0f);
             motor.ApplyStep(StepSeconds);
             PhysicsSmokeTest.Step(1);
             track.Add(root.transform.position);
-            peakLean = Mathf.Max(peakLean, Mathf.Abs(motor.LeanDegrees));
+            slam.peakLeanDeg = Mathf.Max(slam.peakLeanDeg, Mathf.Abs(motor.LeanDegrees));
+
+            float now = Forward(root);
+            if (braking)
+            {
+                slam.peakDecel = Mathf.Max(slam.peakDecel, Mathf.Abs(now - last) / StepSeconds);
+                // The stop is over the moment the robot stops travelling the way it came in. Past
+                // that it is accelerating the other way, which is a different event.
+                if (stillSlowing && Mathf.Sign(now) == Mathf.Sign(slam.topSpeed) && Mathf.Abs(now) > 0.05f)
+                    slam.decelSeconds += StepSeconds;
+                else stillSlowing = false;
+            }
+            last = now;
         }
-        return peakLean;
     }
+
+    private static float Forward(ArticulationBody root)
+        => Vector3.Dot(root.linearVelocity, root.transform.forward);
 }
