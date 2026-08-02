@@ -155,6 +155,19 @@ public class RobotMotorController : MonoBehaviour
              "fighting the 100 Hz step.")]
     public float rollReliefFrequency = 12f;
 
+    [Header("Load Transfer (visual)")]
+    [Tooltip("How far the body leans under acceleration and braking, in degrees at the traction " +
+             "limit. VISUAL ONLY — it moves nothing the physics can feel. 0 disables it.")]
+    [Range(0f, 8f)]
+    public float loadTransferPitchDeg = 2.5f;
+    [Tooltip("How quickly the lean follows the throttle, in rad/s. This is a suspension frequency: " +
+             "a car's pitch mode is around 1.5-2 Hz, which is 10-13 here.")]
+    public float loadTransferFrequency = 12f;
+    [Tooltip("Damping ratio of that lean. Below 1 it overshoots and settles back, which is the " +
+             "'momentarily' in weight transfer — 1.0 slides into place with no rebound at all.")]
+    [Range(0.2f, 1.5f)]
+    public float loadTransferDamping = 0.55f;
+
     [Header("Input Shaping")]
     [Tooltip("Stick travel ignored around centre, then rescaled so full stick still reaches 1.0. " +
              "Keyboard W/A/S/D is exactly 0 or +-1, so this only affects sticks (including drifty " +
@@ -201,6 +214,24 @@ public class RobotMotorController : MonoBehaviour
     // allowed to ask for. Both measured once, in Initialise — see MeasureRollResistance.
     private float rollInertia;
     private float maxRollReliefTorque;
+
+    // Load transfer. The two contact lines the body leans about and the acceleration that counts as
+    // a full lean, all measured once in Initialise; the lean itself and where it came from, per step.
+    private Vector3 frontPivotOffset;      // root-local, on the contact plane at the front axle
+    private Vector3 rearPivotOffset;       // ...and at the rear
+    private float fullLeanAccel;          // the traction limit, in world units/s^2
+    private float lastForwardSpeed;
+    private float leanDeg;                // nose-UP positive
+    private float leanRateDegPerSec;
+    private bool leanPosed;               // the transform currently carries the lean
+    private Vector3 posedPosition;
+    private Quaternion posedRotation;
+    private Vector3 physicsPosition;
+    private Quaternion physicsRotation;
+
+    // How far the body is leaning right now, nose-UP positive. Read-only and render-only: nothing
+    // in the physics reads it. Exposed so LoadTransferValidation can watch a stop happen.
+    public float LeanDegrees => leanDeg;
 
     // The force limit each wheel's drive currently carries, so the per-step decision below only
     // writes an ArticulationDrive struct when it actually changes. Same reason MotorActuator keeps
@@ -402,6 +433,7 @@ public class RobotMotorController : MonoBehaviour
         }
 
         MeasureRollResistance();
+        MeasureLoadTransfer();
     }
 
     // --- Roll relief ------------------------------------------------------------------------------
@@ -516,6 +548,170 @@ public class RobotMotorController : MonoBehaviour
                               * MaxRollReliefOverturnMultiple;
     }
 
+    // --- Load transfer --------------------------------------------------------------------------
+
+    // Accelerate a car and the weight moves to the back; brake and it moves to the front. That
+    // already happens here, for free and correctly: drive torque reaches the floor at the contact
+    // patch and the mass sits a couple of hundred mm above it, so PhysX shifts normal force between
+    // the axles every step. What is missing is being able to SEE it.
+    //
+    // A real chassis shows weight transfer as a couple of degrees of squat and dive, and all of that
+    // comes from compliance — tyre sidewalls, suspension, frame flex. This robot has none: rigid
+    // sphere wheels and one rigid link. So the load genuinely moves and nothing rotates, right up
+    // until it rotates ALL THE WAY. Flat, flat, flat, over.
+    //
+    // WHY THIS IS NOT A TORQUE. It was the obvious first idea and it cannot work. A pitch torque on
+    // a rigid robot does nothing at all while the rear wheels still carry load, and the instant it
+    // exceeds m*g*halfWheelbase it lifts them off the floor. There is no soft regime in between to
+    // put two degrees of dive into — the same rigidity that removed the cue removes every physical
+    // way of adding it back. So this is a render pose and nothing else: no force, no torque, no
+    // collider moved, and it is applied AFTER every FixedUpdate has been and gone.
+    //
+    // WHY IT LEANS ABOUT A CONTACT LINE rather than the middle. Dive on a car drops the nose because
+    // the front springs compress. Nothing here compresses, so pivoting about the centre would drive
+    // the front wheels through the floor. Leaning about the loaded end's contact line instead —
+    // front under braking, rear under power — lifts the light end and leaves the heavy one planted,
+    // which is both what a rigid robot on the edge of tipping actually does and the only version
+    // that cannot clip.
+    //
+    // It does not touch tipping. TipOverValidation and every threshold in RobotBalanceWindow are
+    // measured off the physics pose, which this never writes to.
+    private void MeasureLoadTransfer()
+    {
+        frontPivotOffset = rearPivotOffset = Vector3.zero;
+        fullLeanAccel = 0f;
+        leanDeg = leanRateDegPerSec = 0f;
+        leanPosed = false;
+        if (rootBody == null || allWheels.Length == 0) return;
+
+        Transform t = rootBody.transform;
+        float radius = DrivetrainTuning.MeasureWheelRadius(allWheels);
+
+        // The two ends of the wheelbase and the floor under them, as WORLD-unit offsets along the
+        // robot's own axes — not InverseTransformPoint, which would divide by the root's lossy
+        // scale and put both pivots a tenth of the way to where they belong on this 10x project.
+        // Held in the robot's frame rather than in world space so they ride along with it.
+        float front = float.NegativeInfinity, rear = float.PositiveInfinity;
+        float lowest = float.PositiveInfinity;
+        foreach (ArticulationBody wheel in allWheels)
+        {
+            if (wheel == null) continue;
+            Vector3 offset = wheel.transform.position - t.position;
+            float along = Vector3.Dot(offset, t.forward);
+            front = Mathf.Max(front, along);
+            rear = Mathf.Min(rear, along);
+            lowest = Mathf.Min(lowest, Vector3.Dot(offset, t.up));
+        }
+        if (float.IsInfinity(front)) return;
+
+        float contact = lowest - radius;
+        frontPivotOffset = new Vector3(0f, contact, front);
+        rearPivotOffset = new Vector3(0f, contact, rear);
+
+        // Full lean at the friction cone, which is the hardest this robot can ever accelerate or
+        // stop. Sizing it off the tyres rather than a chosen number means a grippier robot leans
+        // further before it saturates, exactly as it should.
+        fullLeanAccel = Mathf.Max(tuning.tractionG * Mathf.Abs(Physics.gravity.y), 1e-3f);
+    }
+
+    // Where the lean is heading, and how it gets there. Runs on the physics step so the response is
+    // identical at 30 fps and 120: nothing about weight transfer should depend on the frame rate.
+    private void StepLoadTransfer(float dt)
+    {
+        if (rootBody == null || dt <= 0f) return;
+
+        // Measured off the body, not off the throttle. A robot shoved by another robot, dragged to a
+        // stop by a wall or spinning its wheels on a slick patch is having its weight moved around
+        // just as much as one under power, and only the velocity knows about any of that.
+        float forwardSpeed = Vector3.Dot(rootBody.linearVelocity, rootBody.transform.forward);
+        float accel = (forwardSpeed - lastForwardSpeed) / dt;
+        lastForwardSpeed = forwardSpeed;
+
+        if (loadTransferPitchDeg <= 0f || fullLeanAccel <= 0f)
+        {
+            leanDeg = leanRateDegPerSec = 0f;
+            return;
+        }
+
+        // Accelerating forward loads the rear and lifts the nose, so nose-up is the positive sign
+        // and the target follows the acceleration directly.
+        float target = loadTransferPitchDeg * Mathf.Clamp(accel / fullLeanAccel, -1f, 1f);
+        LeanStep(ref leanDeg, ref leanRateDegPerSec, target,
+            loadTransferFrequency, loadTransferDamping, loadTransferPitchDeg, dt);
+    }
+
+    // One step of the second-order lag that turns "the robot is decelerating" into "the body is
+    // still settling from the stop it just made". Pure and static so LoadTransferValidation can
+    // exercise it with no robot, no scene and no physics step.
+    //
+    // Semi-implicit: the rate is integrated first and the angle uses the NEW rate, which is what
+    // keeps a 12 rad/s spring stable on a 100 Hz step instead of slowly gaining energy.
+    public static void LeanStep(ref float deg, ref float degPerSec, float targetDeg,
+        float frequency, float damping, float maxDeg, float dt)
+    {
+        float omega = Mathf.Max(frequency, 0f);
+        float zeta = Mathf.Max(damping, 0f);
+        degPerSec += (-omega * omega * (deg - targetDeg) - 2f * zeta * omega * degPerSec) * dt;
+        deg += degPerSec * dt;
+
+        // The overshoot is the point, so the clamp sits above the steady-state travel rather than on
+        // it. It exists to bound a spring that has been handed a silly frequency, not to shape the
+        // response — at any sane setting the lean never reaches it.
+        float bound = Mathf.Abs(maxDeg) * MaxLeanOvershoot;
+        if (deg > bound) { deg = bound; degPerSec = Mathf.Min(degPerSec, 0f); }
+        else if (deg < -bound) { deg = -bound; degPerSec = Mathf.Max(degPerSec, 0f); }
+    }
+
+    // How far past the steady-state lean the overshoot is allowed to go.
+    public const float MaxLeanOvershoot = 1.6f;
+
+    // The rendered pose: the physics pose, leaned about whichever contact line is carrying the load.
+    // Static and pure for the same reason LeanStep is — the property that matters (the pivot does
+    // not move, so nothing is ever pushed through the floor) is checkable without a robot.
+    public static void LeanedPose(Vector3 position, Quaternion rotation, float leanDeg,
+        Vector3 frontPivotOffset, Vector3 rearPivotOffset,
+        out Vector3 leanedPosition, out Quaternion leanedRotation)
+    {
+        // Nose-up leans about the REAR contact line, nose-down about the FRONT one: always the end
+        // the weight has moved onto, so the other end is what rises.
+        Vector3 pivot = position + rotation * (leanDeg >= 0f ? rearPivotOffset : frontPivotOffset);
+
+        // Negative about the robot's own right axis is nose-UP (right-hand rule takes +Z to -Y).
+        Quaternion lean = Quaternion.AngleAxis(-leanDeg, rotation * Vector3.right);
+        leanedPosition = lean * (position - pivot) + pivot;
+        leanedRotation = lean * rotation;
+    }
+
+    // Applied after every LateUpdate and immediately before the frame is drawn, which is the whole
+    // trick: the chase camera reads the robot in its LateUpdate and therefore always sees the true
+    // physics pose. Lean the robot before the camera has looked at it and the camera follows the
+    // lean, cancelling most of it and wobbling the aim for the rest.
+    private void PoseForRender()
+    {
+        if (rootBody == null || !isActiveAndEnabled) return;
+        Transform t = rootBody.transform;
+
+        // PhysX writes this transform once per physics step, and a frame can contain no steps at
+        // all above 100 fps. So: if it still reads exactly as we left it, nothing has overwritten
+        // our lean and the pose we cached is the physics one. If it has changed, physics has been
+        // through since and the transform IS the physics pose.
+        if (leanPosed && t.position == posedPosition && t.rotation == posedRotation)
+            t.SetPositionAndRotation(physicsPosition, physicsRotation);
+
+        physicsPosition = t.position;
+        physicsRotation = t.rotation;
+        leanPosed = false;
+        if (Mathf.Abs(leanDeg) < 0.001f) return;
+
+        LeanedPose(physicsPosition, physicsRotation, leanDeg, frontPivotOffset, rearPivotOffset,
+            out Vector3 leanedPosition, out Quaternion leanedRotation);
+        t.SetPositionAndRotation(leanedPosition, leanedRotation);
+
+        posedPosition = t.position;
+        posedRotation = t.rotation;
+        leanPosed = true;
+    }
+
     void OnEnable()
     {
         if (leftJoystickAction != null) leftJoystickAction.action.Enable();
@@ -523,12 +719,27 @@ public class RobotMotorController : MonoBehaviour
 
         if (rightJoystickAction != null) rightJoystickAction.action.Enable();
         else Debug.LogWarning("RobotMotorController: 'Right Joystick Action' is not assigned in the Inspector.", this);
+
+        Application.onBeforeRender += PoseForRender;
     }
 
     void OnDisable()
     {
         if (leftJoystickAction != null) leftJoystickAction.action.Disable();
         if (rightJoystickAction != null) rightJoystickAction.action.Disable();
+
+        Application.onBeforeRender -= PoseForRender;
+
+        // Hand the transform back exactly as physics left it. A robot despawned or disabled mid-lean
+        // would otherwise keep the last frame's couple of degrees forever, and PhysX — which never
+        // reads this transform — would never correct it.
+        if (leanPosed && rootBody != null)
+        {
+            Transform t = rootBody.transform;
+            if (t.position == posedPosition && t.rotation == posedRotation)
+                t.SetPositionAndRotation(physicsPosition, physicsRotation);
+            leanPosed = false;
+        }
     }
 
     void FixedUpdate()
@@ -616,6 +827,11 @@ public class RobotMotorController : MonoBehaviour
         // After the drives, because it reads the attitude the last step produced and pushes back on
         // it — an external torque for this step, alongside the wheel torques, not instead of them.
         ApplyRollRelief(dt);
+
+        // Reads the same attitude and applies nothing. Stepped here rather than per frame so the
+        // lean is identical at every frame rate, and harmless in an edit-mode harness: nothing is
+        // posed until PoseForRender runs, and that only runs while rendering.
+        StepLoadTransfer(dt);
     }
 
     // --- Braking quadrant ------------------------------------------------------------------------
