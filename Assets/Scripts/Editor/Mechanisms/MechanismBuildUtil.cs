@@ -8,8 +8,29 @@ using UnityEngine;
 internal static class MechanismBuildUtil
 {
     public const string UndoName = "Build Mechanism";
+
     // Mass-from-geometry on thin bars comes out near-zero; floor a driven joint so it's stable.
-    public const float MinLiftMass = 1.5f;
+    //
+    // WAS 1.5, and that number was doing far more than "keep the solver happy". It won on 100% of
+    // shipped lift links, so it was not a floor at all — it WAS the mass of every lift in the
+    // project. On 654V_v3 that put 4.5 kg of cascade stages on a 14.5 kg robot (31%, against a real
+    // cascade's 20-25%) and took the whole robot 28% past the 11.3 kg a VEX V5 is allowed to weigh.
+    //
+    // What that bought was a raised centre of mass 302 mm up, which is realistic on its own, on a
+    // 254 mm track, which is not enough to hold it — so a hard turn rolled the robot over. Forward
+    // and reverse were fine, because the wheelbase is longer than the track and the tip thresholds
+    // scale with the margin. The complaint that reached me was exactly that shape: "turning tips way
+    // too much, going forward is fine."
+    //
+    // 0.9 is sized against the real part: a cascade stage is two lengths of 2x1 aluminium C-channel
+    // plus bearings and hardware, which is 0.6-0.9 kg. It is still a floor — a stage whose geometry
+    // measures heavier keeps its own mass — but it is no longer the answer for every lift ever built.
+    //
+    // This does NOT undo the tipping work. Measured after the change, 654V_v3 with the lift raised
+    // still goes over on a slammed reversal; it just stops going over in a turn. See
+    // RobotBalanceWindow, which reports both axes, and [robosim-roll-vs-pitch] for why the two
+    // cannot be tuned apart with mass alone.
+    public const float MinLiftMass = 0.9f;
 
     public static T AddOrGet<T>(GameObject go, bool useUndo) where T : Component
     {
@@ -112,7 +133,18 @@ internal static class MechanismBuildUtil
     // already-jointed arm under a lift stage). No-op for a root or a link with no body above it.
     public static void RederiveParentAnchors(ArticulationBody body)
     {
-        if (body == null || body.isRoot) return;
+        // NEVER gate this on ArticulationBody.isRoot. That property reflects NATIVE articulation
+        // state, and it is true for every body in a hierarchy whose articulation has not been built
+        // — which is the case for a prefab opened with LoadPrefabContents, and can be the case in
+        // Prefab Mode. Gated on it, this method silently did nothing at all, and the joint kept
+        // whatever parent anchor it was born with: 654V_v3's CascadeMotor still carries the
+        // untouched default (0,0,0), which puts 1.5 kg 311 mm from where the part is drawn the
+        // instant physics starts. A silent no-op in the one place that writes the anchor is the
+        // worst possible failure, because everything downstream looks correct in the editor.
+        //
+        // The hierarchy walk below is the correct root test and was always here: no ancestor body
+        // means no joint to derive, and the method returns on its own.
+        if (body == null) return;
         body.matchAnchors = false;   // cleared whether or not a parent is found, as the inline code did
         ArticulationBody parent = null;
         for (Transform p = body.transform.parent; p != null && parent == null; p = p.parent)
