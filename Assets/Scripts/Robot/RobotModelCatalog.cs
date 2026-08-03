@@ -34,6 +34,49 @@ public class RobotModelCatalog : ScriptableObject
         Private = 1,
     }
 
+    // The second way an entry can name a robot: an AssetBundle to load it out of, instead of a
+    // direct reference to a prefab that had to exist when the app was built.
+    //
+    // This is what makes a robot deliverable at all. With only a direct reference, every accepted
+    // upload is baked into the binary forever for every player — which is what makes a private robot
+    // only *hidden* rather than absent, and what puts a hard ceiling on how many robots the game can
+    // ever have (measured: ~226 MB of mesh data each, before decimation).
+    //
+    // WHY sourceGuid IS A STRING AND NOT A GameObject. A serialized reference to an asset is what
+    // PULLS THAT ASSET INTO THE BUILD — that is the entire mechanism behind the problem above. So
+    // the build tool remembers which prefab to bundle by its GUID, in text, and resolves it through
+    // AssetDatabase when it runs. A convenient `public GameObject sourcePrefab;` here would quietly
+    // undo the whole point of this class while looking tidier.
+    //
+    // THE VERSION FIELDS ARE NOT BOOKKEEPING. A bundle serializes the SCRIPTS on the robot prefab,
+    // not just its meshes — so changing a serialized field on RobotMotorController silently
+    // invalidates every bundle built before the change. `scriptVersion` records which layout this
+    // bundle was built against, the app refuses anything that isn't its own, and the refusal is a
+    // message rather than a robot that spawns with its tuning quietly zeroed. See RobotBundleFormat.
+    [Serializable]
+    public class BundleRef
+    {
+        [Tooltip("Bundle file name, without extension. Empty means this robot isn't delivered as a " +
+                 "bundle.")]
+        public string id;
+
+        [Tooltip("Which build of that bundle. Part of the path, so an old app keeps asking for the " +
+                 "build it was shipped against and never picks up an incompatible newer one.")]
+        public string version;
+
+        [Tooltip("The RobotBundleFormat.Version this bundle was built against. A mismatch means the " +
+                 "robot scripts changed shape since, and the bundle cannot be trusted to load.")]
+        public int scriptVersion;
+
+        [Tooltip("Set when the bundle is served from Storage rather than shipped in StreamingAssets.")]
+        public bool remote;
+
+        [Tooltip("Asset GUID of the prefab this bundle is built from. Editor-only bookkeeping.")]
+        public string sourceGuid;
+
+        public bool IsSet => !string.IsNullOrWhiteSpace(id);
+    }
+
     [Serializable]
     public class Entry
     {
@@ -42,7 +85,17 @@ public class RobotModelCatalog : ScriptableObject
         // The robot prefab RobotSpawner instantiates into the field scene when this model is
         // selected. Built by the Build Robot Prefabs & Spawner tool; null entries are skipped
         // by the spawner (it falls back to the first entry that has one).
+        //
+        // A direct reference means the robot is COMPILED INTO THE APP: its geometry ships to every
+        // device that installs the build, whether or not that player can see it in the picker. That
+        // is the right trade for the handful of robots shipped with the game, and the wrong one for
+        // every robot a player sends in — see `bundle` below, which is the other way to fill this in.
         public GameObject prefab;
+
+        [Tooltip("Where to fetch this robot from when it isn't compiled into the app. Leave empty " +
+                 "for a built-in robot; the direct prefab reference above wins if both are set.")]
+        public BundleRef bundle = new BundleRef();
+
         public List<MechanismInfo> mechanisms = new List<MechanismInfo>();
 
         [Tooltip("Public models are listed for everyone. Private models are hidden until someone " +
@@ -81,6 +134,47 @@ public class RobotModelCatalog : ScriptableObject
 
     public List<Entry> models = new List<Entry>();
 
+    // Robots learned about at runtime from the published index (RobotCatalogSync) — ones this build
+    // was never shipped with at all.
+    //
+    // Deliberately NOT part of `models`, and deliberately [NonSerialized]. Adding them to the
+    // serialized list would work at runtime and then quietly write itself into the catalog ASSET the
+    // next time the editor saved, so a Play-mode session that happened to be online would commit
+    // whatever was published that day into the project. This list is rebuilt from the network on
+    // every launch, which is also what makes an unpublished robot disappear again.
+    [System.NonSerialized] private List<Entry> synced;
+
+    public IEnumerable<Entry> AllModels
+    {
+        get
+        {
+            if (models != null)
+            {
+                foreach (Entry entry in models) yield return entry;
+            }
+            if (synced == null) yield break;
+            foreach (Entry entry in synced) yield return entry;
+        }
+    }
+
+    // Adds a robot discovered at runtime. Ignores one whose id is already known, so a robot that is
+    // both shipped and published stays the shipped copy — the local one is guaranteed loadable and
+    // needs no network.
+    public bool AddSynced(Entry entry)
+    {
+        if (entry == null || string.IsNullOrEmpty(entry.id)) return false;
+        foreach (Entry existing in AllModels)
+        {
+            if (existing != null && existing.id == entry.id) return false;
+        }
+
+        synced ??= new List<Entry>();
+        synced.Add(entry);
+        return true;
+    }
+
+    public void ClearSynced() => synced?.Clear();
+
     // PlayerPrefs key for the selected model id (public so loaders can read it directly).
     public const string SelectedModelPrefKey = "SelectedRobotModelId";
 
@@ -95,8 +189,7 @@ public class RobotModelCatalog : ScriptableObject
     {
         get
         {
-            if (models == null) yield break;
-            foreach (Entry entry in models)
+            foreach (Entry entry in AllModels)
             {
                 if (entry == null || string.IsNullOrEmpty(entry.id)) continue;
                 if (entry.IsVisibleOnThisDevice) { yield return entry; continue; }
@@ -153,11 +246,27 @@ public class RobotModelCatalog : ScriptableObject
 
     // First visible entry that actually has a prefab — the spawner's last resort when the selection
     // has no prefab built yet. Visible-only, so it can't surface a private robot.
+    //
+    // Deliberately NOT bundle-aware: this is the fallback used when the thing the player asked for
+    // could not be put on the field, and a fallback that has to go to the network to find out
+    // whether it works is not a fallback. FirstVisibleSpawnable is the one to ask when you want
+    // "anything at all"; this is the one to ask when you want "anything, right now, guaranteed".
     public Entry FirstVisibleWithPrefab()
     {
         foreach (Entry entry in VisibleModels)
         {
             if (entry.prefab != null) return entry;
+        }
+        return null;
+    }
+
+    // First visible entry that names a robot at all, by either route. What the picker should offer
+    // and what the spawner should try before giving up.
+    public Entry FirstVisibleSpawnable()
+    {
+        foreach (Entry entry in VisibleModels)
+        {
+            if (entry.prefab != null || (entry.bundle != null && entry.bundle.IsSet)) return entry;
         }
         return null;
     }

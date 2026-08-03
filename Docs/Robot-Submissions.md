@@ -12,11 +12,15 @@ of the pipeline are Unity Editor APIs that do not exist in a built player:
 - **Generating colliders.** The V-HACD convex decomposition runs through
   `Assets/Plugins/Editor/librobosim_vhacd.dylib`, which is Editor-gated and macOS-arm64 only.
 - **Saving the result.** `PrefabUtility.SaveAsPrefabAsset` and `AssetDatabase` have no runtime
-  equivalent, and `RobotModelCatalog.Entry.prefab` is a direct serialized reference — a robot that
-  didn't exist when the app was built cannot be spawned.
+  equivalent.
 
 On top of that, marking each moving part and assigning roles for a claw or lift is a judgement job.
-So the flow is: player uploads → you set it up in the editor → it ships in the next update.
+So the flow is: player uploads → you set it up in the editor → it goes out to them.
+
+**That last step no longer means "in the next app update".** A set-up robot can be published as a
+downloadable AssetBundle instead of being compiled into the binary — see
+[Robot-Delivery.md](Robot-Delivery.md). Everything above still holds: the setup is Editor-only and
+always will be. What changed is only how the finished robot travels.
 
 ## Switching submissions on
 

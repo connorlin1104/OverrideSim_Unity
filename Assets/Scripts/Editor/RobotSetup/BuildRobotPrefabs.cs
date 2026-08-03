@@ -129,6 +129,11 @@ public static class BuildRobotPrefabs
 
         SerializedObject so = new SerializedObject(spawner);
         so.FindProperty("catalog").objectReferenceValue = catalog;
+        // Only used by robots that are downloaded rather than compiled in. Wired here rather than
+        // left to be remembered: a missing config doesn't fail until someone selects a bundled
+        // robot, and then it fails as "that robot didn't load", which points at the wrong thing.
+        so.FindProperty("uploadConfig").objectReferenceValue =
+            AssetDatabase.LoadAssetAtPath<RobotUploadConfig>("Assets/Settings/RobotUploadConfig.asset");
         so.FindProperty("spawnPosition").vector3Value = spawnPosition;
         so.FindProperty("spawnEuler").vector3Value = spawnEuler;
         so.ApplyModifiedPropertiesWithoutUndo();

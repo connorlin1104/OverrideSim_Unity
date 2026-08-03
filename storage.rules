@@ -18,5 +18,26 @@ service firebase.storage {
       allow write: if false;
     }
 
+    // robots/<address>/index.json and robots/<address>/<platform>/v<n>/<id>-<hash>.bundle.
+    //
+    // World-readable, and that is the design rather than an oversight. A robot is private here
+    // because its <address> is a hash of its owner code (RobotBundleAddress): holding the code is
+    // what lets a device NAME the file, and nothing else can. Rules cannot do better — a code is a
+    // bearer token this project hands out on purpose, not an identity, and Storage can only check
+    // who you signed in as. Requiring auth would add nothing either, since anonymous sign-up is open
+    // to anyone. Object listing is not granted by a read rule, so the folders cannot be enumerated.
+    //
+    // Writes are OFF and must stay off. This repo is public and the web API key with it, so anything
+    // the app is permitted to write, any stranger is equally permitted to write — and this is the
+    // path players EXECUTE code and geometry from. Publishing is done from a developer machine with
+    // real credentials (gsutil), never from the app.
+    //
+    // Note for the lifecycle rule: the 30-day delete in Docs/storage-lifecycle.json is scoped to the
+    // uploads/ prefix. It must stay scoped that way — an age-based rule that reached this prefix
+    // would delete players' robots a month after they were published.
+    match /robots/{address}/{file=**} {
+      allow read: if true;
+      allow write: if false;
+    }
   }
 }

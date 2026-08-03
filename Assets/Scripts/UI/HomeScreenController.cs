@@ -154,6 +154,26 @@ public class HomeScreenController : MonoBehaviour
         SetCodeStatus(string.Empty);
         ShowHeldCodes();
         CheckInbox();
+        CheckForPublishedRobots();
+    }
+
+    // Robots that exist but weren't shipped with this build. The list is drawn first from whatever
+    // is compiled in, then redrawn if anything turns up — so the picker is usable immediately on a
+    // slow connection instead of waiting on the network to show robots that were already here.
+    //
+    // Silent on every failure, for the same reason CheckInbox is: this runs at launch, and being
+    // offline is not something to tell anyone off about. A robot that appears and then can't be
+    // loaded IS reported, at the point the player asks for it.
+    private void CheckForPublishedRobots()
+    {
+        if (uploadConfig == null || !uploadConfig.IsConfigured) return;
+
+        StartCoroutine(RobotCatalogSync.Sync(catalog, uploadConfig, added =>
+        {
+            if (added <= 0) return;
+            BuildModelList();
+            ShowHeldCodes();
+        }));
     }
 
     // --- Button hooks (wired as persistent onClick listeners by the Build Home Scene tool) ---
@@ -543,7 +563,32 @@ public class HomeScreenController : MonoBehaviour
         int matches = CountModelsWithCode(code);
         if (matches == 0)
         {
+            // Not in this build — but that no longer means the code is wrong. A robot published
+            // since this version shipped is reachable only at an address computed from its code, so
+            // the only way to know whether this one names anything is to go and look.
+            if (uploadConfig != null && uploadConfig.IsConfigured)
+            {
+                SetCodeStatus("Checking…");
+                StartCoroutine(RobotCatalogSync.SyncCode(catalog, uploadConfig, code,
+                    found => AcceptCode(code, found, "No robot uses that code.")));
+                return;
+            }
+
             SetCodeStatus("No robot in this app uses that code.");
+            return;
+        }
+
+        AcceptCode(code, matches, "No robot in this app uses that code.");
+    }
+
+    // Banks a code once something has actually been found for it, and says how much. A code that
+    // matched nothing is still refused rather than stored: "entered, and nothing appeared" is
+    // indistinguishable from the feature being broken, and the player has no way to tell which.
+    private void AcceptCode(string code, int matches, string nothingFoundMessage)
+    {
+        if (matches <= 0)
+        {
+            SetCodeStatus(nothingFoundMessage);
             return;
         }
 

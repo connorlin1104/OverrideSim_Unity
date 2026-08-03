@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 // Instantiates the robot the player picked on the home screen into the field scene, and keeps it
@@ -27,6 +28,11 @@ public class RobotSpawner : MonoBehaviour
 {
     [Tooltip("The model catalog; the SelectedModel's prefab is spawned. Same asset the home screen uses.")]
     [SerializeField] private RobotModelCatalog catalog;
+
+    [Tooltip("Where downloadable robots come from. Only needed for catalog entries that are " +
+             "delivered as a bundle rather than compiled in; a build with no such robots can leave " +
+             "this empty.")]
+    [SerializeField] private RobotUploadConfig uploadConfig;
 
     [Tooltip("World position the robot is spawned at (the old inline robot's pose).")]
     [SerializeField] private Vector3 spawnPosition = new Vector3(15.99f, 0.974f, 7.91f);
@@ -108,18 +114,15 @@ public class RobotSpawner : MonoBehaviour
 
         RobotModelCatalog.Entry entry = catalog.SelectedModel;
 
-        // Fall back to the first entry that actually has a prefab, so a selection whose prefab
-        // hasn't been built yet still puts *a* robot on the field instead of an empty scene. The
-        // fallback is visible-only: a private model must not reach the field just because the
-        // selected one had no prefab.
-        if (entry == null || entry.prefab == null)
-        {
-            entry = catalog.FirstVisibleWithPrefab();
-        }
+        // Fall back to the first entry that names a robot at all, so a selection with nothing behind
+        // it still puts *a* robot on the field instead of an empty scene. The fallback is
+        // visible-only: a private model must not reach the field just because the selected one had
+        // nothing to spawn.
+        if (entry == null || !IsSpawnable(entry)) entry = catalog.FirstVisibleSpawnable();
 
-        if (entry == null || entry.prefab == null)
+        if (entry == null)
         {
-            Debug.LogWarning("RobotSpawner: no catalog entry has a prefab — no robot spawned.", this);
+            Debug.LogWarning("RobotSpawner: no catalog entry has a prefab or a bundle — no robot spawned.", this);
             return;
         }
 
@@ -131,8 +134,54 @@ public class RobotSpawner : MonoBehaviour
         // is what makes opening the field scene directly in the Editor behave the same.
         ControllerMapSettings.SeedDefault(entry);
 
-        GameObject robot = Instantiate(entry.prefab, spawnPosition, Quaternion.Euler(spawnEuler));
-        PlaceAndWatch(robot);
+        // A compiled-in robot spawns in Awake exactly as it always has — no coroutine, no frame of
+        // empty field, and no behaviour change for any robot that ships with the game. Only a robot
+        // that has to be read out of a bundle waits, because only that one can't be had immediately.
+        if (entry.prefab != null)
+        {
+            PlaceAndWatch(Instantiate(entry.prefab, spawnPosition, Quaternion.Euler(spawnEuler)));
+            return;
+        }
+
+        StartCoroutine(SpawnFromBundle(entry));
+    }
+
+    private static bool IsSpawnable(RobotModelCatalog.Entry entry) =>
+        entry != null && (entry.prefab != null || (entry.bundle != null && entry.bundle.IsSet));
+
+    // Loads a bundled robot and places it. The field is empty for as long as this takes, which on a
+    // first download is a real wait — the caller that got the player here is responsible for saying
+    // so; this is the last resort, not the progress bar.
+    private IEnumerator SpawnFromBundle(RobotModelCatalog.Entry entry)
+    {
+        GameObject prefab = null;
+        string error = null;
+        yield return RobotBundleService.Resolve(entry, uploadConfig, (loaded, message) =>
+        {
+            prefab = loaded;
+            error = message;
+        });
+
+        if (prefab == null)
+        {
+            // Put SOMETHING on the field. A player who can't drive has no way to tell a failed
+            // download from a broken game, and every built-in robot is right there and free.
+            RobotModelCatalog.Entry fallback = catalog.FirstVisibleWithPrefab();
+            if (fallback == null)
+            {
+                Debug.LogWarning($"RobotSpawner: couldn't load '{entry.displayName}' ({error}) and " +
+                                 "there is no built-in robot to fall back to — no robot spawned.", this);
+                yield break;
+            }
+
+            Debug.LogWarning($"RobotSpawner: couldn't load '{entry.displayName}' ({error}). " +
+                             $"Spawning '{fallback.displayName}' instead.", this);
+            ControllerMapSettings.SeedDefault(fallback);
+            PlaceAndWatch(Instantiate(fallback.prefab, spawnPosition, Quaternion.Euler(spawnEuler)));
+            yield break;
+        }
+
+        PlaceAndWatch(Instantiate(prefab, spawnPosition, Quaternion.Euler(spawnEuler)));
     }
 
     // Places `robot` at the geometry-derived spawn pose and starts watching it for falls. Awake
