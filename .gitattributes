@@ -1,2 +1,8 @@
 *.fbx filter=lfs diff=lfs merge=lfs -text
 *.dylib filter=lfs diff=lfs merge=lfs -text
+
+# Generated meshes: decimated copies written by Reduce Robot Meshes, and the collider hulls.
+# The project serializes assets as text (EditorSettings m_SerializationMode: 2), so a mesh lands as
+# YAML with its vertex buffer inline as hex — megabytes per robot of data that is never read as text,
+# never merged, and regenerated rather than edited. LFS is exactly the right place for it.
+Assets/RobotMeshes/**/*.asset filter=lfs diff=lfs merge=lfs -text
