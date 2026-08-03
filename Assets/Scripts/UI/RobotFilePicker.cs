@@ -39,9 +39,8 @@ public static class RobotFilePicker
     // The preference, said in full where a player is choosing a file. Lives here rather than in the
     // screen so the advice and the list it describes cannot drift apart.
     public const string FormatAdvice =
-        "Best: send your CAD, not an export of it. Made in Fusion 360 — export a .f3d. " +
-        "Any other CAD — export a .step. Both are far smaller and keep the exact shapes, so the " +
-        "robot comes out sharper. FBX, URDF and ZIP still work.";
+        "Send your CAD. Made in Fusion 360 — export a .f3d. " +
+        "Any other CAD — export a .step. FBX, URDF and ZIP also works.";
 
     // The short form, for one-line status messages. '.stp' is left out on purpose: it is accepted,
     // but naming both spellings in a list this size reads as two formats rather than one.

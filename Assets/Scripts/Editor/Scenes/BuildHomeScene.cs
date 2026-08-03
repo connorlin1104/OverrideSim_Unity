@@ -1210,16 +1210,15 @@ public class BuildHomeScene
         header.fontStyle = FontStyles.Bold;
         SetLayoutHeight(header.gameObject, 66f);
 
-        // "Arrives in an update" was doing a lot of unexplained work: nothing about a robot can be
-        // processed in the app (every setup step is an Editor-only API), so the finished robot is
-        // built into the next version on the App Store and the player has to install that version
-        // before it shows up. Say so, because the alternative reading — "it appears in my app in a
-        // few days" — is what makes a working submission look broken.
+        // Two facts, and only two: it takes days, and nobody has to keep checking. This used to
+        // spell out that the finished robot ships inside the next version of the app — true when it
+        // was written, and no longer: a published robot now arrives over the air (RobotCatalogSync
+        // at launch, and the inbox notice for one submitted from this device), so the update caveat
+        // would now be the misleading half.
         TextMeshProUGUI hint = CreateText("SubmitHint", content.transform,
-            "Send your robot and I'll set it up by hand — colliders, drivetrain and " +
-            "every mechanism. It then ships inside the next version of the app, so once you update " +
-            "you'll find it in your robot list. Usually a few days.", 26f);
-        SetLayoutHeight(hint.gameObject, 130f);
+            "Send your robot CAD to get set up. Will take a few days to process, you will be " +
+            "notified when it gets complete.", 26f);
+        SetLayoutHeight(hint.gameObject, 96f);
 
         parts.team = CreateInputField("TeamInput", content.transform, "Team (e.g. 654V)", 32f);
         SetLayoutHeight(parts.team.gameObject, 68f);
@@ -1249,7 +1248,7 @@ public class BuildHomeScene
         TextMeshProUGUI formatHint = CreateText("SubmitFormatHint", content.transform,
             RobotFilePicker.FormatAdvice, 24f);
         formatHint.fontStyle = FontStyles.Italic;
-        SetLayoutHeight(formatHint.gameObject, 116f);
+        SetLayoutHeight(formatHint.gameObject, 90f); // three lines at 24pt across this panel
 
         parts.chooseFile = CreateButton("ChooseFileButton", content.transform, "Choose File", 36f, NeutralColor);
         SetLayoutHeight(parts.chooseFile.gameObject, 72f);
@@ -1828,8 +1827,8 @@ public class BuildHomeScene
     // The list SCROLLS inside the column rather than growing without bound. With the picker at its
     // natural height, a player who has unlocked fifteen robots pushes Match, Field and every other
     // Robot-page row down by a screen and a half — the picker stops being one section of a page and
-    // becomes the page. `viewportSize` is how the controller caps it: the column grows with its
-    // contents up to a limit and scrolls after that (see HomeScreenController.ResizeModelColumns).
+    // becomes the page. `viewportSize` is the window the controller sizes: a fixed three rows for
+    // both halves, scrolling past that (see HomeScreenController.ResizeModelColumns).
     private static Transform CreateModelColumn(Transform parent, string columnName, string listName,
         string title, out LayoutElement viewportSize)
     {

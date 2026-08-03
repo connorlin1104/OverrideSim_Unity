@@ -4,8 +4,8 @@ using UnityEngine;
 //
 // The submission flow is deliberately developer-in-the-loop: a player's FBX/URDF lands in cloud
 // storage, Connor sets it up in the Unity editor (collider generation, the drivetrain rig and the
-// mechanism joints are all Editor-only APIs, and the catalog holds direct prefab references), and the
-// finished robot ships back in an app update. Nothing about an upload can be processed in the app.
+// mechanism joints are all Editor-only APIs), and the finished robot is published back to the same
+// project the app syncs its catalog from. Nothing about an upload can be processed in the app.
 //
 // Backend is Firebase, driven over plain REST with UnityWebRequest — no SDK, no extra packages.
 // Anonymous Auth gives each device a stable uploader id; Storage takes the file.
@@ -29,13 +29,10 @@ public class RobotUploadConfig : ScriptableObject
              "generous cap is realistic — but a phone upload that size takes a while.")]
     public int maxUploadMegabytes = 250;
 
-    [Tooltip("Shown on the submit screen so players know what happens after they send a robot. Say " +
-             "plainly that it ships inside a new app version — 'arrives in an update' reads to a " +
-             "player as 'appears in the app I already have'.")]
-    [TextArea(2, 4)]
-    public string turnaroundNote =
-        "Your robot is set up by hand, so it takes a few days. It then ships inside the next " +
-        "version of the app — update, and it'll be in your robot list.";
+    // NOTE: a `turnaroundNote` string used to live here, shown on the submit screen so players knew
+    // what happens after they send a robot. It is gone: the screen says it in its own hint now, and
+    // a second copy of the same sentence sat right above the Back button. A config knob whose text
+    // nothing reads is worse than no knob — someone edits it and nothing changes.
 
     // Everything needed to actually upload. When false the submit screen still works as far as
     // picking a file, then says the destination hasn't been set up yet rather than failing mid-upload.

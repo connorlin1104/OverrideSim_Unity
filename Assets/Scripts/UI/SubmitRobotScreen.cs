@@ -10,8 +10,9 @@ using UnityEngine.UI;
 // RobotFilePicker.AcceptedExtensions carries both the list and the reason.
 //
 // It is honest about what happens next — the robot is set up by hand in the Unity editor (collider
-// generation, the drivetrain rig and every mechanism joint are Editor-only APIs, and the catalog
-// holds direct prefab references) and comes back in an app update. Nothing here processes the file.
+// generation, the drivetrain rig and every mechanism joint are Editor-only APIs), which is why it
+// takes days rather than seconds. Nothing here processes the file; it comes back published, and the
+// home screen picks it up on its own (RobotCatalogSync, and the inbox notice for this device).
 //
 // Built and wired by Tools > RoboSim > Scenes > Build Home Screen, same as the other sub-screens.
 public class SubmitRobotScreen : MonoBehaviour
@@ -62,14 +63,13 @@ public class SubmitRobotScreen : MonoBehaviour
         RefreshSharingLabel();
         RefreshSendButton();
 
-        if (config == null || !config.IsConfigured)
-        {
-            SetStatus("Submitting isn't switched on in this build yet.");
-        }
-        else
-        {
-            SetStatus(config.turnaroundNote);
-        }
+        // Opens with nothing to say. The turnaround — a few days, and you'll be told when it's done
+        // — is on the panel's own hint at the top now, so repeating it here only put a second copy
+        // of the same sentence directly above Back. This label's job is the part the hint can't
+        // cover: what just happened.
+        SetStatus(config == null || !config.IsConfigured
+            ? "Submitting isn't switched on in this build yet."
+            : string.Empty);
     }
 
     public void Close()
@@ -221,7 +221,7 @@ public class SubmitRobotScreen : MonoBehaviour
             return;
         }
 
-        SetStatus(message + " " + (config != null ? config.turnaroundNote : string.Empty));
+        SetStatus(message);
         selectedPath = null;
         RefreshFileLabel();
         RefreshSendButton();

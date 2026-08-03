@@ -339,44 +339,48 @@ public class HomeScreenController : MonoBehaviour
         RefreshHighlight();
     }
 
-    // How tall the picker's two columns are allowed to get before they start scrolling instead of
-    // growing. Four rows plus a sliver of the fifth: the part-row is the whole affordance — a column
-    // cut cleanly between rows reads as a complete list, and nobody scrolls a list they think they
-    // can already see all of.
-    private const float ModelColumnMaxHeight = 400f;
+    // How many rows tall each column stands, whatever it happens to hold: a fixed window, not a box
+    // fitted to its contents. Three is what the public list ships with, so nothing already there has
+    // to be scrolled up to — and the Private column keeps the same height with one robot in it,
+    // where an empty strip below the row reads as "you have one" and a column that shrank to fit
+    // read as a layout bug next to its taller neighbour. A fourth robot scrolls.
+    private const int ModelColumnRows = 3;
 
-    // The floor stops a single-robot column from collapsing to something that looks broken next to a
-    // full one, and matches the empty-state label's own height.
-    private const float ModelColumnMinHeight = 120f;
-
-    // Both columns get the SAME height — the taller one's, capped. Sizing them independently would
-    // put a short Private column next to a tall Public one, and two mismatched boxes read as a
-    // layout bug rather than as "you have fewer of these".
+    // Both columns get the SAME height, computed from what the scene builder authored — the row
+    // template's own preferred height and the list's own spacing — so the row size stays owned by
+    // BuildHomeScene alone rather than being duplicated here.
     //
-    // Measured off the built rows rather than computed from a row count, so the row height, the
-    // spacing and the empty label's size all stay owned by the scene builder alone: this can't drift
-    // out of step with BuildHomeScene the way a duplicated 84f would.
+    // NOT measured off the built rows, which is what this used to do and why a three-robot list
+    // scrolled: BuildModelList runs from Start with the settings panel still INACTIVE, and layout
+    // does not rebuild on an inactive object however hard you force it, so both columns measured the
+    // authored zero and collapsed to the old 120-unit floor — a hair over one row.
     private void ResizeModelColumns()
     {
         if (publicListViewport == null || privateListViewport == null) return;
 
-        float tallest = Mathf.Max(NaturalHeight(publicModelListParent),
-                                  NaturalHeight(privateModelListParent));
-        float height = Mathf.Clamp(tallest, ModelColumnMinHeight, ModelColumnMaxHeight);
+        float height = ModelColumnRows * RowHeight() + (ModelColumnRows - 1) * RowSpacing();
         publicListViewport.preferredHeight = height;
         privateListViewport.preferredHeight = height;
     }
 
-    // A scroll content's height comes from its ContentSizeFitter, which hasn't run yet on the frame
-    // the rows are created — so force it, or every column measures zero on the first build and the
-    // picker comes up at its minimum until something else dirties the layout.
-    private static float NaturalHeight(Transform list)
+    // One row's authored height, off the template every row is cloned from. The fallbacks here and
+    // in RowSpacing are for a scene built without them: a zero would make the columns vanish
+    // outright, which is a far worse failure than being 84 units out.
+    private float RowHeight()
     {
-        if (list == null) return 0f;
+        LayoutElement size = modelButtonTemplate != null
+            ? modelButtonTemplate.GetComponent<LayoutElement>()
+            : null;
+        return size != null && size.preferredHeight > 0f ? size.preferredHeight : 84f;
+    }
 
-        var rect = (RectTransform)list;
-        LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
-        return rect.rect.height;
+    // The gap the list's own layout group leaves between rows.
+    private float RowSpacing()
+    {
+        VerticalLayoutGroup layout = publicModelListParent != null
+            ? publicModelListParent.GetComponent<VerticalLayoutGroup>()
+            : null;
+        return layout != null ? layout.spacing : 12f;
     }
 
     // Destroy the current clones and rebuild the list — after a team code is entered or forgotten,
