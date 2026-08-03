@@ -80,24 +80,49 @@ So the flow is: player uploads → you set it up in the editor → it ships in t
 Until the bucket and key are set, the screen still opens and lets a player pick a file, and then says
 submitting isn't switched on yet — it never fails halfway through an upload.
 
-Uploads land as `uploads/<TEAM>_<uploaderId>/<Robot>-<filename>`, with a `<...>.json` sidecar next to
-each one holding the team, robot name, contact, notes, **who the uploader wants to be able to use
-it**, app version and timestamp. Firebase does not notify you on its own; either check the Storage
-tab or add a Cloud Function on finalize to email yourself.
+Uploads land as `uploads/<when>_<TEAM>_<uploaderId>/<Robot>-<filename>`, with a `<...>.json` sidecar
+next to each one holding the team, robot name, contact, notes, **who the uploader wants to be able to
+use it**, app version and timestamp. Firebase does not notify you on its own; either check the
+Storage tab or add a Cloud Function on finalize to email yourself.
+
+```
+uploads/20260802-143205_654V_aB3dEfGhIjKlMnOpQrStUvWxYz12/CLAW-export.fbx
+uploads/20260802-143205_654V_aB3dEfGhIjKlMnOpQrStUvWxYz12/CLAW-export.fbx.json
+```
+
+**Read it as a queue.** Storage sorts object names as text and has no sort-by-date, so the fixed-width
+UTC stamp on the front is what makes "the newest submissions" somewhere you can look instead of
+something you have to work out. Sort ascending and new ones arrive at the bottom; descending and they
+arrive at the top. The width is fixed and the order of the fields is `yyyyMMdd-HHmmss` precisely so
+text order and time order are the same order — `RobotInboxValidation` asserts that across a
+single-digit day, a two-digit month and a year rollover, because a listing that claims to be
+chronological and isn't is worse than one that never claimed it.
+
+The stamp is the *sending device's* clock, taken from the submission's own `submittedAtUtc` so the
+folder name and the sidecar inside it can never disagree. A phone set to next year sorts itself to the
+end. The sidecar is the record; the folder name is the index.
 
 The folder used to be the bare uploader id, which is a 28-character random string: a listing of
 twenty of them says nothing about whose robot any of them is, so every one had to be opened to find
-out. The team goes first so the listing sorts by team and a team's submissions sit together — but the
-id stays on the end, because it is what actually groups a player's uploads (a team name is typed
-fresh each time and two people can both write "654V"), and because it is the key their inbox is
+out. The id stays on the end, because it is what actually groups a player's uploads (a team name is
+typed fresh each time and two people can both write "654V"), and because it is the key their inbox is
 written under, so you can reply without opening the sidecar. **The id is everything after the LAST
-underscore**: the team is upper-cased and every non-alphanumeric character in it becomes `-`, so `_`
-appears exactly once. `NOTEAM_<id>` is what you get when the team field was left blank.
+underscore**: the stamp contains none, and the team is upper-cased with every non-alphanumeric
+character folded to `-`, so there are exactly two. `<when>_NOTEAM_<id>` is what you get when the team
+field was left blank.
 
-The file carries the robot name for the same reason — a team that sends three robots would otherwise
-get three files called `export.fbx` and the last would silently replace the other two. Re-sending the
-*same* robot still overwrites, which is intended: a player who fixes their CAD is replacing what they
-sent, not adding to it.
+What the timestamp costs, so it isn't a surprise: one player's submissions no longer sit together,
+and a **resubmission lands beside the original instead of replacing it**. Both are the right trade —
+a queue is read newest-first far more often than by-team, and seeing that someone fixed their CAD and
+sent it again is worth more than the old copy's space, which the 30-day lifecycle rule reclaims
+anyway.
+
+The file carries the robot name because a file called `export.fbx` is a file you have to download to
+identify, and a Fusion export is called `export.fbx` more often than anything else. It is also the
+name that lands in your Downloads folder on the way into Unity.
+
+Folders from before this change keep their old `<TEAM>_<id>` (or bare-`<id>`) names and sort above
+every timestamped one. Nothing migrates and nothing needs to.
 
 Submissions made before this change sit under a bare-id folder. Nothing migrates them and nothing
 needs to — the id is still in the name, and the sidecar still says whose it is.

@@ -216,41 +216,52 @@ public static class RobotInboxValidation
             "An inbox file written before the `id` field stopped parsing.");
     }
 
-    // The Storage path a submission lands at. Two properties have to hold, and both fail silently:
-    // the path must stay TWO segments under uploads/ (storage.rules matches exactly that, so a third
-    // segment is refused with a 403 the player sees as "the upload failed"), and the uploader id must
-    // still be recoverable from the folder name, since that is what the reply is addressed to.
+    // The Storage path a submission lands at. Three properties have to hold, and all of them fail
+    // silently: the path must stay TWO segments under uploads/ (storage.rules matches exactly that,
+    // so a third segment is refused with a 403 the player sees as "the upload failed"), the uploader
+    // id must still be recoverable from the folder name since that is what the reply is addressed
+    // to, and the names must SORT into upload order — a listing that claims to be chronological and
+    // isn't is worse than one that never claimed it, because the newest submission is then simply
+    // missed.
     private const string Uid = "aB3dEfGhIjKlMnOpQrStUvWxYz12";
+    private const string Sent = "2026-08-02T14:32:05.1234567Z";
+    private const string SentStamp = "20260802-143205";
 
     private static void CheckUploadPaths(Checks checks)
     {
-        string folder = RobotUploadService.UploadFolderName("654V", Uid);
-        checks.That(folder == "654V_" + Uid, $"An ordinary team folder is wrong: '{folder}'.");
+        string folder = RobotUploadService.UploadFolderName(Sent, "654V", Uid);
+        checks.That(folder == $"{SentStamp}_654V_{Uid}", $"An ordinary team folder is wrong: '{folder}'.");
 
-        // The rule that makes the id recoverable: the team contributes no underscore, ever, so the
-        // last one is always the separator. Test the shapes that would break it.
+        CheckUploadOrder(checks);
+
+        // The rule that makes the id recoverable: neither the stamp nor the team contributes an
+        // underscore, ever, so the LAST one is always the separator. Test the shapes that would
+        // break it.
         string[] awkward = { "654V", "654 V", "654_V", "654-V", "Team 654V!!", "  654v  ", "654/V" };
         foreach (string team in awkward)
         {
-            string name = RobotUploadService.UploadFolderName(team, Uid);
+            string name = RobotUploadService.UploadFolderName(Sent, team, Uid);
             int split = name.LastIndexOf('_');
             checks.That(split >= 0 && name.Substring(split + 1) == Uid,
                 $"The uploader id is not recoverable from '{name}' (team '{team}').");
-            checks.That(name.IndexOf('_') == split,
-                $"Team '{team}' put a second underscore in the folder name '{name}'.");
+            checks.That(CountChar(name, '_') == 2,
+                $"Team '{team}' changed the underscore count in '{name}' — it must be exactly " +
+                "stamp_team_id, or the id can't be split back out.");
             checks.That(name.IndexOf('/') < 0, $"Team '{team}' put a '/' in the folder name '{name}'.");
         }
 
-        // A blank team still produces a usable, id-bearing folder rather than one starting with '_'.
-        string noTeam = RobotUploadService.UploadFolderName("   ", Uid);
-        checks.That(noTeam == "NOTEAM_" + Uid, $"A blank team gave '{noTeam}'.");
+        // A blank team still produces a usable, id-bearing folder rather than one with an empty
+        // middle field.
+        string noTeam = RobotUploadService.UploadFolderName(Sent, "   ", Uid);
+        checks.That(noTeam == $"{SentStamp}_NOTEAM_{Uid}", $"A blank team gave '{noTeam}'.");
 
         // Free text: someone will paste a sentence in. It must be cut, not carried.
         string longTeam = RobotUploadService.UploadFolderName(
-            "The Best Robotics Team In The Entire World 654V", Uid);
-        checks.That(longTeam.LastIndexOf('_') <= 24,
+            Sent, "The Best Robotics Team In The Entire World 654V", Uid);
+        checks.That(longTeam.Length - longTeam.LastIndexOf('_') - 1 == Uid.Length,
             $"A pasted sentence was not truncated: '{longTeam}'.");
         checks.That(longTeam.EndsWith("_" + Uid), "Truncation ate the uploader id.");
+        checks.That(longTeam.StartsWith(SentStamp + "_"), "Truncation ate the upload stamp.");
 
         // The file carries the robot so three robots from one team aren't three export.fbx.
         checks.That(RobotUploadService.UploadFileName("Claw Bot", "export.fbx") == "CLAW-BOT-export.fbx",
@@ -262,5 +273,71 @@ public static class RobotInboxValidation
             "A robot named after its file got the name twice.");
         checks.That(RobotUploadService.UploadFileName("Claw/../..", "a/b.fbx").IndexOf('/') < 0,
             "A '/' survived into the object name, which would add a path segment.");
+    }
+
+    // The property the whole rename exists for: Storage sorts object names as TEXT and offers no
+    // sort-by-date, so "newest submissions are at one end of the listing" is true only if the text
+    // order and the time order are the same order. Every case below is a way for that to come apart
+    // silently — and the failure looks like a submission that never arrived, because the newest one
+    // is sitting in the middle of the list where nobody looks.
+    private static void CheckUploadOrder(Checks checks)
+    {
+        // Chronological, and deliberately crossing every boundary where an unpadded or
+        // wrongly-ordered field would sort backwards: single-digit month and day against
+        // double-digit ones, and a year rollover.
+        string[] chronological =
+        {
+            "2026-08-02T09:05:01Z",
+            "2026-08-02T14:32:05Z",
+            "2026-08-09T01:00:00Z",
+            "2026-08-20T01:00:00Z",
+            "2026-11-02T01:00:00Z",
+            "2026-12-31T23:59:59Z",
+            "2027-01-01T00:00:00Z",
+        };
+
+        string previous = null;
+        foreach (string sent in chronological)
+        {
+            string name = RobotUploadService.UploadFolderName(sent, "654V", Uid);
+            checks.That(previous == null || string.CompareOrdinal(previous, name) < 0,
+                $"'{name}' does not sort after '{previous}', so the listing is not in upload order.");
+            previous = name;
+        }
+
+        // A stamp carrying a local offset must be CONVERTED, not truncated to its wall-clock digits
+        // — two players in different timezones submitting in the same minute would otherwise be
+        // hours apart in the listing, and neither would be where the clock says.
+        checks.That(RobotUploadService.UploadStamp("2026-08-02T09:32:05-05:00") == SentStamp,
+            "A stamp with a timezone offset was not converted to UTC: got " +
+            $"'{RobotUploadService.UploadStamp("2026-08-02T09:32:05-05:00")}', expected '{SentStamp}'.");
+        checks.That(RobotUploadService.UploadStamp("2026-08-02T14:32:05") == SentStamp,
+            "A stamp with no timezone was not read as UTC.");
+
+        // Fixed width, no separator that could be mistaken for the folder's. A stamp that varied in
+        // length would break ordinal ordering the moment a field went from one digit to two.
+        checks.That(RobotUploadService.UploadStamp(Sent).Length == SentStamp.Length,
+            "The upload stamp is not fixed width.");
+        checks.That(RobotUploadService.UploadStamp(Sent).IndexOf('_') < 0,
+            "The upload stamp contains an underscore, which breaks the id split.");
+
+        // Garbage in must not produce a BLANK stamp: an empty first field sorts above every real
+        // one, so the least trustworthy submissions would permanently occupy the newest-first slot.
+        foreach (string junk in new[] { null, "", "   ", "yesterday", "02/08/2026 maybe" })
+        {
+            string stamp = RobotUploadService.UploadStamp(junk);
+            checks.That(stamp.Length == SentStamp.Length,
+                $"An unreadable timestamp ('{junk}') gave a non-standard stamp '{stamp}'.");
+            string name = RobotUploadService.UploadFolderName(junk, "654V", Uid);
+            checks.That(name.EndsWith("_" + Uid) && CountChar(name, '_') == 2,
+                $"An unreadable timestamp broke the folder shape: '{name}'.");
+        }
+    }
+
+    private static int CountChar(string text, char c)
+    {
+        int n = 0;
+        foreach (char ch in text) if (ch == c) n++;
+        return n;
     }
 }

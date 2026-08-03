@@ -1,9 +1,10 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // uploads/<TEAM>_<uploaderId>/<Robot>-<file>. The folder is named for readability in the Storage
-    // console; nothing here checks it, and nothing can — anonymous sign-up mints a new uid on every
-    // call, so the signed-in uid never matches the stored one a player's folder is named after.
+    // uploads/<when>_<TEAM>_<uploaderId>/<Robot>-<file>. The folder is named for readability and
+    // sort order in the Storage console; nothing here checks it, and nothing can — anonymous
+    // sign-up mints a new uid on every call, so the signed-in uid never matches the stored one a
+    // player's folder is named after, and the timestamp is the sending device's own clock.
     // Treat /uploads as untrusted input, which it is anyway, being arbitrary player files.
     //
     // Exactly two segments: a third would match no rule at all and be refused.
@@ -16,5 +17,6 @@ service firebase.storage {
       allow read: if true;
       allow write: if false;
     }
+
   }
 }
