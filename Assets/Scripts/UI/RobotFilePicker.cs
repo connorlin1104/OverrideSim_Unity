@@ -16,8 +16,36 @@ using UnityEngine;
 // it and everything above keeps working.
 public static class RobotFilePicker
 {
-    // What a robot can arrive as. URDF needs its meshes too, hence the archive formats.
-    public static readonly string[] AcceptedExtensions = { "fbx", "urdf", "zip" };
+    // What a robot can arrive as, best first.
+    //
+    // The CAD formats lead because they are the only ones that still hold the exact surfaces. An FBX
+    // is already tessellated — whatever refinement the sender's export happened to use is baked in,
+    // and the only thing anyone can do to it afterwards is decimate, which is a lossy guess at
+    // geometry that was exact one step earlier. From a .step or .f3d the mesh is generated at
+    // whatever density the simulator wants, and small features like screw holes come out right by
+    // construction rather than by being preserved. It is also about 100x smaller: the same robot is
+    // ~100 MB of triangles or a couple of MB of surfaces.
+    //
+    // .f3d is Fusion's own archive; .step is what every other CAD package exports. Both keep the
+    // component names the setup tools read, which is the only structure this project needs.
+    // '.stp' is the same format as '.step' — exporters are split roughly evenly between the two
+    // spellings, and a player whose file is silently refused has no way to work out why.
+    //
+    // FBX/URDF/ZIP stay accepted because they are what people already have. URDF needs its meshes
+    // alongside it, hence the archive format.
+    public static readonly string[] AcceptedExtensions =
+        { "step", "stp", "f3d", "fbx", "urdf", "zip" };
+
+    // The preference, said in full where a player is choosing a file. Lives here rather than in the
+    // screen so the advice and the list it describes cannot drift apart.
+    public const string FormatAdvice =
+        "Best: send your CAD, not an export of it. Made in Fusion 360 — export a .f3d. " +
+        "Any other CAD — export a .step. Both are far smaller and keep the exact shapes, so the " +
+        "robot comes out sharper. FBX, URDF and ZIP still work.";
+
+    // The short form, for one-line status messages. '.stp' is left out on purpose: it is accepted,
+    // but naming both spellings in a list this size reads as two formats rather than one.
+    public const string AcceptedList = ".step, .f3d, .fbx, .urdf or .zip";
 
     // True when the platform can open a real file dialog; false means the player uses the inbox.
     public static bool CanBrowse

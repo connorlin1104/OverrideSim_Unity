@@ -190,7 +190,14 @@ For that folder to be visible in the iOS Files app the build needs `UIFileSharin
 `LSSupportsOpeningDocumentsInPlace` set to `YES` in Info.plist (Xcode, or a post-build script).
 If a native picker is added later, `ROBOSIM_NATIVE_FILE_PICKER` is the seam in `RobotFilePicker`.
 
-Accepted: `.fbx`, `.urdf`, `.zip` (a URDF needs its meshes, hence the archive).
+Accepted, best first: `.step` / `.stp`, `.f3d`, then `.fbx`, `.urdf`, `.zip` (a URDF needs its
+meshes, hence the archive). The screen says which to prefer in as many words — *Fusion 360 → export
+a `.f3d`; any other CAD → export a `.step`* — because the choice is made in the exporter, before the
+app ever sees a file. The mesh formats stay accepted: a player who only has an FBX should send the
+FBX rather than give up. If CAD becomes the norm they can be dropped later.
+
+`.stp` and `.step` are the same format. Both are listed because exporters are split between the two
+spellings, and a file silently refused for a spelling tells the sender nothing.
 
 **Size is the real constraint.** The robot FBX files in this project run 100–205 MB. A phone upload
 that size takes a while, so the screen shows progress and checks for a connection first.
@@ -242,12 +249,29 @@ exact surfaces, so refinement stays a decision that can be made later instead of
 sender. Once it is an FBX the surfaces are gone: re-exporting a tessellated mesh cannot recover them,
 and reducing it afterwards means decimating, which is a strictly worse tool for the job (see the
 decimation note in [Robot-Delivery.md](Robot-Delivery.md) — the failure mode is exactly the holes in
-VEX metal). Neither format is accepted by the picker today, so this is an ask over email for now.
+VEX metal). **Both formats are accepted by the picker, and the screen asks for them first.**
 
-**Which means the practical answer is usually: do it yourself.** Ask the sender for the `.f3d` or
-`.step`, open it in Fusion, and export the FBX at the refinement you want. That is the one path where
-the person choosing the tessellation is the person who knows what the simulator needs, and it makes
-every number above someone else's problem. Treat the guidance in this section as what to tell a
+`.step` is the one to ask for. It is what every CAD package exports — Onshape, SolidWorks, Inventor,
+Creo, FreeCAD — where `.f3d` exists only if the sender happens to be on Fusion. It also asks for
+less: an `.f3d` carries the whole parametric design, sketches and timeline included, while a `.step`
+carries the shape. For a robot someone may have marked private, the smaller ask is the right default.
+
+What `.step` drops, this pipeline discards anyway. Joints are rebuilt as ArticulationBodies in Unity
+regardless; appearances don't matter because the plastic-vs-metal gate is name-based
+(`IsUnderPlastic` in `GeneratePartColliders.cs`). What the setup tools actually read is the component
+names and hierarchy — and STEP keeps both. Take the `.f3d` when a Fusion team's STEP export comes out
+mangled, which occasionally happens on thin walls and patterns.
+
+**Which means the practical answer is usually: do it yourself.** Open the `.step` or `.f3d` in Fusion
+and export the FBX at the refinement you want. That is the one path where the person choosing the
+tessellation is the person who knows what the simulator needs, and it makes every number above
+someone else's problem.
+
+**An FBX will not do for this.** Fusion does import FBX, so it is tempting — but it arrives as a
+*mesh body*. Refinement is not a property of a mesh; it is what happens when a surface is
+tessellated, and that already happened on the sender's machine. The only size control Fusion offers
+on a mesh body is **Reduce**, which is quadric decimation: the same class of tool, on the same
+geometry, that put the holes wrong in the metal. Treat the guidance in this section as what to tell a
 sender who can only give you an FBX.
 
 ## Setting up a submission when it arrives

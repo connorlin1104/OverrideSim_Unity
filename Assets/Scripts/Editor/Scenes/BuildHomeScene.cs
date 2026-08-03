@@ -194,6 +194,10 @@ public class BuildHomeScene
         // banner it used to be — a scene built before that has neither of these objects.
         if (FindDescendantRect(scene, "InboxMessageViewport") == null) return false;
         if (FindDescendantRect(scene, "InboxPanel") == null) return false;
+        // The submit screen now asks for CAD (.step/.f3d) ahead of a mesh export. That advice is a
+        // plain label with no serialized ref, so without this check a scene built before it would
+        // still validate and the one line that changes what people send would never ship.
+        if (FindDescendantRect(scene, "SubmitFormatHint") == null) return false;
 
         // Inverted checks: catalog authoring moved out of the game and into
         // Tools > RoboSim > Robot > Model Catalog. While these objects still exist in the committed
@@ -1212,7 +1216,7 @@ public class BuildHomeScene
         // before it shows up. Say so, because the alternative reading — "it appears in my app in a
         // few days" — is what makes a working submission look broken.
         TextMeshProUGUI hint = CreateText("SubmitHint", content.transform,
-            "Send your robot's FBX or URDF and I'll set it up by hand — colliders, drivetrain and " +
+            "Send your robot and I'll set it up by hand — colliders, drivetrain and " +
             "every mechanism. It then ships inside the next version of the app, so once you update " +
             "you'll find it in your robot list. Usually a few days.", 26f);
         SetLayoutHeight(hint.gameObject, 130f);
@@ -1237,6 +1241,15 @@ public class BuildHomeScene
         parts.sharing = CreateButton("SharingButton", content.transform,
             "Who can use it:  " + RobotUploadService.SharingOptions[0], 28f, NeutralColor);
         SetLayoutHeight(parts.sharing.gameObject, 72f);
+
+        // Which format to send, said immediately above the button that picks one — the only moment
+        // the advice can still change what someone exports. It reads as a preference rather than a
+        // rule because all six formats are genuinely accepted; a player who only has an FBX should
+        // send the FBX rather than give up.
+        TextMeshProUGUI formatHint = CreateText("SubmitFormatHint", content.transform,
+            RobotFilePicker.FormatAdvice, 24f);
+        formatHint.fontStyle = FontStyles.Italic;
+        SetLayoutHeight(formatHint.gameObject, 116f);
 
         parts.chooseFile = CreateButton("ChooseFileButton", content.transform, "Choose File", 36f, NeutralColor);
         SetLayoutHeight(parts.chooseFile.gameObject, 72f);

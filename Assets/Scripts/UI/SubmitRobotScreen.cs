@@ -5,7 +5,9 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-// The "Submit a Robot" screen: a player picks their FBX/URDF, says who they are, and sends it in.
+// The "Submit a Robot" screen: a player picks their robot file, says who they are, and sends it in.
+// CAD (.step/.f3d) is what the screen asks for and a mesh export (.fbx/.urdf/.zip) is the fallback —
+// RobotFilePicker.AcceptedExtensions carries both the list and the reason.
 //
 // It is honest about what happens next — the robot is set up by hand in the Unity editor (collider
 // generation, the drivetrain rig and every mechanism joint are Editor-only APIs, and the catalog
@@ -97,8 +99,8 @@ public class SubmitRobotScreen : MonoBehaviour
         }
         if (inbox.Count == 0)
         {
-            SetStatus("No robot files found. Copy your .fbx, .urdf or .zip into this app's folder " +
-                      "using the Files app, then tap Choose File again.");
+            SetStatus($"No robot files found. Copy your {RobotFilePicker.AcceptedList} into this " +
+                      "app's folder using the Files app, then tap Choose File again.");
             return;
         }
 
@@ -111,7 +113,7 @@ public class SubmitRobotScreen : MonoBehaviour
     {
         if (!RobotFilePicker.LooksLikeRobotFile(path))
         {
-            SetStatus("That isn't a robot file — send a .fbx, .urdf, or a .zip containing them.");
+            SetStatus($"That isn't a robot file — send {RobotFilePicker.AcceptedList}.");
             return;
         }
 
