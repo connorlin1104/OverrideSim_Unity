@@ -195,6 +195,61 @@ Accepted: `.fbx`, `.urdf`, `.zip` (a URDF needs its meshes, hence the archive).
 **Size is the real constraint.** The robot FBX files in this project run 100–205 MB. A phone upload
 that size takes a while, so the screen shows progress and checks for a connection first.
 
+## Why a submission is 100 MB, and what shrinks it
+
+This is measured, not estimated — a byte census of every array in `Ryan_CascadeRobot.fbx`
+(654V v3, 102.9 MB, binary FBX 7200):
+
+| array | on disk | uncompressed | share of file |
+|---|---|---|---|
+| **Normals** | **42.0 MB** | 212.9 MB | **41%** |
+| Vertices (positions) | 21.4 MB | 35.7 MB | 21% |
+| UV | 15.5 MB | 34.8 MB | 15% |
+| PolygonVertexIndex | 13.1 MB | 35.8 MB | 13% |
+| UVIndex | 8.7 MB | 35.8 MB | 8% |
+| everything else | 2.2 MB | — | 2% |
+
+Five arrays are 97.8% of the file, and the same ratios hold on all four robots in the project.
+
+Four things follow, and only the last one is actionable:
+
+- **Normals are the biggest single line, at 41%.** They are written `ByPolygonVertex` — one 24-byte
+  `float64` normal per *triangle corner*, 9.4 million of them. A flat face repeats the identical
+  normal on every corner, which is why it deflates 5.1×; 42 MB survives anyway. Unity re-welds most
+  of it on import.
+- **A quarter of every upload is UVs, and this project has no textures at all.** `UV` + `UVIndex` are
+  24.2 MB of coordinates nothing samples.
+- **It is not duplicated geometry.** 3,169 scene objects reference 223 distinct meshes, so the export
+  is properly instanced and a repeated screw is stored once. There is nothing to win here.
+- **It is tessellation, and it is concentrated.** 1,561,391 positions across 223 parts, but the median
+  part is 1,260. **The top 10 parts are 47.6% of all positions**; the biggest is 186,505. On the
+  360 RPM Drivetrain it is starker — top 10 of 39 parts is 90.4%.
+
+So the size is set by **corner count**, not part count, and corner count is set by the CAD refinement
+setting. A tolerance meant for machining detonates on a plate full of holes and costs nothing on a
+simple bracket, which is why a handful of bodies carry half the file.
+
+**What a sender can do**, in order of leverage:
+
+1. **Export at a lower mesh refinement.** In Fusion's FBX export this is the refinement control —
+   Low or Medium rather than High. This is the whole ballgame.
+2. **Re-tessellate only the worst bodies.** Half the file is 10 bodies out of 223; the other 213 are
+   already fine and touching them buys nothing.
+3. **Turn off UV export** if the exporter offers it. 24% off, and it costs nothing here.
+
+**Better still, send the CAD.** A `.f3d` or `.step` is a fraction of the size *and* still holds the
+exact surfaces, so refinement stays a decision that can be made later instead of one baked in by the
+sender. Once it is an FBX the surfaces are gone: re-exporting a tessellated mesh cannot recover them,
+and reducing it afterwards means decimating, which is a strictly worse tool for the job (see the
+decimation note in [Robot-Delivery.md](Robot-Delivery.md) — the failure mode is exactly the holes in
+VEX metal). Neither format is accepted by the picker today, so this is an ask over email for now.
+
+**Which means the practical answer is usually: do it yourself.** Ask the sender for the `.f3d` or
+`.step`, open it in Fusion, and export the FBX at the refinement you want. That is the one path where
+the person choosing the tessellation is the person who knows what the simulator needs, and it makes
+every number above someone else's problem. Treat the guidance in this section as what to tell a
+sender who can only give you an FBX.
+
 ## Setting up a submission when it arrives
 
 1. Download the file and its `.json` sidecar from the Storage bucket.
@@ -216,9 +271,10 @@ looked, and the player has no way to tell which it was.
 
 ## Telling a player what happened
 
-The app can't download a finished robot — it ships inside a new app version — but it can say the
-robot is here and enter the code for them, or explain why it isn't coming. Otherwise the only reply
-channel is the free-text contact field, and a typo there orphans a submission for good.
+Whichever way the robot travels — compiled into a new app version, or published as a bundle it can
+download ([Robot-Delivery.md](Robot-Delivery.md)) — the app still has to *say* it arrived and enter
+the code, or explain why it isn't coming. Otherwise the only reply channel is the free-text contact
+field, and a typo there orphans a submission for good.
 
 Upload a file to `inbox/<uploaderId>.json` in the same bucket, where `<uploaderId>` is the folder name
 their submission arrived under. One file, two kinds of item:
@@ -283,8 +339,18 @@ screenshotting the robot, and no software prevents it.
 
 ## What "private" does and doesn't mean
 
-A private robot still ships inside the app; it is filtered out of the model picker, the controller
-config screen and the spawner until its owner enters the code. That stops one player casually
-copying another's design. It does **not** stop someone extracting the model from the app's files.
-Genuine privacy needs the robot to live on the server and download only after the uploader is
-verified — the same backend as above, plus accounts.
+It depends on how the robot travels, and the difference is real.
+
+**Compiled into the app** (every robot today): the geometry is on every device that installs the
+build, and *private* means only that the picker, the controller config screen and the spawner filter
+it out until its owner enters the code. That stops one player casually copying another's design. It
+does **not** stop someone extracting the model from the app's files.
+
+**Published as a bundle** ([Robot-Delivery.md](Robot-Delivery.md)): the robot lives at an address
+derived from a hash of its owner code, so the geometry never reaches a device that hasn't been given
+the code. Not covered: someone holding both the app files and the code — once a device can fetch a
+robot it can keep it, which was always true.
+
+Note that the two are not equally private but they *are* equally revocable, which is to say not at
+all: a code that has been handed out cannot be taken back, and republishing under a new code orphans
+the old address rather than closing it.
