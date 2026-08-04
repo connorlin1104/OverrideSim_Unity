@@ -112,3 +112,23 @@ InitTestScene*.unity*
 # Unity crash-recovery scene copies. The editor dumps a full scene here after an
 # unclean shutdown — 7 MB apiece, local debris, not part of the project.
 /[Aa]ssets/_[Rr]ecovery/
+
+# Submitted robot models. A Fusion export is ~110 MB and it would land on this machine three times
+# over — working tree, an LFS object that deleting the file does NOT reclaim, and a Library import —
+# so submitted models are kept in a store outside the project instead (Tools > RoboSim > Robot >
+# Model Store, and Docs/Model-Storage.md).
+#
+# THIS IS A DIRECTORY RULE ON PURPOSE, and it must stay one. Ignoring models by filename cannot work:
+# a Fusion export is called export.fbx more often than it is called anything else, so a per-file rule
+# written for one player's model silently swallows the NEXT player's — set up, given colliders, and
+# then skipped by git add -A and lost. A directory no filename can collide with is the only version
+# of this that is safe.
+/[Aa]ssets/[Mm]odels/[Ss]ubmitted/
+/[Aa]ssets/[Mm]odels/[Ss]ubmitted.meta
+
+# Robot bundles built into the app. Tools > RoboSim > Robot > Build Robot Bundle copies them
+# here from the prefabs in Assets/Robots, which stay in git and are the thing a bundle is rebuilt
+# from — so these are output, not source. They are also tens of megabytes each, and the filename
+# carries a content hash, so a rebuild ADDS a file rather than replacing one.
+/[Aa]ssets/[Ss]treaming[Aa]ssets/robots/
+/[Aa]ssets/[Ss]treaming[Aa]ssets/robots.meta

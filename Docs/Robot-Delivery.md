@@ -60,9 +60,16 @@ as standalone `.asset` files, then points the robot's `MeshFilter`s at those.
   machined edge comes back as a soft gradient.
 - **UVs and tangents are dropped by default.** This project has no textures and no normal maps, so
   they are 24 bytes per vertex of nothing. Turn UVs back on if that ever stops being true.
-- **The FBX stops being a dependency.** A prefab used to hold ~1,550 pointers into its source FBX;
-  delete the file and you had correct joints with no geometry. The decimated copies own their data.
-  Keep the FBX archived anyway — it is the only way to redo this at a different ratio.
+- **The FBX stops being a build dependency** — but this is *not* a disk saving, and reading it as one
+  gets the sign wrong. A prefab holds ~1,550 pointers into its source FBX; delete the file and you
+  have correct joints with no geometry, and the decimated copies own their data instead. However,
+  this project serializes as text (`m_SerializationMode: 2`), so a mesh `.asset` writes its vertex
+  buffer as hex — **two ASCII characters per byte**. At full detail that turns ~226 MB of runtime
+  mesh into 450+ MB of YAML replacing a 110 MB FBX, which is worse than doing nothing. Extraction
+  only pays *after* the decimation is real. Keep the FBX either way: it is the only way to redo this
+  at a different ratio. For getting source models off the disk, see
+  [Model-Storage.md](Model-Storage.md) — that is a separate mechanism and it does not depend on
+  decimation working.
 
 **Read the `moved` column, not the `kept` column.** It is the distance from the original surface to
 the nearest point on the decimated one, in mesh units, and it is the only quality signal available —
