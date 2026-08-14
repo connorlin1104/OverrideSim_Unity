@@ -132,3 +132,9 @@ InitTestScene*.unity*
 # carries a content hash, so a rebuild ADDS a file rather than replacing one.
 /[Aa]ssets/[Ss]treaming[Aa]ssets/robots/
 /[Aa]ssets/[Ss]treaming[Aa]ssets/robots.meta
+
+# Firebase Hosting's local deploy cache. Written by `firebase deploy` next to firebase.json; it
+# holds a hashed manifest of what was last uploaded so the next deploy can skip unchanged files.
+# Pure local state — deleting it costs one slower deploy, and committing it makes every deploy
+# from a second machine look like a diff.
+/.firebase/

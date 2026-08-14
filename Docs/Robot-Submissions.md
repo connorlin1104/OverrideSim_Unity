@@ -1,6 +1,6 @@
 # Robot submissions
 
-How a player's robot gets from their computer into OverrideSim, and what has to be switched on for
+How a player's robot gets from their computer into RoboSim, and what has to be switched on for
 the in-game **Settings → Submit a Robot** screen to work.
 
 ## Why it's developer-in-the-loop

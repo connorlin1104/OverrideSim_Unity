@@ -388,11 +388,13 @@ public class BuildHomeScene
         InputSystemUIInputModule uiModule = eventSystemGo.AddComponent<InputSystemUIInputModule>();
         AssignDefaultUiActions(uiModule);
 
-        // Title. "Override Simulation" is ~19 glyphs, which overflows the old 800-wide rect at 96pt,
-        // so it autosizes between 52 and 96 with wrapping off: one line on a 4:3 tablet (canvas
-        // ~1663 wide), growing back toward full size on a wide phone. ProjectSettings.productName
-        // stays "OverrideSim" — the long form is the brand, the short form is the bundle id.
-        TextMeshProUGUI title = CreateText("Title", canvasGo.transform, "Override Simulation", 88f);
+        // Title. "RoboSim" is 7 glyphs and fits at full size on every canvas we target, so the
+        // autosize range below no longer does any work — it is kept because it costs nothing and is
+        // what stops a longer name from overflowing if this string is ever changed again. The app
+        // was called "Override Simulation" until the App Store rename; ProjectSettings.productName
+        // and this string are now the same word, and the bundle id (…overridesim) deliberately is
+        // not — it was already registered and a bundle id cannot be changed after the first upload.
+        TextMeshProUGUI title = CreateText("Title", canvasGo.transform, "RoboSim", 88f);
         title.fontStyle = FontStyles.Bold;
         title.textWrappingMode = TextWrappingModes.NoWrap;
         title.enableAutoSizing = true;
