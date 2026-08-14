@@ -220,7 +220,34 @@ internal static class MechanismBuildUtil
         return axisLocal.sqrMagnitude > 1e-8f;
     }
 
-    private static Vector3 Centroid(ArticulationBody[] arr)
+    // The mean world position of a set of links — the drivetrain's left/right wheel groups, a
+    // chain's sprockets. Was a private copy in four editor files under two parameter names.
+    // "The user clicked a part — which robot is that?" Walks up through the registry, then the motor
+    // controller, then to the topmost ArticulationBody, and finally gives up and treats the selection
+    // itself as the robot (nothing rigged yet is a legitimate state for the collider tools).
+    //
+    // Was byte-identical in StripRobotRig and GeneratePartColliders, the latter carrying a comment
+    // saying it mirrored the former so the two tools would resolve the same root. Now they do by
+    // construction rather than by vigilance.
+    public static GameObject ResolveRobotRoot(GameObject sel)
+    {
+        if (sel == null) return null;
+        RobotMechanisms reg = sel.GetComponentInParent<RobotMechanisms>();
+        if (reg != null) return reg.gameObject;
+        RobotMotorController motor = sel.GetComponentInParent<RobotMotorController>();
+        if (motor != null) return motor.gameObject;
+        ArticulationBody ab = sel.GetComponentInParent<ArticulationBody>();
+        if (ab != null)
+        {
+            Transform top = ab.transform;
+            for (Transform t = top.parent; t != null; t = t.parent)
+                if (t.GetComponent<ArticulationBody>() != null) top = t;
+            return top.gameObject;
+        }
+        return sel; // nothing rigged yet — treat the selection as the robot
+    }
+
+    public static Vector3 Centroid(ArticulationBody[] arr)
     {
         if (arr == null) return Vector3.zero;
         Vector3 s = Vector3.zero; int n = 0;

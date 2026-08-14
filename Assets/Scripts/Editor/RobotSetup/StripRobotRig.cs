@@ -23,7 +23,7 @@ public static class StripRobotRig
     [MenuItem("Tools/RoboSim/Robot/Advanced/Clean Robot Rig (Reset)", false, 5)]
     private static void CleanSelected()
     {
-        GameObject robot = ResolveRobotRoot(Selection.activeGameObject);
+        GameObject robot = MechanismBuildUtil.ResolveRobotRoot(Selection.activeGameObject);
         if (robot == null)
         {
             EditorUtility.DisplayDialog(Title, "Select your robot (the root object) in the Hierarchy first.", "OK");
@@ -161,22 +161,4 @@ public static class StripRobotRig
         return removed;
     }
 
-    // The robot root: the highest ancestor carrying rig data, else the selection itself.
-    private static GameObject ResolveRobotRoot(GameObject sel)
-    {
-        if (sel == null) return null;
-        RobotMechanisms reg = sel.GetComponentInParent<RobotMechanisms>();
-        if (reg != null) return reg.gameObject;
-        RobotMotorController motor = sel.GetComponentInParent<RobotMotorController>();
-        if (motor != null) return motor.gameObject;
-        ArticulationBody ab = sel.GetComponentInParent<ArticulationBody>();
-        if (ab != null)
-        {
-            Transform top = ab.transform;
-            for (Transform t = top.parent; t != null; t = t.parent)
-                if (t.GetComponent<ArticulationBody>() != null) top = t;
-            return top.gameObject;
-        }
-        return sel; // nothing rigged yet — treat the selection as the robot
-    }
 }

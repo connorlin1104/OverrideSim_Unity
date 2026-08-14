@@ -734,18 +734,8 @@ public static class ChainBuilder
         if (registry == null) return Vector3.zero;
         RobotMotorController mc = registry.GetComponentInChildren<RobotMotorController>(true);
         if (mc == null) return registry.transform.right;
-        Vector3 lateral = Centroid(mc.rightWheels) - Centroid(mc.leftWheels);
+        Vector3 lateral = MechanismBuildUtil.Centroid(mc.rightWheels) - MechanismBuildUtil.Centroid(mc.leftWheels);
         return lateral.sqrMagnitude > 1e-6f ? lateral.normalized : registry.transform.right;
-    }
-
-    private static Vector3 Centroid(ArticulationBody[] bodies)
-    {
-        if (bodies == null) return Vector3.zero;
-        Vector3 sum = Vector3.zero;
-        int n = 0;
-        foreach (ArticulationBody b in bodies)
-            if (b != null) { sum += b.transform.position; n++; }
-        return n > 0 ? sum / n : Vector3.zero;
     }
 
     public static bool LooksLikeAxle(GameObject go)

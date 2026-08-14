@@ -942,15 +942,8 @@ public static class Dr4bLiftSetup
     {
         RobotMotorController mc = registry.GetComponentInChildren<RobotMotorController>(true);
         if (mc == null) return chassis.right;
-        Vector3 lat = Centroid(mc.rightWheels) - Centroid(mc.leftWheels);
+        Vector3 lat = MechanismBuildUtil.Centroid(mc.rightWheels) - MechanismBuildUtil.Centroid(mc.leftWheels);
         return lat.sqrMagnitude > 1e-6f ? lat.normalized : chassis.right;
     }
 
-    private static Vector3 Centroid(ArticulationBody[] arr)
-    {
-        if (arr == null) return Vector3.zero;
-        Vector3 s = Vector3.zero; int n = 0;
-        foreach (ArticulationBody a in arr) if (a != null) { s += a.transform.position; n++; }
-        return n > 0 ? s / n : Vector3.zero;
-    }
 }

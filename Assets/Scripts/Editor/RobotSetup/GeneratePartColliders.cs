@@ -220,7 +220,7 @@ public static class GeneratePartColliders
             return;
         }
 
-        GameObject root = ResolveRobotRoot(part);
+        GameObject root = MechanismBuildUtil.ResolveRobotRoot(part);
         if (root == null) root = part;
         // Resolve the wheel/structural decision up front (same call RebuildPart makes) so the dialog can
         // show it — a wheel becomes ONE sphere, so a mis-selected group is visible before it runs.
@@ -309,27 +309,6 @@ public static class GeneratePartColliders
                   $"{report.hullCount} hull(s) on {report.vhacdParts} concave part(s).", part);
         LogPlasticBoxNotes(report, part);
         return report;
-    }
-
-    // The robot root for a selected part: the highest ancestor carrying rig data, else the selection
-    // itself. Mirrors StripRobotRig.ResolveRobotRoot so the per-part tool resolves the same root a full
-    // rebuild ran on (matching hull-folder name + ancestor-chain classification).
-    private static GameObject ResolveRobotRoot(GameObject sel)
-    {
-        if (sel == null) return null;
-        RobotMechanisms reg = sel.GetComponentInParent<RobotMechanisms>();
-        if (reg != null) return reg.gameObject;
-        RobotMotorController motor = sel.GetComponentInParent<RobotMotorController>();
-        if (motor != null) return motor.gameObject;
-        ArticulationBody ab = sel.GetComponentInParent<ArticulationBody>();
-        if (ab != null)
-        {
-            Transform top = ab.transform;
-            for (Transform t = top.parent; t != null; t = t.parent)
-                if (t.GetComponent<ArticulationBody>() != null) top = t;
-            return top.gameObject;
-        }
-        return sel; // nothing rigged yet — treat the selection as the robot
     }
 
     // True when the SELECTED node itself reads as a wheel by name — so the per-part rebuild gives it a

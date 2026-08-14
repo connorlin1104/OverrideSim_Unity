@@ -1146,7 +1146,7 @@ public static class ClawBuilderValidation
 
         root.transform.rotation = Quaternion.Euler(17f, 40f, 13f);
 
-        Vector3 lateralWorld = (Centroid(mc.rightWheels) - Centroid(mc.leftWheels)).normalized;
+        Vector3 lateralWorld = (MechanismBuildUtil.Centroid(mc.rightWheels) - MechanismBuildUtil.Centroid(mc.leftWheels)).normalized;
         Vector3 armAxisLocal = arm.transform.InverseTransformDirection(lateralWorld);
         AddMechanismJoint.Apply(arm, AddMechanismJoint.JointType.Revolute, armAxisLocal, Vector3.zero,
             0f, 180f, new AddMechanismJoint.Options { actuation = AddMechanismJoint.Actuation.HoldToRun }, false);
@@ -1265,14 +1265,6 @@ public static class ClawBuilderValidation
         d.target = targetDeg;
         d.targetVelocity = 0f;
         arm.xDrive = d;
-    }
-
-    private static Vector3 Centroid(ArticulationBody[] bodies)
-    {
-        Vector3 sum = Vector3.zero;
-        int n = 0;
-        foreach (ArticulationBody b in bodies) if (b != null) { sum += b.transform.position; n++; }
-        return n > 0 ? sum / n : Vector3.zero;
     }
 
     // --- Motion: the halves must actually close ON each other, not sweep the same way --------------
