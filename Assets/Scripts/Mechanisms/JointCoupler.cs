@@ -12,8 +12,10 @@ using UnityEngine;
 //  - Position ("linkage" — a DR4B, geared arm pairs): the follower tracks the driver's ANGLE times
 //    the ratio (plus an offset). Baked as a stiff position-target drive (like PneumaticActuator).
 //    For a DR4B the follower must sit BELOW the driver in the articulation tree so its rotation
-//    compounds on the driver's. No tool authors this mode today (the DR4B builder moved to the
-//    transform followers in Dr4bMoveFollower/PivotRotateFollower); it's kept for future linkages.
+//    compounds on the driver's. The DR4B builder no longer authors it — that lift moved to the
+//    transform followers in Dr4bMoveFollower/PivotRotateFollower — but the CLAW builder does, at
+//    three sites, and two Position couplers ship on 654V_v3. This comment used to say no tool
+//    authored the mode at all, which made a live path look speculative.
 //
 // Units: an ArticulationBody's jointPosition/jointVelocity/maxJointVelocity are radians (and rad/s);
 // a revolute drive's target/limits are DEGREES (and deg/s) — same convention MotorActuator and

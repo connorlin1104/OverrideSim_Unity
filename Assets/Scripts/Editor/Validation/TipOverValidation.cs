@@ -391,8 +391,9 @@ public static class TipOverValidation
                 $"{TurnSteps * ValidationUtil.StepSeconds:0.0} s of turning with its lift raised (limit {MaxRollReversals}). " +
                 "That is chatter, not a lean, and it reads to a driver as the robot wobbling all over the " +
                 $"place. It travelled {result.rollTravel:0.0} degrees of roll to end up at " +
-                $"{result.finalTilt:0.0}. First thing to check is RobotSelfOverlapValidation: parts of the " +
-                "robot permanently inside each other are a contact the solver fights every step.");
+                $"{result.finalTilt:0.0}. First thing to check is Tools > RoboSim > Validate > Probes > " +
+                "Raised Lift Overlaps: parts of the robot permanently inside each other are a contact " +
+                "the solver fights every step.");
             ValidationUtil.Assert(result.rollTravel <= MaxRollTravelDeg,
                 $"'{prefab.name}' accumulated {result.rollTravel:0.0} degrees of roll travel in a turn " +
                 $"(limit {MaxRollTravelDeg}) while ending at {result.finalTilt:0.0} — it is shaking, not leaning.");

@@ -324,8 +324,8 @@ public class RobotMotorController : MonoBehaviour
     // together, and bolted parts do not push each other apart. Anything that collides only once a
     // mechanism moves — a claw closing onto the frame — still collides, because it does not overlap
     // here. Robots arrive from player CAD (see the upload pipeline), so this has to be automatic
-    // rather than a note in a README; RobotSelfOverlapValidation reports the pairs so the geometry
-    // can be corrected at the source.
+    // rather than a note in a README. Pass a report list (RaisedLiftOverlapProbe does) to get the
+    // offending pairs back, so the geometry can be corrected at the source.
     public static int IgnoreBuiltInSelfOverlaps(ArticulationBody root, List<string> report = null)
     {
         if (root == null) return 0;

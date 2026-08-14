@@ -630,30 +630,11 @@ public class ClawGrab : MonoBehaviour
         return false;
     }
 
-    // The axis that runs ALONG this piece, in its own local frame. Measured from the longest side of
-    // the mesh bounds through the MESH's rotation, not the body's: the field's pins share one mesh but
-    // each instance sits at a different child rotation, which is exactly why one lying flat and one
-    // standing up otherwise get carried differently. Zero when there's no mesh to measure.
-    private Vector3 ComputeUpAxis(Rigidbody rb)
-    {
-        MeshFilter mf = rb.GetComponentInChildren<MeshFilter>();
-        Transform meshTf = mf != null ? mf.transform : null;
-        Mesh mesh = mf != null ? mf.sharedMesh : null;
-        if (meshTf == null) return Vector3.zero;
-
-        Vector3 axisMeshLocal;
-        if (uprightMeshAxis.sqrMagnitude > 1e-6f)
-            axisMeshLocal = uprightMeshAxis.normalized;
-        else if (mesh != null)
-        {
-            Vector3 size = mesh.bounds.size;
-            axisMeshLocal = (size.x >= size.y && size.x >= size.z) ? Vector3.right
-                          : (size.y >= size.z) ? Vector3.up : Vector3.forward;
-        }
-        else return Vector3.zero;
-
-        return (Quaternion.Inverse(rb.rotation) * (meshTf.rotation * axisMeshLocal)).normalized;
-    }
+    // The axis that runs ALONG this piece, in its own local frame — see PieceGeometry.MeasureUpAxis
+    // for why it is measured through the MESH's rotation rather than the body's. This was a
+    // line-for-line copy of that function; IntakePull, GoalStackMagnet and PieceStackMagnet all
+    // forward to it, and this was the one the consolidation that created PieceGeometry missed.
+    private Vector3 ComputeUpAxis(Rigidbody rb) => PieceGeometry.MeasureUpAxis(rb, uprightMeshAxis);
 
     // Half the piece's size along its long axis (halfExtent) and half its widest cross-section (radius),
     // from the mesh bounds in world units — enough to space two carried pieces so they don't overlap.
