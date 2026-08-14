@@ -45,7 +45,7 @@ public class MechanismNamesWindow : EditorWindow
     private readonly Dictionary<string, string> robotEdits = new Dictionary<string, string>();
     private readonly Dictionary<string, string> mechanismEdits = new Dictionary<string, string>();
 
-    [MenuItem("Tools/RoboSim/Robot/Mechanism Names", false, 4)]
+    [MenuItem("Tools/RoboSim/Robot/Mechanism Names", false, 3)]
     private static void Open()
     {
         MechanismNamesWindow window = GetWindow<MechanismNamesWindow>(false, "Mechanism Names", true);

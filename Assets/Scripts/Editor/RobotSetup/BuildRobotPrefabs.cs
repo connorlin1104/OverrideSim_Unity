@@ -14,7 +14,7 @@ using Scene = UnityEngine.SceneManagement.Scene;
 //   - The RobotSpawner is created only if SampleScene doesn't already have one.
 //   - If everything is already in place, the scene is not re-saved (no churn).
 //
-// Usage: Tools > RoboSim > Robot > Build Robot Prefabs & Spawner.
+// Usage: Tools > RoboSim > Robot > Advanced > Build Robot Prefabs & Spawner.
 public static class BuildRobotPrefabs
 {
     private const string DrivetrainPrefabPath = RoboSimPaths.RobotsFolder + "/360RpmDrivetrain.prefab";

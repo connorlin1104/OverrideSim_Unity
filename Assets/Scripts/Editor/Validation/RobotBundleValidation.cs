@@ -24,11 +24,11 @@ using UnityEngine;
 //   - THE ADDRESS LEAKED. A private robot listed in the public index is not private, however well
 //     the download is guarded.
 //
-// Usage: Tools > RoboSim > Validation > Validate Robot Bundles.
+// Usage: Tools > RoboSim > Validate > Validate Robot Bundles.
 // Batch: -executeMethod RobotBundleValidation.RunBatchValidate
 public static class RobotBundleValidation
 {
-    [MenuItem("Tools/RoboSim/Validation/Validate Robot Bundles", false, 7)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Robot Bundles", false, 53)]
     private static void RunFromMenu()
     {
         string result = Validate();

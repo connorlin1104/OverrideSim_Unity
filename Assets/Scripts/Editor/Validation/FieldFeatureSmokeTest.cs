@@ -29,7 +29,7 @@ public static class FieldFeatureSmokeTest
 
     private static PieceStackMagnet[] _cupMagnets;
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Field Features", false, 5)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Field Features", false, 40)]
     private static void ValidateMenu()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

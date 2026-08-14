@@ -29,7 +29,7 @@ public class ModelCatalogWindow : EditorWindow
     private Vector2 scroll;
     private string status;
 
-    [MenuItem("Tools/RoboSim/Robot/Model Catalog", false, 3)]
+    [MenuItem("Tools/RoboSim/Robot/Model Catalog", false, 10)]
     private static void Open()
     {
         ModelCatalogWindow window = GetWindow<ModelCatalogWindow>(false, "Model Catalog", true);

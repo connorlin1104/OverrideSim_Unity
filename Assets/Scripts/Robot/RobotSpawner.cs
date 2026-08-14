@@ -23,7 +23,7 @@ using UnityEngine;
 // way to do this; the Reset button stays the heavier "restart the whole match" reset.
 //
 // Build the prefabs and drop this component into SampleScene with the
-// Tools > RoboSim > Robot > Build Robot Prefabs & Spawner tool.
+// Tools > RoboSim > Robot > Advanced > Build Robot Prefabs & Spawner tool.
 public class RobotSpawner : MonoBehaviour
 {
     [Tooltip("The model catalog; the SelectedModel's prefab is spawned. Same asset the home screen uses.")]

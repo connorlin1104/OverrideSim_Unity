@@ -35,7 +35,7 @@ using UnityEngine.SceneManagement;
 // drives directly. If the controller and this ever disagree about what a reversal means, they are
 // meant to disagree here first.
 //
-// Usage: Tools > RoboSim > Validation > Validate Tipping, or headless
+// Usage: Tools > RoboSim > Validate > Validate Tipping, or headless
 //   Unity -batchmode -nographics -quit -projectPath . -executeMethod TipOverValidation.RunBatchValidate
 public static class TipOverValidation
 {
@@ -62,7 +62,7 @@ public static class TipOverValidation
     // which is precisely the regression this exists to catch.
     private const float MinPlowFraction = 0.5f;
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Tipping", false, 3)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Tipping", false, 15)]
     private static void RunInteractive() => ValidationUtil.RunInteractive("Validate Tipping", Run);
 
     public static void RunBatchValidate() => ValidationUtil.RunBatch("Validate Tipping", Run);

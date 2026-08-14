@@ -21,7 +21,7 @@ using UnityEngine;
 //  4. THE TRAVEL IGNORES THE BAR BELOW. A long bar on a short one can only run out as far as the
 //     short one allows; using its own length looks right until the top bar floats off its channel.
 //
-// Usage: Tools > RoboSim > Validation > Validate Build Cascade, or headless
+// Usage: Tools > RoboSim > Validate > Validate Build Cascade, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod CascadeBuilderValidation.RunBatchValidate
 public static class CascadeBuilderValidation
 {
@@ -34,7 +34,7 @@ public static class CascadeBuilderValidation
     private static float ExpectedTravel =>
         ChannelLength - OverlapHoles * CascadeSetup.DefaultHolePitch;
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Build Cascade", false, 12)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Build Cascade", false, 30)]
     private static void RunInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

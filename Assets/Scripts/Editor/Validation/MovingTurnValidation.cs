@@ -43,7 +43,7 @@ public static class MovingTurnValidation
     // bar, not a derived one — it is the number to argue with when this fails.
     private const float MaxRoughnessMultiple = 2f;
 
-    [MenuItem("Tools/RoboSim/Validate/A Moving Turn Is As Smooth As A Standing One")]
+    [MenuItem("Tools/RoboSim/Validate/Validate Moving Turn", false, 13)]
     public static void Validate()
         => ValidationUtil.RunInteractive("Moving Turn", Run);
 

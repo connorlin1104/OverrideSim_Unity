@@ -34,7 +34,7 @@ public static class StoreScreenshotCapture
         ("iPad 13\"", 2752, 2064),
     };
 
-    [MenuItem("RoboSim/Screenshots/Capture Game View %#s")]
+    [MenuItem("Tools/RoboSim/Utilities/Capture Game View %#s", false, 10)]
     static void Capture()
     {
         // ScreenCapture.CaptureScreenshot grabs whatever the Game view last rendered. Outside Play

@@ -19,7 +19,7 @@ public static class RepairJointAnchorsTool
     private const float PositionToleranceUnits = 0.001f;   // 0.1 mm at 1 unit = 100 mm
     private const float RotationToleranceDeg = 0.1f;
 
-    [MenuItem("Tools/RoboSim/Repair/Joint Anchors", false, 1)]
+    [MenuItem("Tools/RoboSim/Robot/Advanced/Repair Joint Anchors", false, 10)]
     private static void RunInteractive()
     {
         string report = Run();

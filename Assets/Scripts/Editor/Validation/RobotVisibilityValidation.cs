@@ -13,7 +13,7 @@ using UnityEditor;
 // Runs entirely on an in-memory catalog, so it needs no scene and touches no project asset. It does
 // use the real PlayerPrefs keys (that IS the storage), so it snapshots and restores them.
 //
-// Usage: Tools > RoboSim > Validation > Validate Robot Visibility.
+// Usage: Tools > RoboSim > Validate > Validate Robot Visibility.
 // Batch: -executeMethod RobotVisibilityValidation.RunBatchValidate.
 public static class RobotVisibilityValidation
 {
@@ -21,7 +21,7 @@ public static class RobotVisibilityValidation
     private const string TeamCode = "654V-TEAM";
     private const string SoloCode = "CLAW-9F2K";
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Robot Visibility", false, 4)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Robot Visibility", false, 50)]
     private static void RunFromMenu()
     {
         string result = Validate();

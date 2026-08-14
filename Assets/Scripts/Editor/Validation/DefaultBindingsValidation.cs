@@ -14,14 +14,14 @@ using UnityEngine;
 // rather than deleting them, because this writes TWO keys per robot and the ids are synthetic but
 // a collision would still cost someone their real layout.
 //
-// Usage: Tools > RoboSim > Validation > Validate Default Bindings, or headless
+// Usage: Tools > RoboSim > Validate > Validate Default Bindings, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod DefaultBindingsValidation.RunBatchValidate
 public static class DefaultBindingsValidation
 {
     private const string TestRobotId = "__defaultbindings_validation__";
     private const string Motor = RobotMechanisms.TypeMotor;
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Default Bindings", false, 21)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Default Bindings", false, 26)]
     private static void RunInteractive()
     {
         ValidationUtil.RunInteractive("Validate Default Bindings", Run);

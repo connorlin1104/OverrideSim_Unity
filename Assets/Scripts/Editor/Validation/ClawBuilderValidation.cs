@@ -16,7 +16,7 @@ using UnityEngine;
 // or ButtonRouter and the coupler fight over the drive) and proves a rebuild that drops a half leaves
 // no orphaned joint behind.
 //
-// Usage: Tools > RoboSim > Validation > Validate Build Claw, or headless
+// Usage: Tools > RoboSim > Validate > Validate Build Claw, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod ClawBuilderValidation.RunBatchValidate
 public static class ClawBuilderValidation
 {
@@ -26,7 +26,7 @@ public static class ClawBuilderValidation
     private const float FlipSeconds = 0.35f;
     private const float ClampStrokeMm = 50f;
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Build Claw", false, 11)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Build Claw", false, 32)]
     private static void RunInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

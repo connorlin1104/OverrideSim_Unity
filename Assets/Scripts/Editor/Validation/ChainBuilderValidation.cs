@@ -13,13 +13,13 @@ using UnityEngine.SceneManagement;
 // subset of its sprockets spinning backwards. That is invisible until you're in Play watching the
 // robot, so station 2 here is deliberately mounted 180 degrees flipped.
 //
-// Usage: Tools > RoboSim > Validation > Validate Build Chain, or headless
+// Usage: Tools > RoboSim > Validate > Validate Build Chain, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod ChainBuilderValidation.RunBatchValidate
 public static class ChainBuilderValidation
 {
     private const string TestRobotId = "__chain_validation__";
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Build Chain", false, 10)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Build Chain", false, 31)]
     private static void RunInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

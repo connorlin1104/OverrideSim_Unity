@@ -12,7 +12,7 @@ using UnityEditor.SceneManagement;
 // Batch: -executeMethod FixCupMagnets.RunBatch.
 public static class FixCupMagnets
 {
-    [MenuItem("Tools/RoboSim/Field & Pieces/Add Cup Stack Magnets", false, 6)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Add Cup Stack Magnets", false, 12)]
     private static void ApplyInteractive()
     {
         EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);

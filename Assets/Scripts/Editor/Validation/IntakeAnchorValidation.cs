@@ -22,11 +22,11 @@ using UnityEngine;
 // Pure hierarchy arithmetic driving the REAL IntakePull.StabilizeAnchors — no physics, no robot, no
 // simulation, so it stays fast and green while covering the exact thing that was broken.
 //
-// Usage: Tools > RoboSim > Validation > Validate Intake Anchors, or headless
+// Usage: Tools > RoboSim > Validate > Validate Intake Anchors, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod IntakeAnchorValidation.RunBatchValidate
 public static class IntakeAnchorValidation
 {
-    [MenuItem("Tools/RoboSim/Validation/Validate Intake Anchors", false, 14)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Intake Anchors", false, 23)]
     private static void RunInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

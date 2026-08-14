@@ -28,7 +28,7 @@ using UnityEngine.SceneManagement;
 // joints sit at whatever the prefab serialized, which is the retracted pose. That is the bad case,
 // for free, and it is what this runs.
 //
-// Usage: Tools > RoboSim > Validation > Validate Goal Entrapment, or headless
+// Usage: Tools > RoboSim > Validate > Validate Goal Entrapment, or headless
 //   Unity -batchmode -nographics -quit -projectPath . \
 //         -executeMethod GoalEntrapmentValidation.RunBatchValidate
 public static class GoalEntrapmentValidation
@@ -76,7 +76,7 @@ public static class GoalEntrapmentValidation
     private const float ApproachRunUp = 8f;     // enough to reach full speed, with only the goal ahead
     private const string FloorMaterialPath = "Assets/ZeroBounce.physicMaterial";
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Goal Entrapment", false, 18)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Goal Entrapment", false, 44)]
     private static void RunInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

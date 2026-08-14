@@ -663,6 +663,7 @@ public class UrdfPostProcessor : EditorWindow
     // post-processes it in a scratch scene, and drives it with edit-mode physics. Throws (nonzero
     // exit) on failure; throws "EDITMODE_SIM_UNSUPPORTED ..." specifically when the articulation
     // never moves at all so the orchestrator can pivot to a play-mode test.
+    [MenuItem("Tools/RoboSim/Validate/Validate URDF Testbot", false, 63)]
     public static void RunBatchValidateTestbot()
     {
         const string urdfAssetPath = "Assets/TestRobots/testbot.urdf";
@@ -753,6 +754,7 @@ public class UrdfPostProcessor : EditorWindow
     // post-processes it, and proves in edit-mode physics that the non-wheel joints were found,
     // wired, and actually move: the arm under its MotorActuator, the piston under its
     // PneumaticActuator toggle. Throws (nonzero exit) on failure.
+    [MenuItem("Tools/RoboSim/Validate/Validate URDF Mechanisms", false, 64)]
     public static void RunBatchValidateMechanisms()
     {
         const string urdfAssetPath = "Assets/TestRobots/testbot_mech.urdf";
@@ -901,6 +903,7 @@ public class UrdfPostProcessor : EditorWindow
     // Assets/TestRobots/testbot_massgeom.urdf (box-primitive links with exactly-known volumes) and
     // asserts each fallback branch — density token overriding a zero/clamped mass, default density
     // for an unrecognized name, and a genuinely-authored mass being preserved. Throws on failure.
+    [MenuItem("Tools/RoboSim/Validate/Validate URDF Mass From Geometry", false, 65)]
     public static void RunBatchValidateMassFromGeometry()
     {
         const string urdfAssetPath = "Assets/TestRobots/testbot_massgeom.urdf";
@@ -945,6 +948,7 @@ public class UrdfPostProcessor : EditorWindow
     // processes it (arm not wired), then converts the fixed arm to a revolute mechanism entirely
     // via AddMechanismJoint.Apply and asserts it registers in the registry + catalog and sweeps
     // under its motor. Throws on failure.
+    [MenuItem("Tools/RoboSim/Validate/Validate URDF Joint Tool", false, 66)]
     public static void RunBatchValidateJointTool()
     {
         const string urdfAssetPath = "Assets/TestRobots/testbot_jointtool.urdf";

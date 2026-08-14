@@ -231,6 +231,7 @@ public static class SaveRobotPrefab
     // Headless validation for -executeMethod: imports testbot, sets it up, saves + links the prefab,
     // and asserts the prefab exists (as a full robot) and the catalog entry points at it. Cleans up
     // the prefab, catalog entry, and importer artifacts it created.
+    [MenuItem("Tools/RoboSim/Validate/Validate Saved Robot Prefab", false, 62)]
     public static void RunBatchValidate()
     {
         const string urdfAssetPath = "Assets/TestRobots/testbot.urdf";

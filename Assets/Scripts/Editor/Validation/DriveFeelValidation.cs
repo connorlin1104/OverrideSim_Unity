@@ -13,7 +13,7 @@ using UnityEngine;
 //
 // Touches no PlayerPrefs, so unlike the binding validators it needs no snapshot/restore.
 //
-// Usage: Tools > RoboSim > Validation > Validate Drive Feel, or headless
+// Usage: Tools > RoboSim > Validate > Validate Drive Feel, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod DriveFeelValidation.RunBatchValidate
 // which exits nonzero on the first failed check.
 public static class DriveFeelValidation
@@ -32,7 +32,7 @@ public static class DriveFeelValidation
     private const float Mu = 0.8f;
     private const float G = 98.1f;
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Drive Feel", false, 2)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Drive Feel", false, 12)]
     private static void RunInteractive() => ValidationUtil.RunInteractive("Validate Drive Feel", Run);
 
     public static void RunBatchValidate() => ValidationUtil.RunBatch("Validate Drive Feel", Run);

@@ -20,7 +20,7 @@ using UnityEngine;
 //   physics step. Nothing in edit mode shows this — the Scene view looks perfect right up until you
 //   press Play. Hence the "simulate and check it stayed put" assertions.
 //
-// Usage: Tools > RoboSim > Validation > Validate Starting Pose, or headless
+// Usage: Tools > RoboSim > Validate > Validate Starting Pose, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod StartingPoseValidation.RunBatchValidate
 public static class StartingPoseValidation
 {
@@ -28,7 +28,7 @@ public static class StartingPoseValidation
     private const float Lower = 0f;
     private const float Upper = 90f;
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Starting Pose", false, 13)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Starting Pose", false, 21)]
     private static void RunInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

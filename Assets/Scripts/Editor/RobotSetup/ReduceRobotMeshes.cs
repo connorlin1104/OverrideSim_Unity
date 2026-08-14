@@ -38,7 +38,7 @@ public class ReduceRobotMeshesWindow : EditorWindow
     private string lastReport = string.Empty;
     private Vector2 scroll;
 
-    [MenuItem("Tools/RoboSim/Robot/Reduce Robot Meshes", false, 3)]
+    [MenuItem("Tools/RoboSim/Robot/Reduce Robot Meshes", false, 20)]
     private static void ShowWindow()
     {
         ReduceRobotMeshesWindow window = GetWindow<ReduceRobotMeshesWindow>(Title);

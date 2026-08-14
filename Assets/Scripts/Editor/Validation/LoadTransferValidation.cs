@@ -41,7 +41,7 @@ public static class LoadTransferValidation
     // millimetre of real robot — far below anything that could matter and far above float noise.
     private const float RerunNoiseFloor = 0.01f;
 
-    [MenuItem("Tools/RoboSim/Validate/Load Transfer Is Visual Only")]
+    [MenuItem("Tools/RoboSim/Validate/Validate Chassis Lean", false, 16)]
     public static void Validate()
         => ValidationUtil.RunInteractive("Load Transfer", Run);
 

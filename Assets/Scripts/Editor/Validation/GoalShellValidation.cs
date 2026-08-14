@@ -27,7 +27,7 @@ using UnityEngine.SceneManagement;
 //
 // If part 2 fails, run Tools > RoboSim > Field & Pieces > Seal Goal Shells (Scene Fix).
 //
-// Usage: Tools > RoboSim > Validation > Validate Goal Shell, or headless
+// Usage: Tools > RoboSim > Validate > Validate Goal Shell, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod GoalShellValidation.RunBatchValidate
 public static class GoalShellValidation
 {
@@ -49,7 +49,7 @@ public static class GoalShellValidation
     private const float NeutralDiagonalWidth = 0.4f;
     private const float OldThickness = GoalShellSpec.LegacyRingThickness;
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Goal Shell", false, 17)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Goal Shell", false, 43)]
     private static void RunInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

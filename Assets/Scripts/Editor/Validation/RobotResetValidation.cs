@@ -35,7 +35,7 @@ public static class RobotResetValidation
     private const float MaxPlanarDrift = 3f;   // world units a settled robot may slide from its spawn
     private const float MaxRestSpeed = 0.01f;  // velocity that still counts as "stopped"
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Fall Reset", false, 3)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Fall Reset", false, 17)]
     private static void ValidateMenu()
     {
         // The simulation trashes the open scene and we reload it from disk afterwards, so give the

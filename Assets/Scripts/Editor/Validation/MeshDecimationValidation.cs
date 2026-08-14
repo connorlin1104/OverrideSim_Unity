@@ -22,11 +22,11 @@ using UnityEngine;
 //     across them turns a square tube into a soft cylinder — right triangle count, wrong robot.
 //   - Fold-over. A collapse that turns triangles inside out reads as black shards.
 //
-// Usage: Tools > RoboSim > Validation > Validate Mesh Decimation.
+// Usage: Tools > RoboSim > Validate > Validate Mesh Decimation.
 // Batch: -executeMethod MeshDecimationValidation.RunBatchValidate
 public static class MeshDecimationValidation
 {
-    [MenuItem("Tools/RoboSim/Validation/Validate Mesh Decimation", false, 6)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Mesh Decimation", false, 51)]
     private static void RunFromMenu()
     {
         string result = Validate();

@@ -18,11 +18,11 @@ using UnityEngine;
 //
 // Pure decision logic plus the drive it writes — no simulation, so this stays fast.
 //
-// Usage: Tools > RoboSim > Validation > Validate Motor Idle Hold, or headless
+// Usage: Tools > RoboSim > Validate > Validate Motor Idle Hold, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod MotorIdleHoldValidation.RunBatchValidate
 public static class MotorIdleHoldValidation
 {
-    [MenuItem("Tools/RoboSim/Validation/Validate Motor Idle Hold", false, 17)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Motor Idle Hold", false, 14)]
     private static void RunInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

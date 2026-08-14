@@ -20,7 +20,7 @@ using UnityEngine.Profiling;
 // Batch: -executeMethod RobotMeshReport.RunBatch
 public static class RobotMeshReport
 {
-    [MenuItem("Tools/RoboSim/Robot/Robot Mesh Report", false, 40)]
+    [MenuItem("Tools/RoboSim/Robot/Robot Mesh Report", false, 21)]
     private static void RunFromMenu()
     {
         string report = Build();

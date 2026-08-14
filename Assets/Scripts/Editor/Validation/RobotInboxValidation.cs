@@ -19,11 +19,11 @@ using UnityEditor;
 // Runs on plain objects: no scene, no catalog, no asset. It does use the real PlayerPrefs key (that
 // IS the storage), so it snapshots and restores it.
 //
-// Usage: Tools > RoboSim > Validation > Validate Robot Inbox.
+// Usage: Tools > RoboSim > Validate > Validate Robot Inbox.
 // Batch: -executeMethod RobotInboxValidation.RunBatchValidate.
 public static class RobotInboxValidation
 {
-    [MenuItem("Tools/RoboSim/Validation/Validate Robot Inbox", false, 5)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Robot Inbox", false, 54)]
     private static void RunFromMenu()
     {
         string result = Validate();

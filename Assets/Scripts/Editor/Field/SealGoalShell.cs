@@ -46,7 +46,7 @@ using UnityEngine.SceneManagement;
 // Batch: -executeMethod SealGoalShell.RunBatch.
 public static class SealGoalShell
 {
-    [MenuItem("Tools/RoboSim/Field & Pieces/Seal Goal Shells (Scene Fix)", false, 5)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Seal Goal Shells (Scene Fix)", false, 41)]
     private static void SealInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

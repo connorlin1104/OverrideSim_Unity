@@ -28,7 +28,7 @@ using Debug = UnityEngine.Debug;
 // That is how the first pass of this investigation got "986 mm" out of a 15 mm move.
 public static class FieldAtRestValidation
 {
-    [MenuItem("Tools/RoboSim/Validate/Field Starts At Rest")]
+    [MenuItem("Tools/RoboSim/Validate/Validate Field At Rest", false, 41)]
     public static void Validate() => ValidationUtil.RunInteractive("Field At Rest", Run);
 
     public static void RunBatchValidate() => ValidationUtil.RunBatch("Field At Rest", Run);

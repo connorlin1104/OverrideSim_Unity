@@ -23,11 +23,11 @@ using UnityEngine;
 // Pure hierarchy arithmetic, so it needs no physics and no robot — which is the point: it stays
 // green and fast, and it is checkable in a way "the robot still drives" is not.
 //
-// Usage: Tools > RoboSim > Validation > Validate Drivetrain Rig, or headless
+// Usage: Tools > RoboSim > Validate > Validate Drivetrain Rig, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod DrivetrainRigValidation.RunBatchValidate
 public static class DrivetrainRigValidation
 {
-    [MenuItem("Tools/RoboSim/Validation/Validate Drivetrain Rig", false, 6)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Drivetrain Rig", false, 11)]
     private static void RunInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

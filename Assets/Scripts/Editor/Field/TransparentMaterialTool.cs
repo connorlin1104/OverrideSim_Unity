@@ -33,7 +33,7 @@ public static class TransparentMaterialTool
 
     // --- Menu: selected renderers only -----------------------------------------------------------
 
-    [MenuItem("Tools/RoboSim/Field & Pieces/Make Selected Renderers Transparent", false, 40)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Make Selected Renderers Transparent", false, 50)]
     private static void MakeSelectedTransparent()
     {
         int swapped = 0;
@@ -50,7 +50,7 @@ public static class TransparentMaterialTool
 
     // --- Menu: everywhere the selected material is used ------------------------------------------
 
-    [MenuItem("Tools/RoboSim/Field & Pieces/Replace Material With Transparent Variant (Everywhere)", false, 41)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Replace Material With Transparent Variant (Everywhere)", false, 51)]
     private static void ReplaceEverywhere()
     {
         // The selection defines WHICH materials to replace; the replacement then covers the scene
@@ -86,7 +86,7 @@ public static class TransparentMaterialTool
 
     // --- Menu: restore ----------------------------------------------------------------------------
 
-    [MenuItem("Tools/RoboSim/Field & Pieces/Restore Selected Renderers Opaque", false, 42)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Restore Selected Renderers Opaque", false, 52)]
     private static void RestoreSelectedOpaque()
     {
         int restored = 0;

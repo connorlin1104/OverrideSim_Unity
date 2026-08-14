@@ -18,12 +18,12 @@ using UnityEngine;
 // the OLD setting on the same fixture — a check that only says "it seats eventually" would pass just as
 // happily with the fix reverted.
 //
-// Usage: Tools > RoboSim > Validation > Validate Scoring Drop, or headless
+// Usage: Tools > RoboSim > Validate > Validate Scoring Drop, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod ScoringDropValidation.RunBatchValidate
 public static class ScoringDropValidation
 {
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Scoring Drop", false, 18)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Scoring Drop", false, 45)]
     private static void RunInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

@@ -24,6 +24,10 @@ public static class ModelStoreRoundTrip
     private const string TestFbx = "Assets/Models/Submitted/RoundTripTest.fbx";
     private const string TestPrefab = "Assets/Models/Submitted/RoundTripTest.prefab";
 
+    // Filed under Robot > Advanced rather than Validate, deliberately: this exercises the DELETE
+    // path and must stay out of the suite (see the header). It is here so that "run it after a Unity
+    // upgrade" is something you can actually find, rather than a class name you have to remember.
+    [MenuItem("Tools/RoboSim/Robot/Advanced/Check Model Store Round-Trip", false, 11)]
     public static void Run()
     {
         string root = Path.Combine(Path.GetTempPath(), "RoboSimStoreRoundTrip");

@@ -32,7 +32,7 @@ using UnityEngine;
 // transform, so nudging a rigged part in the scene view silently invalidates it and nothing
 // re-derives it. That is unpoliceable by hand across robots arriving from other people's CAD.
 //
-// So: check it, on every robot, every run. The repair is Tools > RoboSim > Repair > Joint Anchors,
+// So: check it, on every robot, every run. The repair is Tools > RoboSim > Robot > Advanced > Repair Joint Anchors,
 // which re-derives each offending anchor from where its part now sits.
 public static class JointAnchorValidation
 {
@@ -41,7 +41,7 @@ public static class JointAnchorValidation
     private const float PositionToleranceUnits = 0.001f;
     private const float RotationToleranceDeg = 0.1f;
 
-    [MenuItem("Tools/RoboSim/Validate/Joint Anchors Match The Parts", false, 1)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Joint Anchors", false, 20)]
     private static void RunInteractive()
         => ValidationUtil.RunInteractive("Joint Anchors Match The Parts", Run);
 
@@ -103,7 +103,7 @@ public static class JointAnchorValidation
             "PhysX will teleport those links (and their colliders) away from where they were placed the " +
             "moment physics starts:\n    " + string.Join("\n    ", offenders) +
             "\n  Repair: re-derive the anchor from the part's current position with " +
-            "Tools > RoboSim > Repair > Joint Anchors, or rebuild that mechanism. Do NOT fix it by " +
+            "Tools > RoboSim > Robot > Advanced > Repair Joint Anchors, or rebuild that mechanism. Do NOT fix it by " +
             "moving the part — the part is where you want it; the anchor is the stale copy.");
 
         return $"Joint Anchors Match The Parts: PASSED ({joints} checks). Every joint on " +

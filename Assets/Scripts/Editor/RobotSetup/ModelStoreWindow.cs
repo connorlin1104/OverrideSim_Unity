@@ -35,7 +35,7 @@ public class ModelStoreWindow : EditorWindow
     private string root;
     private string status = string.Empty;
 
-    [MenuItem("Tools/RoboSim/Robot/Model Store", false, 22)]
+    [MenuItem("Tools/RoboSim/Robot/Model Store", false, 11)]
     private static void Open()
     {
         GetWindow<ModelStoreWindow>(true, "Model Store", true).minSize = new Vector2(560f, 420f);

@@ -539,7 +539,7 @@ public static class FixRollerDetents
 {
     private static readonly string[] RollerNames = { "RollerNorth", "RollerSouth", "RollerEast", "RollerWest" };
 
-    [MenuItem("Tools/RoboSim/Field & Pieces/Attach Roller Detents (Scene Fix)", false, 4)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Attach Roller Detents (Scene Fix)", false, 40)]
     private static void AttachInteractive()
     {
         int touched = Apply(useUndo: true);
@@ -605,7 +605,7 @@ public static class FixRollerDetents
 
 public class FixRollers : EditorWindow
 {
-    [MenuItem("Tools/RoboSim/Field & Pieces/Rig Rollers (Hinge Joints)", false, 3)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Rig Rollers (Hinge Joints)", false, 10)]
     public static void ShowWindow()
     {
         GetWindow<FixRollers>("Roller Fixer");

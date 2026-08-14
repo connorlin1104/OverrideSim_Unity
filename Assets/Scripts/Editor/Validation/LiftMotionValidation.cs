@@ -46,7 +46,7 @@ public static class LiftMotionValidation
     // what, and 0.3 / 0.1 = 3x would fail a lift that is doing nothing wrong.
     private const float ShakeNoiseFloorDegPerSec = 3f;
 
-    [MenuItem("Tools/RoboSim/Validate/Lowering The Lift Does Not Shake The Robot", false, 2)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Lift Motion", false, 22)]
     private static void RunInteractive()
         => ValidationUtil.RunInteractive("Lowering The Lift Does Not Shake The Robot", Run);
 

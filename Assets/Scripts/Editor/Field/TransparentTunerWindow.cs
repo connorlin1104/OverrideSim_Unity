@@ -14,7 +14,7 @@ public class TransparentTunerWindow : EditorWindow
     private float alpha = 0.12f;
     private bool killSheen = true;
 
-    [MenuItem("Tools/RoboSim/Field & Pieces/Tune Transparency (less white)", false, 43)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Tune Transparency (less white)", false, 53)]
     private static void Open()
     {
         var window = GetWindow<TransparentTunerWindow>(true, "Tune Transparency");

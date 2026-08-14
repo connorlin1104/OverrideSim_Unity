@@ -40,7 +40,7 @@ public static class SettleFieldPieces
     // for a settle.
     private const int RestSteps = 250;
 
-    [MenuItem("Tools/RoboSim/Field & Pieces/Settle Pieces (bake the match start)", false, 2)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Settle Pieces (bake the match start)", false, 30)]
     private static void SettleOpenScene()
     {
         try { Debug.Log(Settle()); }

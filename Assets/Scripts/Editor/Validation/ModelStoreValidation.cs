@@ -29,7 +29,7 @@ using UnityEngine;
 //     has to NOT move for a model that is byte-identical — a false alarm is how an override becomes
 //     routine, and an override is how the real failure gets waved through.
 //
-// Usage: Tools > RoboSim > Validation > Validate Model Store
+// Usage: Tools > RoboSim > Validate > Validate Model Store
 // Batch: -executeMethod ModelStoreValidation.RunBatchValidate
 public static class ModelStoreValidation
 {
@@ -49,7 +49,7 @@ public static class ModelStoreValidation
             "b236d9f11b1d74f2a8fbe6a407be1550", 1534),
     };
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Model Store", false, 8)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Model Store", false, 52)]
     private static void RunFromMenu()
     {
         string result = Validate();

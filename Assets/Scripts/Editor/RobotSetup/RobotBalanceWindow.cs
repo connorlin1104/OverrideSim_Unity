@@ -98,7 +98,7 @@ public class RobotBalanceWindow : EditorWindow
         public string note;
     }
 
-    [MenuItem("Tools/RoboSim/Robot/Mass & Balance", false, 5)]
+    [MenuItem("Tools/RoboSim/Robot/Mass & Balance", false, 4)]
     private static void Open()
     {
         RobotBalanceWindow window = GetWindow<RobotBalanceWindow>(false, "Mass & Balance", true);

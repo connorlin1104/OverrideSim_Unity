@@ -38,7 +38,7 @@ public class BuildRobotBundlesWindow : EditorWindow
     private string lastReport = string.Empty;
     private Vector2 scroll;
 
-    [MenuItem("Tools/RoboSim/Robot/Build Robot Bundle", false, 20)]
+    [MenuItem("Tools/RoboSim/Robot/Build Robot Bundle", false, 30)]
     private static void ShowWindow()
     {
         BuildRobotBundlesWindow window = GetWindow<BuildRobotBundlesWindow>(Title);
@@ -208,7 +208,7 @@ public static class BuildRobotBundles
     // Bump RobotBundleFormat.Version, run this, republish. RobotBundleValidation fails the build if
     // the scripts changed shape and the version didn't, so the first half is checked rather than
     // remembered.
-    [MenuItem("Tools/RoboSim/Robot/Rebuild All Robot Bundles", false, 21)]
+    [MenuItem("Tools/RoboSim/Robot/Rebuild All Robot Bundles", false, 31)]
     private static void RebuildAllFromMenu()
     {
         RobotModelCatalog catalog =

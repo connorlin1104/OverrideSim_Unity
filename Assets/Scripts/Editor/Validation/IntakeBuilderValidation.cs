@@ -17,11 +17,11 @@ using UnityEngine;
 // The four cases run in sequence on ONE robot, because that IS the scenario: build intake 1, rebuild it,
 // build intake 2 beside it, then remove them one at a time.
 //
-// Usage: Tools > RoboSim > Validation > Validate Build Intake, or headless
+// Usage: Tools > RoboSim > Validate > Validate Build Intake, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod IntakeBuilderValidation.RunBatchValidate
 public static class IntakeBuilderValidation
 {
-    [MenuItem("Tools/RoboSim/Validation/Validate Build Intake", false, 15)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Build Intake", false, 33)]
     private static void RunInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

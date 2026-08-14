@@ -18,6 +18,9 @@ public static class RaisedOverlapProbe
     private const int SettleSteps = 200;
     private const int LiftRampSteps = 200;
 
+    [MenuItem("Tools/RoboSim/Validate/Probes/Raised Lift Overlaps", false, 71)]
+    private static void RunInteractive() => ValidationUtil.RunInteractive("Probe Raised Overlaps", Run);
+
     public static void RunBatchValidate() => ValidationUtil.RunBatch("Probe Raised Overlaps", Run);
 
     private static string Run()

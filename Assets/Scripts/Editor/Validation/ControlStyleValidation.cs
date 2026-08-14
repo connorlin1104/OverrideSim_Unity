@@ -11,7 +11,7 @@ using UnityEngine;
 // a mechanism's EXISTING buttons in place (rather than orphaning them), that a gained function
 // claims a free button, and that maps saved before styles existed still load and read correctly.
 //
-// Usage: Tools > RoboSim > Validation > Validate Control Styles, or headless
+// Usage: Tools > RoboSim > Validate > Validate Control Styles, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod ControlStyleValidation.RunBatchValidate
 // which exits nonzero on the first failed check.
 public static class ControlStyleValidation
@@ -22,7 +22,7 @@ public static class ControlStyleValidation
     private const string Motor = RobotMechanisms.TypeMotor;
     private const string Pneumatic = RobotMechanisms.TypePneumatic;
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Control Styles", false, 20)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Control Styles", false, 25)]
     private static void RunInteractive()
     {
         ValidationUtil.RunInteractive("Validate Control Styles", Run);

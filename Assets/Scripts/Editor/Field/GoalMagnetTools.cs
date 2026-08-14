@@ -20,7 +20,7 @@ public static class FixGoalMagnets
     // Vector3.forward), so the stack base sits half its thickness above its center.
     private const float FloorHalfThickness = 0.01f;
 
-    [MenuItem("Tools/RoboSim/Field & Pieces/Add Goal Stack Magnets", false, 5)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Add Goal Stack Magnets", false, 11)]
     private static void ApplyInteractive()
     {
         int touched = Apply(useUndo: true);

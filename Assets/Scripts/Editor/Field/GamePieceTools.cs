@@ -14,7 +14,7 @@ using System.IO;
 
 public static class FixCups
 {
-    [MenuItem("Tools/RoboSim/Field & Pieces/Rebuild Cup Colliders", false, 20)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Rebuild Cup Colliders", false, 3)]
     public static void CleanAndOptimizeCups()
     {
         GameObject selectedParent = Selection.activeGameObject;
@@ -141,7 +141,7 @@ public static class FixAllPins
         public Vector3 rotation;
     }
 
-    [MenuItem("Tools/RoboSim/Field & Pieces/Rebuild Pin Colliders (Any Color)", false, 21)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Rebuild Pin Colliders (Any Color)", false, 4)]
     public static void CleanAndOptimizePins()
     {
         GameObject selectedParent = Selection.activeGameObject;
@@ -264,7 +264,7 @@ public class FixPieceClamps
     private const float Tolerance = 0.05f;
     private const float VisualLift = 0.03f; // cosmetic mesh lift only — see MinHeightClamp
 
-    [MenuItem("Tools/RoboSim/Field & Pieces/Add Floor Clamp to Pieces", false, 7)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Add Floor Clamp to Pieces", false, 13)]
     private static void AddClamps()
     {
         Rigidbody[] bodies = Object.FindObjectsByType<Rigidbody>(FindObjectsInactive.Exclude);
@@ -330,7 +330,7 @@ public static class TunePiecePhysics
     // Minimum so the lower of the two wins and the piece material above becomes the single authority.
     private const string FieldMaterialPath = "Assets/ZeroBounce.physicMaterial";
 
-    [MenuItem("Tools/RoboSim/Field & Pieces/Tune Roll and Friction", false, 22)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Tune Roll and Friction", false, 20)]
     private static void Tune()
     {
         PhysicsMaterial mat = GetOrCreateMaterial();

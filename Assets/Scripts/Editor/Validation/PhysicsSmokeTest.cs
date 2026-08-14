@@ -23,7 +23,7 @@ using UnityEditor.SceneManagement;
 // The simulation mutates the open scene; it is ALWAYS reloaded from disk afterwards so the
 // simulated poses are never saved.
 //
-// Usage: Tools > RoboSim > Validation > Validate Robot Physics (validates the robot in the active scene),
+// Usage: Tools > RoboSim > Validate > Validate Robot Physics (validates the robot in the active scene),
 // or PhysicsSmokeTest.ValidateRobot(root) right after rigging one (Set Up Imported Robot does this).
 public class PhysicsSmokeTest
 {
@@ -53,7 +53,7 @@ public class PhysicsSmokeTest
     // from the same settled pose, so "which goal is closest" has to mean the same thing there.
     internal static Vector3 ValidationSpawn => ValidationSpawnPoint;
 
-    [MenuItem("Tools/RoboSim/Validation/Validate Robot Physics", false, 1)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Robot Physics", false, 10)]
     private static void ValidateMenu()
     {
         // The simulation trashes the open scene and we reload it from disk afterwards, so give

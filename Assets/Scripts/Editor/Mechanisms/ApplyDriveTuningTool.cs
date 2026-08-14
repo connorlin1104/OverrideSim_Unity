@@ -26,7 +26,7 @@ public class ApplyDriveTuningTool
         string report = Run(out int changed, out int total);
         EditorUtility.DisplayDialog("Apply Drive Tuning",
             $"{changed} of {total} robot prefab(s) updated.\n\n{report}\n\n" +
-            "Now re-run Tools > RoboSim > Validation > Validate Robot Physics: the drive test measures " +
+            "Now re-run Tools > RoboSim > Validate > Validate Robot Physics: the drive test measures " +
             "these serialized values, so its distances will have moved.", "OK");
     }
 

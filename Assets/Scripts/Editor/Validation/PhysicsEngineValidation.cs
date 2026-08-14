@@ -29,7 +29,7 @@ public static class PhysicsEngineValidation
     private const float DropFrom = 100f;   // high enough that nothing can be resting on anything
     private const float MinFall = 1f;      // at -98.1 u/s^2 a real fall is ~12 u; 1 u is unmissable
 
-    [MenuItem("Tools/RoboSim/Validate/Physics Engine Is Running", false, 0)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Physics Engine", false, 0)]
     private static void RunInteractive()
         => ValidationUtil.RunInteractive("Physics Engine Is Running", Run);
 
@@ -85,8 +85,9 @@ public static class PhysicsEngineValidation
                 "itself. Do not trust any other physics validator until this passes — they will all " +
                 "blame the robot.");
 
-            return $"Physics Engine Is Running: PASSED (2 checks). A sphere fell {fell:0.0} units in " +
-                   $"{Steps * ValidationUtil.StepSeconds:0.0} s under gravity {Physics.gravity.y:0.0}.";
+            return $"Physics Engine Is Running: PASSED (3 checks). A sphere fell {fell:0.0} units in " +
+                   $"{Steps * ValidationUtil.StepSeconds:0.0} s under gravity {Physics.gravity.y:0.0}, " +
+                   $"stepping at the project's {Time.fixedDeltaTime:0.###} s timestep.";
         }
         finally { Physics.simulationMode = previousMode; }
     }

@@ -21,11 +21,11 @@ using UnityEngine;
 // No physics stepping and no robot: this drives the real capture/handoff/release calls on a synthetic
 // pair of intakes, so it stays fast and covers exactly what was broken.
 //
-// Usage: Tools > RoboSim > Validation > Validate Intake Handoff, or headless
+// Usage: Tools > RoboSim > Validate > Validate Intake Handoff, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod IntakeHandoffValidation.RunBatchValidate
 public static class IntakeHandoffValidation
 {
-    [MenuItem("Tools/RoboSim/Validation/Validate Intake Handoff", false, 16)]
+    [MenuItem("Tools/RoboSim/Validate/Validate Intake Handoff", false, 24)]
     private static void RunInteractive()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

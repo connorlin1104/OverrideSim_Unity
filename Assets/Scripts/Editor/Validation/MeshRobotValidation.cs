@@ -16,6 +16,9 @@ using UnityEngine;
 //   Unity -batchmode -executeMethod MeshRobotValidation.RunBatchValidateMeshRobot -quit
 public static class MeshRobotValidation
 {
+    [MenuItem("Tools/RoboSim/Validate/Validate Mesh Robot", false, 60)]
+    private static void RunInteractive() => RunBatchValidateMeshRobot();
+
     public static void RunBatchValidateMeshRobot()
     {
         const string robotName = "MeshBot";

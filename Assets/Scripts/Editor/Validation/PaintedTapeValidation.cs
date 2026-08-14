@@ -30,7 +30,7 @@ using UnityEngine;
 // neither can be undone by mistake.
 public static class PaintedTapeValidation
 {
-    [MenuItem("Tools/RoboSim/Validate/Painted Tape Is Not Solid")]
+    [MenuItem("Tools/RoboSim/Validate/Validate Painted Tape", false, 42)]
     public static void Validate() => ValidationUtil.RunInteractive("Painted Tape", Run);
 
     public static void RunBatchValidate() => ValidationUtil.RunBatch("Painted Tape", Run);

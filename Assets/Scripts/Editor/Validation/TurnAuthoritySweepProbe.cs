@@ -24,7 +24,7 @@ public static class TurnAuthoritySweepProbe
 
     private static readonly float[] Multiples = { 3f, 2.5f, 2f, 1.75f, 1.5f, 1.25f, 1f };
 
-    [MenuItem("Tools/RoboSim/Probe/Turn Authority Sweep")]
+    [MenuItem("Tools/RoboSim/Validate/Probes/Turn Authority Sweep", false, 70)]
     public static void Probe() => ValidationUtil.RunInteractive("Turn Authority Sweep", Run);
 
     public static void RunBatchValidate() => ValidationUtil.RunBatch("Turn Authority Sweep", Run);
