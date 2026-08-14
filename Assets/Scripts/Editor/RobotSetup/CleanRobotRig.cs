@@ -44,7 +44,7 @@ public static class CleanRobotRig
     }
 
     // Does the stripping. useUndo=false for headless/batch callers. Returns a short report.
-    public static string Clean(GameObject robot, bool useUndo)
+    private static string Clean(GameObject robot, bool useUndo)
     {
         if (robot == null) throw new System.ArgumentNullException(nameof(robot));
 

@@ -1643,11 +1643,8 @@ public class BuildHomeScene
     // fixed height, and without this the layout overflows CENTERED — the lower rows (the toggles, the
     // buttons) simply end up off-screen with no scrollbar to reveal them. The viewport clips; the
     // content grows to fit. Returns the object rows should be added to.
-    private static GameObject CreateScrollingContent(GameObject panel, string namePrefix)
-        => CreateScrollingContent(panel, namePrefix, 12f, 12f, false, out _, out _);
-
-    // As above, with room reserved at the top and bottom for anything pinned outside the scroll (a
-    // tab row, a Back button that must never scroll away), and optionally a visible scrollbar.
+    // topInset/bottomInset reserve room for anything pinned outside the scroll (a tab row, a Back
+    // button that must never scroll away); addScrollbar adds a visible one.
     private static GameObject CreateScrollingContent(GameObject panel, string namePrefix,
         float topInset, float bottomInset, bool addScrollbar,
         out ScrollRect scroll, out Scrollbar scrollbar)

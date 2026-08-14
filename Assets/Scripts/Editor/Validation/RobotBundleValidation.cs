@@ -235,6 +235,36 @@ public static class RobotBundleValidation
         checks.That(RobotBundleAddress.RemotePath(privateEntry, "iOS/v1/b-abc.bundle")
                 .StartsWith($"{RobotBundleFormat.RemoteFolder}/{PinnedFolder}/"),
             "A private robot's bundle is not under its own address.");
+
+        // THE PUBLISHER MUST WRITE WHERE THE APP READS. Everything above checks RemotePath against
+        // itself, which is why it stayed green while Build Robot Bundle staged bundles one directory
+        // level too high — it used Folder(entry) directly and so dropped the "robots/" prefix that
+        // RemotePath adds. The index went through IndexPath and DID get the prefix, so the failure
+        // would have been a reachable index pointing at a 404: the one shape of bug that looks like
+        // a working publish right up until a phone tries to download. Pin the two together.
+        // The expectation is spelled out from the PIECES (staging root / remote folder / address /
+        // relative) rather than by calling RemotePath, because StagedRemotePath is implemented in
+        // terms of RemotePath — comparing the two would re-derive the formula under test and pass
+        // no matter what either side did. Written this way, dropping the "robots/" prefix from
+        // either the publisher or the reader fails the check.
+        foreach (RobotModelCatalog.Entry entry in new[] { publicEntry, privateEntry })
+        {
+            const string relative = "iOS/v1/b-abc.bundle";
+            string staged = BuildRobotBundles.StagedRemotePath(entry, relative).Replace('\\', '/');
+            string expected = $"{BuildRobotBundles.StagingFolder}/{RobotBundleFormat.RemoteFolder}/" +
+                              $"{RobotBundleAddress.Folder(entry)}/{relative}";
+            checks.That(staged == expected,
+                $"Build Robot Bundle stages a {entry.visibility} robot at '{staged}', but the app " +
+                $"downloads from '{expected}'. The staging tree is uploaded verbatim, so a mismatch " +
+                "here is a bundle that 404s even though the index listing it resolves fine.");
+        }
+
+        // ...and the same shape, stated once more against the function the APP actually calls, so a
+        // change to RemotePath alone can't silently move the download away from the upload.
+        checks.That(BuildRobotBundles.StagedRemotePath(privateEntry, "iOS/v1/b-abc.bundle")
+                .Replace('\\', '/')
+                .EndsWith(RobotBundleAddress.RemotePath(privateEntry, "iOS/v1/b-abc.bundle")),
+            "The staged path no longer ends with the address RobotBundleService downloads from.");
     }
 
     // The index is written by an editor tool and read by JsonUtility on a phone. JsonUtility silently

@@ -231,11 +231,6 @@ internal static class ModelStore
             return ToHex(sha.ComputeHash(stream));
     }
 
-    public static string Sha256OfBytes(byte[] bytes)
-    {
-        using (var sha = SHA256.Create()) return ToHex(sha.ComputeHash(bytes));
-    }
-
     private static string ToHex(byte[] hash)
     {
         var sb = new StringBuilder(hash.Length * 2);

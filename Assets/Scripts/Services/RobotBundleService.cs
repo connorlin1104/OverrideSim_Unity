@@ -211,14 +211,4 @@ public static class RobotBundleService
     private static bool IsInsideArchive(string path) =>
         path.Contains("jar:") || path.Contains("://") || Application.platform == RuntimePlatform.Android;
 
-    // For tests and for the "clear downloads" path a settings screen might grow. Bundles cannot be
-    // reloaded while still open, so anything holding an instantiated robot must be gone first.
-    public static void UnloadAll(bool unloadInstances)
-    {
-        foreach (AssetBundle bundle in loaded.Values)
-        {
-            if (bundle != null) bundle.Unload(unloadInstances);
-        }
-        loaded.Clear();
-    }
 }

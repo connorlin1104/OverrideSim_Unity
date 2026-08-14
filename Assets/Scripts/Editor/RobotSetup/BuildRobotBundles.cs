@@ -76,8 +76,7 @@ public class BuildRobotBundlesWindow : EditorWindow
         GameObject source = BuildRobotBundles.SourcePrefab(entry);
         EditorGUILayout.LabelField("Source prefab", source == null ? "(none — save it as a prefab first)"
             : AssetDatabase.GetAssetPath(source));
-        EditorGUILayout.LabelField("Address", $"{RobotBundleFormat.RemoteFolder}/" +
-                                              $"{RobotBundleAddress.Folder(entry)}/…");
+        EditorGUILayout.LabelField("Address", RobotBundleAddress.RemotePath(entry, "…"));
         if (entry.visibility == RobotModelCatalog.Visibility.Private)
         {
             EditorGUILayout.HelpBox(
@@ -141,6 +140,19 @@ public static class BuildRobotBundles
     // Where built bundles land on the way out. Under Build/ rather than Assets/ so Unity never
     // imports them — a bundle inside Assets/ would be re-serialized into the next one.
     public const string StagingFolder = "Build/RobotBundles";
+
+    // Where a bundle is staged for upload. The staging tree is rsync'd to Storage VERBATIM, so every
+    // path under it has to be the address the app will ask for — RobotBundleAddress.RemotePath, the
+    // same function RobotBundleService.Load uses to build its download URL.
+    //
+    // This used to be Path.Combine(StagingFolder, RobotBundleAddress.Folder(entry), relative), which
+    // drops the "robots/" prefix that RemotePath adds. The INDEX never had that bug (it goes through
+    // IndexPath, which does prefix), so a publish would have produced a reachable index listing a
+    // robot whose bundle 404s — discovery works, download doesn't. Nothing had been published yet,
+    // so it was never hit, and the suite missed it because it only ever checked RemotePath against
+    // itself. RobotBundleValidation now pins the publisher to the reader instead.
+    public static string StagedRemotePath(RobotModelCatalog.Entry entry, string relative) =>
+        Path.Combine(StagingFolder, RobotBundleAddress.RemotePath(entry, relative));
 
     public const string StreamingRoot = "Assets/StreamingAssets";
 
@@ -320,7 +332,7 @@ public static class BuildRobotBundles
             relative = ReplacePlatform(relative, PlatformFolderFor(target));
 
             string destination = remote
-                ? Path.Combine(StagingFolder, RobotBundleAddress.Folder(entry), relative)
+                ? StagedRemotePath(entry, relative)
                 : Path.Combine(StreamingRoot, RobotBundleFormat.StreamingFolder, relative);
 
             Directory.CreateDirectory(Path.GetDirectoryName(destination));

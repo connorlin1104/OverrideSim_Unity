@@ -247,7 +247,6 @@ public class RobotMotorController : MonoBehaviour
     // directional has to agree with the controller about which way that was — TipOverValidation's
     // lateral balance and RobotBalanceWindow's two margins were both wrong for exactly that reason.
     public Vector3 DriveForwardWorld => DriveForward;
-    public Vector3 DriveRightWorld => DriveRight;
 
     // The force limit each wheel's drive currently carries, so the per-step decision below only
     // writes an ArticulationDrive struct when it actually changes. Same reason MotorActuator keeps
@@ -1214,13 +1213,6 @@ public class RobotMotorController : MonoBehaviour
         manualThrottle = throttle;
         manualTurn = turn;
         manualInput = true;
-    }
-
-    public void ClearManualInput()
-    {
-        manualInput = false;
-        manualThrottle = 0f;
-        manualTurn = 0f;
     }
 
     private static void ApplySide(ArticulationBody[] wheels, float degPerSec)

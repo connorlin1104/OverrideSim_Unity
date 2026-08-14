@@ -37,7 +37,7 @@ public static class RobotMeshReport
     // One mesh, counted once however many renderers share it. Sharing is the norm in a CAD export
     // (every identical screw points at one mesh), so counting per-renderer would multiply the true
     // cost by ten and send you decimating something that is already cheap.
-    public class MeshCost
+    private class MeshCost
     {
         public Mesh mesh;
         public int users;
@@ -115,7 +115,7 @@ public static class RobotMeshReport
 
     // Every distinct mesh under `root`, with what it costs. Includes inactive children: a mechanism
     // parked inactive in the prefab still ships its geometry.
-    public static List<MeshCost> Measure(GameObject root, string robotName)
+    private static List<MeshCost> Measure(GameObject root, string robotName)
     {
         var byMesh = new Dictionary<Mesh, MeshCost>();
 

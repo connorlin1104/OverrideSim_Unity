@@ -22,17 +22,4 @@ public class LiftCarriage : MonoBehaviour
 
     void Reset() { if (body == null) body = GetComponent<ArticulationBody>(); }
     void Awake() { if (body == null) body = GetComponent<ArticulationBody>(); }
-
-    // Current joint displacement (read-only convenience for a HUD/gizmo): degrees for a revolute tray,
-    // world units (10x scale) for a prismatic one. jointPosition is radians (revolute) / meters
-    // (prismatic); we return it raw here — callers know the tray's joint type.
-    public float JointPosition
-    {
-        get
-        {
-            if (body == null) return 0f;
-            ArticulationReducedSpace p = body.jointPosition;
-            return p.dofCount > 0 ? p[0] : 0f;
-        }
-    }
 }

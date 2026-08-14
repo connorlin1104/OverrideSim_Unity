@@ -90,7 +90,6 @@ public class PieceStackMagnet : MonoBehaviour
     // never grabs a piece that is already spoken for.
     private static readonly HashSet<Rigidbody> Claimed = new HashSet<Rigidbody>();
     public static bool IsClaimed(Rigidbody rb) => rb != null && Claimed.Contains(rb);
-    public int SeatedCount => stack.Count;
 
     void Awake() => body = GetComponent<Rigidbody>();
 
@@ -229,7 +228,7 @@ public class PieceStackMagnet : MonoBehaviour
 
     // The piece's standing axis in its rigidbody-local frame (longest mesh-bounds axis), same
     // measurement GoalStackMagnet / IntakePull auto-upright use. Zero if there's no mesh to measure.
-    public static Vector3 ComputeUpAxis(Rigidbody rb) => PieceGeometry.MeasureUpAxis(rb);
+    private static Vector3 ComputeUpAxis(Rigidbody rb) => PieceGeometry.MeasureUpAxis(rb);
 
 #if UNITY_EDITOR
     void OnDrawGizmosSelected()

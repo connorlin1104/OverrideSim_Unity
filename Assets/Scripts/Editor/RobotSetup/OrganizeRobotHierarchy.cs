@@ -81,7 +81,7 @@ public static class OrganizeRobotHierarchy
 
     // Groups target and everything nested under it (see OrganizeNode). useUndo=false for headless/batch
     // callers. Returns a short report.
-    public static string Organize(GameObject target, bool useUndo)
+    private static string Organize(GameObject target, bool useUndo)
     {
         if (target == null) throw new System.ArgumentNullException(nameof(target));
 

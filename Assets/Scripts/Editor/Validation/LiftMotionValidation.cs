@@ -101,7 +101,6 @@ public static class LiftMotionValidation
     private struct Sweep
     {
         public float peakAngularDegPerSec;   // worst instantaneous chassis rotation rate
-        public float meanAngularDegPerSec;
         public float peakLinearUnitsPerSec;  // the chassis should not be travelling at all
         public int reversals;                // pitch-rate sign changes: shaking, not leaning
         public int steps;
@@ -193,7 +192,6 @@ public static class LiftMotionValidation
         var s = new Sweep();
         Transform t = root.transform;
         float prevRate = 0f;
-        float sumAngular = 0f;
 
         for (int i = 0; i < MaxTravelSteps; i++)
         {
@@ -203,7 +201,6 @@ public static class LiftMotionValidation
 
             float angular = root.angularVelocity.magnitude * Mathf.Rad2Deg;
             s.peakAngularDegPerSec = Mathf.Max(s.peakAngularDegPerSec, angular);
-            sumAngular += angular;
             s.peakLinearUnitsPerSec = Mathf.Max(s.peakLinearUnitsPerSec,
                 Vector3.ProjectOnPlane(root.linearVelocity, Vector3.up).magnitude);
 
@@ -220,7 +217,6 @@ public static class LiftMotionValidation
         }
 
         driver.SetInput(0f);
-        s.meanAngularDegPerSec = s.steps > 0 ? sumAngular / s.steps : 0f;
         return s;
     }
 

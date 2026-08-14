@@ -220,7 +220,6 @@ public static class GoalEntrapmentValidation
         public string goal;
         public float approach;      // how far the robot actually closed on the goal
         public float probe;         // how far it moved during the direction probe
-        public bool alignerExtended;
         public int actuators;
         public float impactSpeed;   // peak speed closing on the goal
         public float reboundSpeed;  // ...and peak speed thrown back off it
@@ -231,7 +230,6 @@ public static class GoalEntrapmentValidation
         public float deepestMass;
         public float chassisMass;
 
-        public bool liftRaised;
         public float bearingDeg;    // approach heading: 0 = square onto a face, 22.5 = onto a corner
         public int intruders;       // how many robot colliders ended up past the ring's inner face
         public float rimTop;        // world y of the top of the ring
@@ -302,7 +300,7 @@ public static class GoalEntrapmentValidation
         var result = new Result
         {
             goal = goalName, chassisMass = root.mass, nearest = float.PositiveInfinity,
-            alignerExtended = extendAligner, liftRaised = raiseLift, bearingDeg = bearingDeg,
+            bearingDeg = bearingDeg,
         };
         SimulationMode previousMode = Physics.simulationMode;
         try

@@ -77,7 +77,6 @@ public static class MeshDecimator
         public int triangles;
         public int vertices;
         public float maxDeviation;      // how far the surface moved, at worst, in mesh units
-        public float boundsDrift;       // how far the bounding box corners moved
         public bool hitErrorCeiling;    // stopped on quality rather than on the ratio
         public string note = string.Empty;
 
@@ -217,8 +216,6 @@ public static class MeshDecimator
         result.triangles = TriangleCount(simplified);
         result.vertices = simplified.vertexCount;
         result.maxDeviation = Deviation(source, simplified);
-        result.boundsDrift = Vector3.Distance(source.bounds.min, simplified.bounds.min)
-                           + Vector3.Distance(source.bounds.max, simplified.bounds.max);
 
         faces = null;
         verts = null;

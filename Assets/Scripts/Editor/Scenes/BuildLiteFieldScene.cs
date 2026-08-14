@@ -26,7 +26,6 @@ using Scene = UnityEngine.SceneManagement.Scene;
 public class BuildLiteFieldScene
 {
     private const string LiteScenePath = RoboSimPaths.LiteScene;
-    private const string HomeScenePath = "Assets/Scenes/HomeScene.unity";
     private const string FieldRootName = "OverrideFieldVersion3";
 
     // A goal counts as a full-height stake when its geometry reaches at least this fraction of the
@@ -279,7 +278,7 @@ public class BuildLiteFieldScene
         {
             report.AppendLine("  tape: WARNING — no tape is linked to the kept match loader; " +
                               "keeping the nearest one instead");
-            paired = KeepNearest(triggers, null, WorldCenter(keptLoader), tapes, "tape (fallback)", report);
+            KeepNearest(triggers, null, WorldCenter(keptLoader), tapes, "tape (fallback)", report);
             return;
         }
 

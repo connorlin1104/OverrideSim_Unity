@@ -90,8 +90,6 @@ public static class RobotFilePicker
         return found;
     }
 
-    public static string InboxLocation => Application.persistentDataPath;
-
     public static bool LooksLikeRobotFile(string path)
     {
         if (string.IsNullOrEmpty(path)) return false;

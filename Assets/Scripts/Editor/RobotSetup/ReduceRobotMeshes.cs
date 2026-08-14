@@ -106,7 +106,7 @@ public class ReduceRobotMeshesWindow : EditorWindow
 
 public static class ReduceRobotMeshes
 {
-    public const string MeshFolder = "Assets/RobotMeshes";
+    private const string MeshFolder = "Assets/RobotMeshes";
 
     // Headless entry: -executeMethod ReduceRobotMeshes.RunBatch -robot <name> [-keep 0.08]
     //

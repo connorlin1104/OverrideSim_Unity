@@ -9,9 +9,7 @@ using Unity.Robotics.UrdfImporter;
 // nodes. Duplicate part instances get importer suffixes (":3", " (2)"). This utility centralizes
 // the naming rules so every collider/rigging tool agrees on:
 //   - which parts are fasteners (spacers/screws/nuts/... — physically irrelevant, skip colliders),
-//   - which nodes are wheels and how the coincident omni-wheel halves group into wheel clusters,
-//   - how to measure a named sub-group's bounds in the robot root's local space
-//     (used for drivetrain turn-pivot centers and group collider bounds).
+//   - which nodes are wheels and how the coincident omni-wheel halves group into wheel clusters.
 //
 // Editor-only (lives in Editor/); used by Tools > RoboSim > Robot > Advanced > Rebuild Part Colliders and rigging tools.
 public static class RobotPartClassifier
@@ -403,46 +401,6 @@ public static class RobotPartClassifier
                              "and the cluster radius.", root);
         }
         return clusters;
-    }
-
-    // Combined renderer bounds of a named sub-group (or the whole robot when groupName is null),
-    // expressed in the root's local space as a BoxCollider-style center + size.
-    // Shared here so every collider/rigging tool measures group bounds identically.
-    public static bool TryGetGroupLocalBounds(GameObject root, string groupName, out Vector3 center, out Vector3 size)
-    {
-        center = Vector3.zero;
-        size = Vector3.zero;
-
-        // Collect the renderers that belong to the group (or all of them).
-        List<Renderer> renderers = new List<Renderer>();
-        if (groupName == null)
-        {
-            renderers.AddRange(root.GetComponentsInChildren<Renderer>());
-        }
-        else
-        {
-            foreach (Transform child in root.GetComponentsInChildren<Transform>())
-            {
-                if (child.name.Contains(groupName))
-                {
-                    renderers.AddRange(child.GetComponentsInChildren<Renderer>());
-                }
-            }
-        }
-
-        if (renderers.Count == 0) return false;
-
-        // World-space AABB over the group's renderers.
-        Bounds world = renderers[0].bounds;
-        for (int i = 1; i < renderers.Count; i++) world.Encapsulate(renderers[i].bounds);
-
-        // Convert into the root's local space (root is unrotated/unscaled in practice,
-        // but Abs keeps the size sane if that ever changes).
-        Transform t = root.transform;
-        center = t.InverseTransformPoint(world.center);
-        Vector3 local = t.InverseTransformVector(world.size);
-        size = new Vector3(Mathf.Abs(local.x), Mathf.Abs(local.y), Mathf.Abs(local.z));
-        return true;
     }
 
     // True when the (already-normalized) name contains ANY of the comma-split tokens, case-

@@ -165,15 +165,24 @@ public class Dr4bLiftBuilderWindow : EditorWindow
     {
         RobotMechanisms reg = ResolveRegistry();
         if (reg == null) { EditorUtility.DisplayDialog(Title, "Select the robot (or a part of it) first.", "OK"); return; }
+        bool migrated = false;
         foreach (LinkageBarFollower f in reg.GetComponentsInChildren<LinkageBarFollower>(true))
             if (f.mode == LinkageBarFollower.FollowMode.TranslateAlongWorldAxis && Mathf.Abs(f.unitsPerRadian) > 1e-4f)
             {
                 float total = Mathf.Abs(f.unitsPerRadian) * (60f * Mathf.Deg2Rad);   // old total rise
                 stage1Rise = total * 0.5f; stage2Rise = total * 0.5f;
+                migrated = true;
                 break;
             }
-        EditorUtility.DisplayDialog(Title, "Migrated the old cheat lift's rise. Now drag your folders into the " +
-            "movement buckets + pivot/arm slots (both sides) and Build.", "OK");
+        // No cheat lift on this robot is the ordinary case — every robot in the project was built by
+        // this tool, not migrated into it. Saying "Migrated" regardless made a no-op look like a
+        // success and left the untouched default rise looking like a measured one.
+        EditorUtility.DisplayDialog(Title, migrated
+            ? "Migrated the old cheat lift's rise. Now drag your folders into the movement buckets + " +
+              "pivot/arm slots (both sides) and Build."
+            : "Nothing to migrate — this robot has no old cheat lift (a LinkageBarFollower set to " +
+              "TranslateAlongWorldAxis), so the rise values are unchanged. Drag your folders into the " +
+              "movement buckets + pivot/arm slots (both sides), set the rise yourself, and Build.", "OK");
     }
 
     private RobotMechanisms ResolveRegistry()

@@ -64,9 +64,6 @@ public static class RobotBundleAddress
     public static string RemotePath(RobotModelCatalog.Entry entry, string relative) =>
         $"{RobotBundleFormat.RemoteFolder}/{Folder(entry)}/{relative}";
 
-    public static string RemotePathForCode(string ownerCode, string relative) =>
-        $"{RobotBundleFormat.RemoteFolder}/{FolderForCode(ownerCode)}/{relative}";
-
     // The index that tells an app which robots exist at an address it can reach.
     //
     // Discovery has to be behind the same capability as the download, or it leaks the answer: a

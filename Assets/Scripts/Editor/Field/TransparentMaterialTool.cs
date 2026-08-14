@@ -247,27 +247,6 @@ public static class TransparentMaterialTool
         return null;
     }
 
-    // Headless retune for the editor-closed pass: flatten every existing variant to a low-white
-    // transparent (kills the specular/reflection sheen, drops alpha). The interactive Tune
-    // Transparency window does the same with a chosen alpha and a selection.
-    public static void RetuneAllVariantsBatch() => RetuneAll(0.2f, killSheen: true);
-
-    public static void RetuneAll(float alpha, bool killSheen)
-    {
-        int n = 0;
-        foreach (Material m in AllVariants())
-        {
-            ApplyTransparent(m, alpha, killSheen);
-            Debug.Log($"  retuned {m.name} -> alpha {alpha:0.00}");
-            n++;
-        }
-        AssetDatabase.SaveAssets();
-        Debug.Log($"Retune Transparent Variants: {n} variant(s) updated (alpha {alpha:0.00}, killSheen {killSheen}).");
-        if (n == 0)
-            Debug.LogWarning("Retune Transparent Variants: no variants found in " + FolderPath +
-                             " — nothing to retune (make some transparent first).");
-    }
-
     internal static bool IsVariant(Material m) =>
         m != null && AssetDatabase.GetAssetPath(m).StartsWith(FolderPath);
 
