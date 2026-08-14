@@ -16,7 +16,7 @@ using UnityEngine;
 //   3) add mechanisms one at a time, validating after each.
 //
 // Meshes, colliders, and the robotId are kept, so re-rigging just works. Undoable, and it asks first.
-public static class CleanRobotRig
+public static class StripRobotRig
 {
     private const string Title = "Clean Robot Rig";
 

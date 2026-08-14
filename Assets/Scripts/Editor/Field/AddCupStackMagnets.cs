@@ -9,8 +9,8 @@ using UnityEditor.SceneManagement;
 //
 // Idempotent: re-running re-bakes each cup's base offset / up axis but leaves any Inspector-tuned
 // piece profiles alone. Prefabs are only re-saved when a magnet is newly added, to avoid churn.
-// Batch: -executeMethod FixCupMagnets.RunBatch.
-public static class FixCupMagnets
+// Batch: -executeMethod AddCupStackMagnets.RunBatch.
+public static class AddCupStackMagnets
 {
     [MenuItem("Tools/RoboSim/Field & Pieces/Add Cup Stack Magnets", false, 12)]
     private static void ApplyInteractive()

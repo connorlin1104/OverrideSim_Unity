@@ -80,7 +80,7 @@ public static class TurnAuthoritySweepProbe
             TipOverValidation.StepDriven(motor, 0f, 0f, SettleSteps);
             if (accelFirst) TipOverValidation.StepDriven(motor, 1f, 0f, AccelSteps);
 
-            ArticulationBody[] wheels = PhysicsSmokeTest.FindWheels(root, out _, out _);
+            ArticulationBody[] wheels = RobotPhysicsValidation.FindWheels(root, out _, out _);
             float radius = DrivetrainTuning.MeasureWheelRadius(wheels);
             var lastSpin = new float[wheels.Length];
             for (int w = 0; w < wheels.Length; w++) lastSpin[w] = Spin(wheels[w]);

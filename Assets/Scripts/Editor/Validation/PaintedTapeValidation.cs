@@ -39,9 +39,9 @@ public static class PaintedTapeValidation
     {
         EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
 
-        GameObject decals = GameObject.Find(FixFieldColliders.StaticObjectsName);
+        GameObject decals = GameObject.Find(RebuildFieldBounds.StaticObjectsName);
         ValidationUtil.Assert(decals != null,
-            $"no '{FixFieldColliders.StaticObjectsName}' in {RoboSimPaths.MainScene}. That is where " +
+            $"no '{RebuildFieldBounds.StaticObjectsName}' in {RoboSimPaths.MainScene}. That is where " +
             "the painted tape lives, so either the field has been restructured or the wrong scene is " +
             "open — and this check would otherwise pass by finding nothing.");
 
@@ -72,7 +72,7 @@ public static class PaintedTapeValidation
         }
 
         ValidationUtil.Assert(flat.Count == 0,
-            $"{flat.Count} FLAT collider(s) under {FixFieldColliders.StaticObjectsName} are solid. A " +
+            $"{flat.Count} FLAT collider(s) under {RebuildFieldBounds.StaticObjectsName} are solid. A " +
             "sheet a fraction of a millimetre off the floor is not a ledge the robot climbs — it is a " +
             "SECOND FLOOR at the same height as the first, and each wheel's contact alternates between " +
             "the two every step, which the driver feels as the robot shaking on the tape. Run Tools > " +
@@ -103,16 +103,16 @@ public static class PaintedTapeValidation
             "OnTriggerEnter can never fire and standing on the tape does nothing.");
 
         return $"Painted Tape Is Not Solid: PASSED.\n" +
-               $"  {FixFieldColliders.StaticObjectsName}: 0 flat colliders, {structure} thicker " +
+               $"  {RebuildFieldBounds.StaticObjectsName}: 0 flat colliders, {structure} thicker " +
                $"object(s) left collidable, {triggers} trigger(s).\n" +
                $"  {detectors.Count} MatchLoadTrigger(s) intact, all with trigger colliders.";
     }
 
-    // Anything thicker than this is structure, not paint. Same number FixFieldColliders strips by,
+    // Anything thicker than this is structure, not paint. Same number RebuildFieldBounds strips by,
     // and the measured gap is wide: 0-1 mm of tape against 88 mm blocks, nothing in between.
     private const float DecalThickness = 0.2f;
 
-    // The top of the tiles, from their renderers, exactly as FixFieldColliders measures it.
+    // The top of the tiles, from their renderers, exactly as RebuildFieldBounds measures it.
     private static float FloorTop()
     {
         GameObject floorTiles = GameObject.Find("FloorTiles");

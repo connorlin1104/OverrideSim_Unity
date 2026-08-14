@@ -176,7 +176,7 @@ internal static class ValidationUtil
     // THE BARE-FLOOR RIG: an empty scene with one floor, and nothing else at all.
     //
     // Lived inside TipOverValidation, which meant five other validators reached into a 1350-line test
-    // file to get their fixture, and a third copy (RaisedOverlapProbe) re-implemented it rather than
+    // file to get their fixture, and a third copy (RaisedLiftOverlapProbe) re-implemented it rather than
     // do that — dropping the floor-material assertion on the way, so it was silently measuring grip
     // against PhysX's default friction instead of the project's.
     //

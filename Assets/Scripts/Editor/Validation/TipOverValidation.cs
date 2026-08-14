@@ -8,7 +8,7 @@ using UnityEngine.SceneManagement;
 //
 // This is the check the drivetrain never had, and its absence is exactly how the sim ended up with
 // robots that could not be knocked over in any configuration while every existing test passed.
-// PhysicsSmokeTest asks whether the wheels turn the robot; DriveFeelValidation asks whether the
+// RobotPhysicsValidation asks whether the wheels turn the robot; DriveFeelValidation asks whether the
 // motor model is arithmetically right. Neither asks whether the two together produce a physical
 // consequence, so a drivetrain whose hardest possible stop was a fifth of what it takes to lift a
 // rear wheel looked perfectly healthy for as long as nobody tried it.
@@ -31,7 +31,7 @@ using UnityEngine.SceneManagement;
 // RobotMotorController.FixedUpdate — where the coast/plow force-limit swap lives — never executes.
 // The plow limit is a per-step runtime decision and is NOT in the serialized xDrive. So this test
 // writes it onto the wheels itself, exactly as the controller would, and derives it from
-// DrivetrainTuning rather than hard-coding it. Same reason PhysicsSmokeTest drives the serialized
+// DrivetrainTuning rather than hard-coding it. Same reason RobotPhysicsValidation drives the serialized
 // drives directly. If the controller and this ever disagree about what a reversal means, they are
 // meant to disagree here first.
 //
@@ -321,7 +321,7 @@ public static class TipOverValidation
         {
             motor.SetManualInput(throttle, turn);
             motor.ApplyStep(ValidationUtil.StepSeconds);
-            PhysicsSmokeTest.Step(1);
+            RobotPhysicsValidation.Step(1);
         }
     }
 
@@ -791,7 +791,7 @@ public static class TipOverValidation
 
         // Measured with the lift already UP: that is the worst case, the case the report was about,
         // and the only configuration where the friction cone is anywhere near enough to tip it.
-        ArticulationBody[] wheels = PhysicsSmokeTest.FindWheels(root, out _, out _);
+        ArticulationBody[] wheels = RobotPhysicsValidation.FindWheels(root, out _, out _);
         float mass = DrivetrainTuning.MeasureTotalMass(root);
         float force = ShoveForce(mass, DrivetrainTuning.MeasureFriction(wheels));
 
@@ -853,7 +853,7 @@ public static class TipOverValidation
         comHeight = AggregateCentreOfMass(root).y;   // floor top face is y = 0 on this rig
         frictionTipLimitDeg = 90f;
 
-        ArticulationBody[] wheels = PhysicsSmokeTest.FindWheels(root, out _, out _);
+        ArticulationBody[] wheels = RobotPhysicsValidation.FindWheels(root, out _, out _);
         if (wheels == null || wheels.Length == 0) return;
 
         // THE STEEPEST LEAN A SIDEWAYS FORCE CAN EVEN ASK FOR. On a flat floor the largest lateral
@@ -997,7 +997,7 @@ public static class TipOverValidation
     // those, so hosting it there would inject nothing at all.
     private static string JamAWheel(ArticulationBody root)
     {
-        ArticulationBody[] wheels = PhysicsSmokeTest.FindWheels(root, out _, out _);
+        ArticulationBody[] wheels = RobotPhysicsValidation.FindWheels(root, out _, out _);
         if (wheels.Length == 0) return null;
         ArticulationBody wheel = wheels[0];
 
@@ -1160,11 +1160,11 @@ public static class TipOverValidation
 
     private static int ReversalDecelerates(out string report)
     {
-        // The same robot PhysicsSmokeTest drives — the catalog's selected model, i.e. the one a
+        // The same robot RobotPhysicsValidation drives — the catalog's selected model, i.e. the one a
         // player actually gets. Sharing the resolver rather than picking "any robot with a lift"
         // matters: it keeps the two dynamic tests talking about the same machine, so a robot that
         // fails to reach speed here has already failed there with a much more specific diagnosis.
-        GameObject prefab = PhysicsSmokeTest.ResolveRobotPrefab()
+        GameObject prefab = RobotPhysicsValidation.ResolveRobotPrefab()
             ?? throw new System.InvalidOperationException(
                 "No robot prefab to run the reversal on.");
 
@@ -1176,7 +1176,7 @@ public static class TipOverValidation
             // drove into, and a deceleration measured from 1.3 u/s stops in two steps and says
             // almost nothing.
             ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
-            ArticulationBody[] wheels = PhysicsSmokeTest.FindWheels(root, out _, out _);
+            ArticulationBody[] wheels = RobotPhysicsValidation.FindWheels(root, out _, out _);
 
             // The same tune the controller would compute at Awake, from the same measurements —
             // NOT the serialized forceLimit, which is the stall torque and says nothing about
@@ -1281,9 +1281,9 @@ public static class TipOverValidation
         Vector3 start = root.transform.position;
         Quaternion startRotation = root.transform.rotation;
         foreach (ArticulationBody w in wheels) w.SetDriveTargetVelocity(ArticulationDriveAxis.X, full);
-        PhysicsSmokeTest.Step(60);
+        RobotPhysicsValidation.Step(60);
         foreach (ArticulationBody w in wheels) w.SetDriveTargetVelocity(ArticulationDriveAxis.X, 0f);
-        PhysicsSmokeTest.Step(40);
+        RobotPhysicsValidation.Step(40);
 
         Vector3 travel = root.transform.position - start; travel.y = 0f;
         Vector3 travelLocal = travel.magnitude > 1e-3f
@@ -1304,7 +1304,7 @@ public static class TipOverValidation
         }
         root.TeleportRoot(here, Quaternion.FromToRotation(travelLocal, away));
         Physics.SyncTransforms();
-        PhysicsSmokeTest.Step(50);
+        RobotPhysicsValidation.Step(50);
     }
 
     private static float Planar(Vector3 v) => new Vector2(v.x, v.z).magnitude;

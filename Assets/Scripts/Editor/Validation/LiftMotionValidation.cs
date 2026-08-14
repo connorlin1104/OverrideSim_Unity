@@ -228,7 +228,7 @@ public static class LiftMotionValidation
             motor.SetManualInput(0f, 0f);
             motor.ApplyStep(ValidationUtil.StepSeconds);
             lift.ApplyStep();
-            PhysicsSmokeTest.Step(1);
+            RobotPhysicsValidation.Step(1);
         }
     }
 }

@@ -4,19 +4,19 @@ using UnityEditor.SceneManagement;
 
 // Adds a GoalStackMagnet (+ its GoalStackAnchor child) to every goal in the field scene, so pieces
 // stacked on a goal get pulled to a visually perfect pose. A "goal" is any object named Goal* that
-// carries a generated GoalFloor_Base child (built by FixGoals) — the anchor sits on top of that
+// carries a generated GoalFloor_Base child (built by RebuildGoalCollidersWindow) — the anchor sits on top of that
 // floor, aimed along the goal's up axis.
 //
 // Idempotent: re-running re-aims existing anchors and syncs the magnet wiring IN PLACE. Piece
 // profiles (rest height / stack spacing) are only baked when a magnet has none yet, so per-goal
-// tuning in the Inspector survives re-runs. Batch: -executeMethod FixGoalMagnets.RunBatch.
-public static class FixGoalMagnets
+// tuning in the Inspector survives re-runs. Batch: -executeMethod AddGoalStackMagnets.RunBatch.
+public static class AddGoalStackMagnets
 {
     private const string AnchorName = "GoalStackAnchor";
     private const string FloorName = "GoalFloor_Base";
 
     // The generated goal floor box is 0.02 thick with its local forward along the goal's up
-    // (FixGoals builds it at rotation = correctedOrientation, upAxis = correctedOrientation *
+    // (RebuildGoalCollidersWindow builds it at rotation = correctedOrientation, upAxis = correctedOrientation *
     // Vector3.forward), so the stack base sits half its thickness above its center.
     private const float FloorHalfThickness = 0.01f;
 

@@ -142,7 +142,7 @@ public class JointCoupler : MonoBehaviour
 
     // One coupling step: copy the driver's motion onto the follower's drive. Public so a headless
     // edit-mode harness (Physics.Simulate, which never calls FixedUpdate) can step couplers manually,
-    // the same way PhysicsSmokeTest drives wheel drives directly.
+    // the same way RobotPhysicsValidation drives wheel drives directly.
     public void ApplyStep()
     {
         if (driver == null || follower == null) return;

@@ -4,7 +4,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 
 // Headless validation of the field-interaction features, without entering play mode (modeled on
-// PhysicsSmokeTest): edit-mode scripted physics (Physics.simulationMode = Script + Physics.Simulate)
+// RobotPhysicsValidation): edit-mode scripted physics (Physics.simulationMode = Script + Physics.Simulate)
 // runs four checks in the saved field scene:
 //   - Magnet hit:  a cup dropped slightly off a goal's stack axis gets captured, centered, upright.
 //   - Magnet hold: a lateral bump on the seated cup self-corrects (it stays seated and centered).
@@ -17,8 +17,8 @@ using UnityEditor.SceneManagement;
 // reloaded from disk afterwards so simulated poses are never saved.
 //
 // Requires the scene fixes to have been applied first (Add Goal Stack Magnets, Attach Roller
-// Detents). Batch: -executeMethod FieldFeatureSmokeTest.RunBatch (throws -> nonzero exit).
-public static class FieldFeatureSmokeTest
+// Detents). Batch: -executeMethod FieldFeatureValidation.RunBatch (throws -> nonzero exit).
+public static class FieldFeatureValidation
 {
 
     private const float MaxSeatedAxisError = 0.15f;   // world units off the stack axis once seated
@@ -62,7 +62,7 @@ public static class FieldFeatureSmokeTest
                 "No RollerSnap in the scene — run Tools > RoboSim > Field & Pieces > Attach Roller Detents first.");
         _cupMagnets = Object.FindObjectsByType<PieceStackMagnet>(FindObjectsInactive.Exclude);
         if (_cupMagnets.Length == 0)
-            Debug.Log("FieldFeatureSmokeTest: no PieceStackMagnet in the scene — cup-magnet check " +
+            Debug.Log("FieldFeatureValidation: no PieceStackMagnet in the scene — cup-magnet check " +
                       "skipped (run Add Cup Stack Magnets to include it).");
 
         var failures = new List<string>();
@@ -85,7 +85,7 @@ public static class FieldFeatureSmokeTest
         if (failures.Count > 0)
             throw new System.InvalidOperationException(
                 "Field-feature smoke tests FAILED:\n  - " + string.Join("\n  - ", failures));
-        Debug.Log("FieldFeatureSmokeTest: PASSED (magnet hit, hold, miss; roller detent; cup magnet).");
+        Debug.Log("FieldFeatureValidation: PASSED (magnet hit, hold, miss; roller detent; cup magnet).");
     }
 
     // One combined physics step: manual component ticks (edit-mode sim runs no MonoBehaviours),

@@ -147,7 +147,7 @@ public class GoalStackMagnet : MonoBehaviour
     // overshoots the slot, gets hauled back up, overshoots again, and never lands inside the arrival
     // window, so `arrived` never latches and it stays in the soft pull-in hold rather than the rigid
     // seated one — which reads on the field as a scored piece that will not stop wobbling on the stake,
-    // and in FieldFeatureSmokeTest as "seated piece is still spinning".
+    // and in FieldFeatureValidation as "seated piece is still spinning".
     //
     // Bounding the descent by this makes the drop as fast as it can be while still being a landing.
     private float MaxStoppableDescent(float height, float step, Vector3 up)

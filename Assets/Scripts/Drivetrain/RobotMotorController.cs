@@ -239,7 +239,7 @@ public class RobotMotorController : MonoBehaviour
     private Quaternion physicsRotation;
 
     // How far the body is leaning right now, nose-UP positive. Read-only and render-only: nothing
-    // in the physics reads it. Exposed so LoadTransferValidation can watch a stop happen.
+    // in the physics reads it. Exposed so ChassisLeanValidation can watch a stop happen.
     public float LeanDegrees => leanDeg;
 
     // Which way this robot actually drives, in world space, measured from its wheels in Initialise.
@@ -773,7 +773,7 @@ public class RobotMotorController : MonoBehaviour
     }
 
     // One step of the second-order lag that turns "the robot is decelerating" into "the body is
-    // still settling from the stop it just made". Pure and static so LoadTransferValidation can
+    // still settling from the stop it just made". Pure and static so ChassisLeanValidation can
     // exercise it with no robot, no scene and no physics step.
     //
     // Semi-implicit: the rate is integrated first and the angle uses the NEW rate, which is what

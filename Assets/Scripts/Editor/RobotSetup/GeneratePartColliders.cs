@@ -312,7 +312,7 @@ public static class GeneratePartColliders
     }
 
     // The robot root for a selected part: the highest ancestor carrying rig data, else the selection
-    // itself. Mirrors CleanRobotRig.ResolveRobotRoot so the per-part tool resolves the same root a full
+    // itself. Mirrors StripRobotRig.ResolveRobotRoot so the per-part tool resolves the same root a full
     // rebuild ran on (matching hull-folder name + ancestor-chain classification).
     private static GameObject ResolveRobotRoot(GameObject sel)
     {

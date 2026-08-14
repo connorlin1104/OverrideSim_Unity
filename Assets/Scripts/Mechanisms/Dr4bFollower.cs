@@ -3,7 +3,7 @@ using UnityEngine;
 // Base for the DR4B visual followers. Captures a CHASSIS-LOCAL rest pose at the linkage's rest
 // position, then re-evaluates it LIVE each frame — so a follower tracks the robot as it drives and
 // yaws, and is invariant to RobotSpawner's Awake teleport of the articulation root. Concrete followers
-// (TranslateUpFollower, PivotRotateFollower) compose their pose from this rest + the controller's theta.
+// (Dr4bMoveFollower, PivotRotateFollower) compose their pose from this rest + the controller's theta.
 //
 // Never reparents the model; poses are computed purely from the chassis + captured rest, so nesting or
 // the spawn footprint scan can't perturb them.

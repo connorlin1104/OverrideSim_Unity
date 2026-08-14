@@ -3,10 +3,12 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using System.Collections.Generic;
 
-// Field-setup editor tools, grouped under Tools > RoboSim > Field & Pieces:
-//   • FixFieldColliders — Rebuild Floor and Wall Bounds
-//   • FixGoals          — Rebuild Goal Colliders
-//   • FixRollers        — Rig Rollers (Hinge Joints)
+// Field-setup editor tools, grouped under Tools > RoboSim > Field & Pieces. Each class is named for
+// the menu item it installs, so the menu and the code are searchable by the same words:
+//   • RebuildFieldBounds          — Rebuild Floor and Wall Bounds
+//   • RebuildGoalCollidersWindow  — Rebuild Goal Colliders
+//   • RigRollersWindow            — Rig Rollers (Hinge Joints)
+//   • AttachRollerDetents         — Attach Roller Detents (Scene Fix)
 // These one-shot tools build the field's physics from the imported meshes; they don't depend on
 // each other and were merged into one file purely to tidy the Editor folder.
 
@@ -46,7 +48,7 @@ using System.Collections.Generic;
 // Re-runnable: it removes its previous output first. The collider host objects are given a
 // world-identity transform (via SetParent worldPositionStays), so BoxCollider centers are plain
 // world coordinates even though the field root is rotated -90 X.
-public class FixFieldColliders
+public class RebuildFieldBounds
 {
     private const float GroundThickness = 2f;
     private const float WallThickness = 2f;
@@ -76,7 +78,7 @@ public class FixFieldColliders
         }
     }
 
-    // Batch: -executeMethod FixFieldColliders.RunBatch (opens and saves SampleScene).
+    // Batch: -executeMethod RebuildFieldBounds.RunBatch (opens and saves SampleScene).
     public static void RunBatch()
     {
         EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
@@ -244,12 +246,12 @@ public class FixFieldColliders
     }
 }
 
-public class FixGoals : EditorWindow
+public class RebuildGoalCollidersWindow : EditorWindow
 {
     [MenuItem("Tools/RoboSim/Field & Pieces/Rebuild Goal Colliders", false, 2)]
     public static void ShowWindow()
     {
-        GetWindow<FixGoals>("Goal Fixer");
+        GetWindow<RebuildGoalCollidersWindow>("Goal Fixer");
     }
 
     private void OnGUI()
@@ -530,12 +532,12 @@ public class FixGoals : EditorWindow
 }
 
 // Attaches the RollerSnap detent to the 4 field rollers' hinge bodies. The saved scene was rigged by
-// FixRollers at some point but WITHOUT the RollerSnap component (its guid appears nowhere in the scene),
+// RigRollersWindow at some point but WITHOUT the RollerSnap component (its guid appears nowhere in the scene),
 // so the rollers spin freely today. Re-running the full Rig Rollers tool would work too, but it
 // regenerates bodies/joints/colliders from a selection and can't run headless — this targeted fix only
 // ensures the detent component and its damping. Idempotent: re-running syncs the existing components.
-// Batch: -executeMethod FixRollerDetents.RunBatch (opens and saves SampleScene).
-public static class FixRollerDetents
+// Batch: -executeMethod AttachRollerDetents.RunBatch (opens and saves SampleScene).
+public static class AttachRollerDetents
 {
     private static readonly string[] RollerNames = { "RollerNorth", "RollerSouth", "RollerEast", "RollerWest" };
 
@@ -603,12 +605,12 @@ public static class FixRollerDetents
     }
 }
 
-public class FixRollers : EditorWindow
+public class RigRollersWindow : EditorWindow
 {
     [MenuItem("Tools/RoboSim/Field & Pieces/Rig Rollers (Hinge Joints)", false, 10)]
     public static void ShowWindow()
     {
-        GetWindow<FixRollers>("Roller Fixer");
+        GetWindow<RigRollersWindow>("Roller Fixer");
     }
 
     private void OnGUI()

@@ -185,13 +185,13 @@ public class SetUpImportedRobot : EditorWindow
             {
                 if (prefab != null)
                 {
-                    PhysicsSmokeTest.ValidateSpawnedPrefab(prefab);
+                    RobotPhysicsValidation.ValidateSpawnedPrefab(prefab);
                     sb.Append("\n\nPhysics validation: PASSED (settles, drives, turns).");
                 }
                 else if (root != null && root.scene.IsValid() && !string.IsNullOrEmpty(root.scene.path)
                          && EditorSceneManager.SaveScene(root.scene))
                 {
-                    PhysicsSmokeTest.ValidateRobot(root);
+                    RobotPhysicsValidation.ValidateRobot(root);
                     sb.Append("\n\nPhysics validation: PASSED (settles, drives, turns).");
                 }
                 else

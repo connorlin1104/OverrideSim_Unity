@@ -4,7 +4,7 @@ using UnityEngine;
 // Controller for a role-based Double-Reverse-Four-Bar (DR4B) VISUAL lift. ONE real revolute joint —
 // the driven sprocket (a MotorActuator mechanism, e.g. "lift" on L1/L2) — supplies the angle theta;
 // every other part of the linkage is a transform-only follower posed from theta (see Dr4bFollower /
-// TranslateUpFollower / PivotRotateFollower). No coupled physics joints, no closed loops, no stiff
+// Dr4bMoveFollower / PivotRotateFollower). No coupled physics joints, no closed loops, no stiff
 // drives — so it cannot destabilize the way real coupled DR4B joints did (a stiff spring on a light
 // bar exploded numerically and pinned the CPU). The imported model groups are NEVER reparented; they
 // are script-posed in place.

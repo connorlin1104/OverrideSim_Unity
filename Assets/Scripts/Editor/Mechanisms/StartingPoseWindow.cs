@@ -276,7 +276,7 @@ internal static class StartingPose
     // The world rotation for a joint angle of `degrees`.
     //
     // SIGN. A positive joint angle is a right-handed rotation about the anchor frame's X axis, which
-    // is what TryJointFrame returns — the same rule the drivetrain relies on and PhysicsSmokeTest
+    // is what TryJointFrame returns — the same rule the drivetrain relies on and RobotPhysicsValidation
     // measures (a positive wheel target spins the tyre's contact patch backwards, driving the robot
     // forwards). Quaternion.AngleAxis is right-handed about its axis in Unity's numeric basis, so
     // the two line up with no correction. StartingPoseValidation pins this against real simulation

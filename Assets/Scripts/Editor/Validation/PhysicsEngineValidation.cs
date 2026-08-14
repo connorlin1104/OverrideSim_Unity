@@ -7,7 +7,7 @@ using UnityEngine.SceneManagement;
 //
 // Every other physics test assumes the engine works and asks a question about a ROBOT. When the
 // engine itself does nothing, all of them still "run", and every one of them reports a confident,
-// specific, WRONG diagnosis about the robot: PhysicsSmokeTest said the drive wasn't wired to the
+// specific, WRONG diagnosis about the robot: RobotPhysicsValidation said the drive wasn't wired to the
 // wheels, TipOverValidation said a chassis part was hanging below the wheels and carrying the
 // robot's weight. Both are things that send you into a prefab looking for a defect that isn't there.
 // The truth was that no rigid body existed at all.

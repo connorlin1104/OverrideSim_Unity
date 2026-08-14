@@ -4,7 +4,7 @@ using UnityEngine;
 // The drivetrain's motor model, in one place.
 //
 // The same numbers are needed in three: RobotMotorController.Awake (play mode),
-// RigDrivetrainArticulation (the EDIT-TIME bake, which is what PhysicsSmokeTest measures — Awake
+// RigDrivetrainArticulation (the EDIT-TIME bake, which is what RobotPhysicsValidation measures — Awake
 // never runs in edit mode), and DriveFeelValidation. They used to be three sets of magic constants
 // that could drift; now they're all derived here from the robot's own mass, wheel radius, wheel
 // count and gearing, so a new robot is correct by construction and the shipped prefabs need no
@@ -44,7 +44,7 @@ public static class DrivetrainTuning
     // they grip forwards. A real omni's rollers make a point turn nearly free; here every wheel has
     // to be SCRUBBED sideways, and for a 6-wheel layout spread front-to-back the resisting moment
     // is larger than the moment a traction-limited drive can produce. At or below 1.0 the robot
-    // physically cannot turn — measured, not theorised: PhysicsSmokeTest yawed 0.1 degrees.
+    // physically cannot turn — measured, not theorised: RobotPhysicsValidation yawed 0.1 degrees.
     //
     // So the drivetrain must be able to break traction, exactly as a real one can. What makes this
     // NOT the old on/off throttle is the damping above, which the original 700/1000 pairing got

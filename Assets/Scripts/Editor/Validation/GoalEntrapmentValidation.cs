@@ -289,7 +289,7 @@ public static class GoalEntrapmentValidation
         Physics.SyncTransforms();
         ArticulationBody root = instance.GetComponent<ArticulationBody>()
             ?? throw new System.InvalidOperationException($"'{prefab.name}' has no ArticulationBody");
-        ArticulationBody[] wheels = PhysicsSmokeTest.FindWheels(root, out _, out _);
+        ArticulationBody[] wheels = RobotPhysicsValidation.FindWheels(root, out _, out _);
 
         // Awake's work, and specifically IgnoreBuiltInSelfOverlaps. Without it this drives a robot
         // whose own parts are permanently jammed inside each other — 654V_v3's goal aligner sits
@@ -318,7 +318,7 @@ public static class GoalEntrapmentValidation
             // dropping it when this moved to the bare-floor rig cost two robots their whole run:
             // 654V_v2 and 654V_v3 probed while still airborne, measured no travel, defaulted their
             // heading to +forward and reported "hit at 0.0 u/s, stopped 2.6 m short".
-            PhysicsSmokeTest.Step(SettleSteps * 2);
+            RobotPhysicsValidation.Step(SettleSteps * 2);
 
             float full = root.GetComponent<RobotMotorController>().maxWheelRpm * 6f;
 
@@ -330,9 +330,9 @@ public static class GoalEntrapmentValidation
             Vector3 probeStart = root.transform.position;
             Quaternion probeRotation = root.transform.rotation;
             foreach (ArticulationBody w in wheels) w.SetDriveTargetVelocity(ArticulationDriveAxis.X, full);
-            PhysicsSmokeTest.Step(60);
+            RobotPhysicsValidation.Step(60);
             foreach (ArticulationBody w in wheels) w.SetDriveTargetVelocity(ArticulationDriveAxis.X, 0f);
-            PhysicsSmokeTest.Step(40);
+            RobotPhysicsValidation.Step(40);
 
             Vector3 travel = root.transform.position - probeStart; travel.y = 0f;
             result.probe = travel.magnitude;
@@ -361,7 +361,7 @@ public static class GoalEntrapmentValidation
                 new Vector3(ringCentre.x, root.transform.position.y, ringCentre.z) - approach * ApproachRunUp,
                 Quaternion.FromToRotation(travelLocal, approach));
             Physics.SyncTransforms();
-            PhysicsSmokeTest.Step(50);   // settle onto the floor at the new pose
+            RobotPhysicsValidation.Step(50);   // settle onto the floor at the new pose
 
             // THE ALIGNER. Connor's report separates cleanly on this: retracted it gets stuck inside,
             // extended it bounces off — so the two states are different failures and have to be
@@ -390,9 +390,9 @@ public static class GoalEntrapmentValidation
                     b.SetDriveTarget(ArticulationDriveAxis.X, extendAligner
                         ? Mathf.Lerp(b.xDrive.lowerLimit, b.xDrive.upperLimit, t)
                         : b.xDrive.lowerLimit);
-                PhysicsSmokeTest.Step(1);
+                RobotPhysicsValidation.Step(1);
             }
-            PhysicsSmokeTest.Step(50);
+            RobotPhysicsValidation.Step(50);
 
             // THE LIFT, RAMPED. A raised lift is the state Connor actually drives in and it changes
             // this collision, not just the tipping: it moves mass up and back, so the same impulse
@@ -415,9 +415,9 @@ public static class GoalEntrapmentValidation
                     foreach (ArticulationBody b in lifts)
                         b.SetDriveTarget(ArticulationDriveAxis.X,
                             Mathf.Lerp(b.xDrive.lowerLimit, b.xDrive.upperLimit, t));
-                    PhysicsSmokeTest.Step(1);
+                    RobotPhysicsValidation.Step(1);
                 }
-                PhysicsSmokeTest.Step(SettleSteps);
+                RobotPhysicsValidation.Step(SettleSteps);
             }
 
             float startDistance = Planar(root.transform.position - ringCentre);
@@ -429,7 +429,7 @@ public static class GoalEntrapmentValidation
             // FURTHER from the goal than it started. Correcting the heading every step is both more
             // robust and closer to what a driver does, and it means the tautology guard below fails
             // only when the robot genuinely cannot get there.
-            ArticulationBody[] left = PhysicsSmokeTest.FindWheels(root, out ArticulationBody[] ls, out ArticulationBody[] rs);
+            ArticulationBody[] left = RobotPhysicsValidation.FindWheels(root, out ArticulationBody[] ls, out ArticulationBody[] rs);
             ArticulationBody[] bodies = root.GetComponentsInChildren<ArticulationBody>(true);
             DrivetrainTuning.TryMeasureCompositeCom(bodies, out Vector3 comPrev);
             for (int i = 0; i < ApproachSteps; i++)
@@ -443,7 +443,7 @@ public static class GoalEntrapmentValidation
                 float turn = Mathf.Clamp(error, -0.5f, 0.5f);
                 foreach (ArticulationBody w in ls) w.SetDriveTargetVelocity(ArticulationDriveAxis.X, full * (1f + turn));
                 foreach (ArticulationBody w in rs) w.SetDriveTargetVelocity(ArticulationDriveAxis.X, full * (1f - turn));
-                PhysicsSmokeTest.Step(1);
+                RobotPhysicsValidation.Step(1);
 
                 // Speed along the approach line, signed: positive is closing on the goal, negative is
                 // being thrown back off it. The peak of each is the whole point of this pass — "it
@@ -473,7 +473,7 @@ public static class GoalEntrapmentValidation
             }
             foreach (ArticulationBody w in wheels)
                 w.SetDriveTargetVelocity(ArticulationDriveAxis.X, 0f);
-            PhysicsSmokeTest.Step(SettleSteps);
+            RobotPhysicsValidation.Step(SettleSteps);
 
             result.approach = startDistance - Planar(root.transform.position - ringCentre);
             MeasureIntrusion(root, ring, ringCentre, ref result);
@@ -609,7 +609,7 @@ public static class GoalEntrapmentValidation
             Vector3 c = Vector3.zero;
             foreach (BoxCollider b in ring.Value) c += b.transform.position;
             c /= ring.Value.Count;
-            float d = Planar(c - PhysicsSmokeTest.ValidationSpawn);
+            float d = Planar(c - RobotPhysicsValidation.ValidationSpawn);
             if (d >= bestDistance) continue;
             bestDistance = d; best = ring.Value; goalName = ring.Key; centre = c;
         }

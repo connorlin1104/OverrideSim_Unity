@@ -5,14 +5,14 @@ using System.Collections.Generic;
 using System.IO;
 
 // Game-piece editor tools, grouped under Tools > RoboSim > Field & Pieces:
-//   • FixCups         — Rebuild Cup Colliders
-//   • FixAllPins      — Rebuild Pin Colliders (Any Color)
-//   • FixPieceClamps  — Add Floor Clamp to Pieces
+//   • RebuildCupColliders         — Rebuild Cup Colliders
+//   • RebuildPinColliders      — Rebuild Pin Colliders (Any Color)
+//   • AddPieceFloorClamps  — Add Floor Clamp to Pieces
 //   • TunePiecePhysics— Tune Roll and Friction
 // One-shot tools that build/tune the cup & pin game pieces. Independent of each other; merged into
 // one file to tidy the Editor folder.
 
-public static class FixCups
+public static class RebuildCupColliders
 {
     [MenuItem("Tools/RoboSim/Field & Pieces/Rebuild Cup Colliders", false, 3)]
     public static void CleanAndOptimizeCups()
@@ -132,7 +132,7 @@ public static class FixCups
     }
 }
 
-public static class FixAllPins
+public static class RebuildPinColliders
 {
     private struct CustomColliderDef
     {
@@ -258,7 +258,7 @@ public static class FixAllPins
 // To dial VisualLift in by eye instead, select one cup and drag its MinHeightClamp > Visual Lift in
 // the Inspector (it updates live, no play mode needed), then paste the value you liked here and
 // re-run to apply it to the whole field.
-public class FixPieceClamps
+public class AddPieceFloorClamps
 {
     private const float FloorY = 0.72f;
     private const float Tolerance = 0.05f;
@@ -301,7 +301,7 @@ public class FixPieceClamps
 //
 //   1) Rigidbody linear/angular DAMPING = global velocity decay, applied every frame like air drag
 //      (NOT ground friction). Angular damping is the "keeps rolling" knob — the pins were left at 5
-//      by FixAllPins, which kills a roll almost instantly. We bring both to 0.1 so spin/coast
+//      by RebuildPinColliders, which kills a roll almost instantly. We bring both to 0.1 so spin/coast
 //      persist.
 //   2) A shared low-FRICTION PhysicsMaterial assigned to every piece collider. FrictionCombine is
 //      Minimum, so the piece's low friction wins regardless of what the ground uses (Unity's default

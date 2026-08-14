@@ -456,7 +456,7 @@ public class RobotBalanceWindow : EditorWindow
     //
     // This is the number that decides whether a robot can drive at all, and nothing surfaced it
     // before. A drivetrain resting on a bracket instead of its tyres will spin its wheels and go
-    // nowhere — which is what PhysicsSmokeTest reports as "the wheels spun but the robot didn't
+    // nowhere — which is what RobotPhysicsValidation reports as "the wheels spun but the robot didn't
     // turn", and it names the offending part. Worth watching after any mass change, since a robot
     // with only a few mm to spare has no margin for the chassis settling into its contacts.
     private static float GroundClearance(ArticulationBody root, HashSet<ArticulationBody> wheels,
@@ -839,7 +839,7 @@ public class RobotBalanceWindow : EditorWindow
             if (!dirty) { log.AppendLine($"  {root.name}: unchanged"); return false; }
 
             // The traction budget is mu*m*g, so every drive constant depends on the mass that just
-            // changed. Re-bake in the same pass or edit-mode simulation (PhysicsSmokeTest) measures
+            // changed. Re-bake in the same pass or edit-mode simulation (RobotPhysicsValidation) measures
             // a drivetrain tuned for the old weight.
             DrivetrainTuning.Result tuning = RigDrivetrainArticulation.ApplyDriveTuning(root, useUndo: false);
             log.AppendLine($"  {root.name}: chassis {ChassisMass} kg, {wheels.Count} wheels at " +

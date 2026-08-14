@@ -351,7 +351,7 @@ public static class DriveFeelValidation
 
         // A wheel must be able to break traction. Below mu*m*g*r/N it cannot slip at all, and a
         // 6-wheel robot with isotropic (non-omni-modelled) wheels then cannot complete a point
-        // turn — measured, not theorised: at 1.0x traction PhysicsSmokeTest yawed 0.1 degrees.
+        // turn — measured, not theorised: at 1.0x traction RobotPhysicsValidation yawed 0.1 degrees.
         float slipThreshold = t.tractionForce * Radius / Wheels;
         ValidationUtil.Assert(t.stallTorque > slipThreshold,
             $"per-wheel stall torque ({t.stallTorque:0.#}) must exceed the slip threshold " +
@@ -649,7 +649,7 @@ public static class DriveFeelValidation
 
     // Every robot must be on the derived tune, and its SERIALIZED drives must agree with it.
     //
-    // The serialized half matters because PhysicsSmokeTest simulates in edit mode, where Awake
+    // The serialized half matters because RobotPhysicsValidation simulates in edit mode, where Awake
     // never runs — it reads xDrive straight off the prefab. If these drift apart, the smoke test
     // silently measures a drivetrain nobody ships.
     private static int ShippedPrefabs()
@@ -693,7 +693,7 @@ public static class DriveFeelValidation
 
             // A wheel must be able to break traction, or a 6-wheel robot with isotropic
             // (non-omni-modelled) wheels cannot complete a point turn. Measured, not theorised:
-            // at 1.0x traction PhysicsSmokeTest yawed 0.1 degrees instead of 80.
+            // at 1.0x traction RobotPhysicsValidation yawed 0.1 degrees instead of 80.
             float slipThreshold = expected.tractionForce * radius / wheels.Count;
             ValidationUtil.Assert(expected.stallTorque > slipThreshold,
                 $"'{name}': per-wheel stall torque ({expected.stallTorque:0.#}) must exceed the slip " +

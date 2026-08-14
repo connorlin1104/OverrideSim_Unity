@@ -15,7 +15,7 @@ using Scene = UnityEngine.SceneManagement.Scene;
 //   - If everything is already in place, the scene is not re-saved (no churn).
 //
 // Usage: Tools > RoboSim > Robot > Advanced > Build Robot Prefabs & Spawner.
-public static class BuildRobotPrefabs
+public static class InstallRobotSpawner
 {
     private const string DrivetrainPrefabPath = RoboSimPaths.RobotsFolder + "/360RpmDrivetrain.prefab";
     private const string DrivetrainCatalogId = "360rpm-drivetrain";

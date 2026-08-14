@@ -24,8 +24,8 @@ using UnityEditor.SceneManagement;
 // simulated poses are never saved.
 //
 // Usage: Tools > RoboSim > Validate > Validate Robot Physics (validates the robot in the active scene),
-// or PhysicsSmokeTest.ValidateRobot(root) right after rigging one (Set Up Imported Robot does this).
-public class PhysicsSmokeTest
+// or RobotPhysicsValidation.ValidateRobot(root) right after rigging one (Set Up Imported Robot does this).
+public class RobotPhysicsValidation
 {
     private const string MenuTitle = "Validate Rigged Robot";
 
@@ -72,14 +72,14 @@ public class PhysicsSmokeTest
         }
     }
 
-    // Batch entry (-executeMethod PhysicsSmokeTest.RunBatchValidate): spawns the catalog's robot into
+    // Batch entry (-executeMethod RobotPhysicsValidation.RunBatchValidate): spawns the catalog's robot into
     // the field and validates it. Throws (nonzero editor exit) on failure.
     public static void RunBatchValidate()
     {
         GameObject prefab = ResolveRobotPrefab()
             ?? throw new System.InvalidOperationException("RunBatchValidate: no robot prefab to validate.");
         ValidateSpawnedPrefab(prefab);
-        Debug.Log($"PhysicsSmokeTest: batch validation PASSED for '{prefab.name}'.");
+        Debug.Log($"RobotPhysicsValidation: batch validation PASSED for '{prefab.name}'.");
     }
 
     // Validates the robot the user most likely means. The field scene spawns its robot at RUNTIME, so
@@ -174,7 +174,7 @@ public class PhysicsSmokeTest
         finally { Physics.simulationMode = prev; }
 
         if (root != null)
-            Debug.Log($"PhysicsSmokeTest pre-settle: root Y {yBefore:F3} -> {root.transform.position.y:F3} " +
+            Debug.Log($"RobotPhysicsValidation pre-settle: root Y {yBefore:F3} -> {root.transform.position.y:F3} " +
                       $"(dropped {yBefore - root.transform.position.y:F3}).");
         return root;
     }
@@ -192,7 +192,7 @@ public class PhysicsSmokeTest
                                 ?? robotRoot.GetComponentInChildren<ArticulationBody>(true);
         if (body == null)
             throw new System.InvalidOperationException(
-                $"PhysicsSmokeTest: '{robotRoot.name}' has no ArticulationBody — it is not a rigged robot.");
+                $"RobotPhysicsValidation: '{robotRoot.name}' has no ArticulationBody — it is not a rigged robot.");
 
         ValidateBody(body);
     }
@@ -202,13 +202,13 @@ public class PhysicsSmokeTest
         string scenePath = root.gameObject.scene.path;
         if (string.IsNullOrEmpty(scenePath))
             throw new System.InvalidOperationException(
-                "PhysicsSmokeTest: the scene must be saved to disk — it is reloaded afterwards to discard the simulated state.");
+                "RobotPhysicsValidation: the scene must be saved to disk — it is reloaded afterwards to discard the simulated state.");
 
         SimulationMode previousMode = Physics.simulationMode;
         try
         {
             ArticulationBody[] wheels = FindWheels(root, out ArticulationBody[] leftWheels, out ArticulationBody[] rightWheels);
-            Debug.Log($"PhysicsSmokeTest: validating '{root.name}' — {leftWheels.Length} left / {rightWheels.Length} right wheel links.");
+            Debug.Log($"RobotPhysicsValidation: validating '{root.name}' — {leftWheels.Length} left / {rightWheels.Length} right wheel links.");
 
             Physics.simulationMode = SimulationMode.Script;
 
@@ -248,7 +248,7 @@ public class PhysicsSmokeTest
         if (horizontal > MaxSettleHorizontal)
             Fail($"settle: root slid {horizontal:F2} units horizontally (limit {MaxSettleHorizontal}) — unstable rig.");
 
-        Debug.Log($"PhysicsSmokeTest PASS settle: vertical {vertical:F3}, horizontal {horizontal:F3} after {StepsPerPhase} steps.");
+        Debug.Log($"RobotPhysicsValidation PASS settle: vertical {vertical:F3}, horizontal {horizontal:F3} after {StepsPerPhase} steps.");
         LogSupportDiagnostics(root);
 
         // Warn as soon as we settle if something is holding the drive wheels off the ground — this
@@ -256,7 +256,7 @@ public class PhysicsSmokeTest
         // here than to leave the driver staring at the raw collider list above.
         string belowWheels = DescribeBelowWheelParts(root);
         if (belowWheels != null)
-            Debug.LogWarning("PhysicsSmokeTest ground clearance: " + belowWheels);
+            Debug.LogWarning("RobotPhysicsValidation ground clearance: " + belowWheels);
     }
 
     // What is the robot actually standing on? Logs each wheel sphere's lowest point and the
@@ -284,8 +284,8 @@ public class PhysicsSmokeTest
         }
         chassis.Sort((a, b) => a.y.CompareTo(b.y));
 
-        Debug.Log("PhysicsSmokeTest wheels: " + string.Join("; ", wheelBottoms));
-        Debug.Log($"PhysicsSmokeTest lowest wheel point {lowestWheelY:F3}; lowest chassis colliders: " +
+        Debug.Log("RobotPhysicsValidation wheels: " + string.Join("; ", wheelBottoms));
+        Debug.Log($"RobotPhysicsValidation lowest wheel point {lowestWheelY:F3}; lowest chassis colliders: " +
                   string.Join("; ", chassis.GetRange(0, Mathf.Min(5, chassis.Count)).ConvertAll(t => t.desc)));
     }
 
@@ -403,9 +403,9 @@ public class PhysicsSmokeTest
         // Direction is informational: backwards just means the invert flags need setting.
         float forwardDot = Vector3.Dot(delta, forward);
         if (forwardDot >= 0f)
-            Debug.Log($"PhysicsSmokeTest drive direction: FORWARD along wrapper.forward (dot {forwardDot:F2}).");
+            Debug.Log($"RobotPhysicsValidation drive direction: FORWARD along wrapper.forward (dot {forwardDot:F2}).");
         else
-            Debug.LogWarning($"PhysicsSmokeTest drive direction: BACKWARD along wrapper.forward (dot {forwardDot:F2}) — " +
+            Debug.LogWarning($"RobotPhysicsValidation drive direction: BACKWARD along wrapper.forward (dot {forwardDot:F2}) — " +
                              "set invertLeft AND invertRight on RobotMotorController. (WARN, not FAIL.)");
 
         FailIfNotFinite();
@@ -416,8 +416,8 @@ public class PhysicsSmokeTest
                 spins.Add($"{wheels[i].name} spun {(JointPositionRad(wheels[i]) - jointStart[i]) * Mathf.Rad2Deg:F0}°, " +
                           $"vel {(wheels[i].jointVelocity.dofCount > 0 ? wheels[i].jointVelocity[0] : 0f):F1} rad/s, " +
                           $"worldAngVel {wheels[i].angularVelocity.ToString("F1")}");
-            Debug.Log("PhysicsSmokeTest drive diagnostics: " + string.Join("; ", spins));
-            Debug.Log($"PhysicsSmokeTest drive diagnostics: root delta {delta.ToString("F4")}, " +
+            Debug.Log("RobotPhysicsValidation drive diagnostics: " + string.Join("; ", spins));
+            Debug.Log($"RobotPhysicsValidation drive diagnostics: root delta {delta.ToString("F4")}, " +
                       $"root linVel {root.linearVelocity.ToString("F3")}, root angVel {root.angularVelocity.ToString("F3")}");
 
             // If the wheels spun but the robot didn't move, the usual cause is that something below
@@ -432,7 +432,7 @@ public class PhysicsSmokeTest
         if (maxSpinRad <= MinWheelSpinRad)
             Fail($"drive: max wheel spin {maxSpinRad * Mathf.Rad2Deg:F1}° (need > 90°) — joints are not rotating.");
 
-        Debug.Log($"PhysicsSmokeTest PASS drive: planar {planar:F2} units, max wheel spin {maxSpinRad * Mathf.Rad2Deg:F0}°.");
+        Debug.Log($"RobotPhysicsValidation PASS drive: planar {planar:F2} units, max wheel spin {maxSpinRad * Mathf.Rad2Deg:F0}°.");
     }
 
     private static void RunTurnTest(ArticulationBody root, ArticulationBody[] leftWheels, ArticulationBody[] rightWheels)
@@ -465,7 +465,7 @@ public class PhysicsSmokeTest
                  $"not turning the robot.{DescribeTurnFailure(root, leftWheels, rightWheels, maxSpinRad)}");
         }
 
-        Debug.Log($"PhysicsSmokeTest PASS turn: yaw changed {yawDelta:F1}°.");
+        Debug.Log($"RobotPhysicsValidation PASS turn: yaw changed {yawDelta:F1}°.");
     }
 
     // Best-guess reason a differential turn produced no yaw, appended to the turn failure so the driver
@@ -609,7 +609,7 @@ public class PhysicsSmokeTest
 
         if (all.Count == 0)
             throw new System.InvalidOperationException(
-                "PhysicsSmokeTest: the rigged robot has no revolute wheel links to test.");
+                "RobotPhysicsValidation: the rigged robot has no revolute wheel links to test.");
 
         left = leftList.ToArray();
         right = rightList.ToArray();
@@ -649,6 +649,6 @@ public class PhysicsSmokeTest
 
     private static void Fail(string message)
     {
-        throw new System.InvalidOperationException("PhysicsSmokeTest FAIL: " + message);
+        throw new System.InvalidOperationException("RobotPhysicsValidation FAIL: " + message);
     }
 }

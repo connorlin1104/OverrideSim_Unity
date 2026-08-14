@@ -18,7 +18,7 @@ using UnityEngine;
 // of how RobotMotorController computes it: the steady state comes from setting the derivatives of
 // the ODE to zero, the no-overshoot bound from what critical damping means, and the floor check
 // from measuring the wheel line before and after rather than from the pivot the code chose.
-public static class LoadTransferValidation
+public static class ChassisLeanValidation
 {
     // Enough steps at 100 Hz for a 12 rad/s spring to be done ringing (about 2 s).
     private const int SettleSteps = 200;
@@ -478,7 +478,7 @@ public static class LoadTransferValidation
             slam = new Slam
             {
                 fullLeanAccel = DrivetrainTuning.MeasureFriction(
-                    PhysicsSmokeTest.FindWheels(root, out _, out _)) * Mathf.Abs(Physics.gravity.y),
+                    RobotPhysicsValidation.FindWheels(root, out _, out _)) * Mathf.Abs(Physics.gravity.y),
             };
 
             var track = new List<Vector3>();
@@ -504,7 +504,7 @@ public static class LoadTransferValidation
             // controller's step and the physics step, which that helper does not expose.
             motor.SetManualInput(throttle, 0f);
             motor.ApplyStep(ValidationUtil.StepSeconds);
-            PhysicsSmokeTest.Step(1);
+            RobotPhysicsValidation.Step(1);
             track.Add(root.transform.position);
             slam.peakLeanDeg = Mathf.Max(slam.peakLeanDeg, Mathf.Abs(motor.LeanDegrees));
 

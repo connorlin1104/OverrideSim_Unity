@@ -421,7 +421,7 @@ public class RobotSpawner : MonoBehaviour
 
     // Interior playfield extent (world X/Z) from the field's perimeter wall boxes: each thin wall's
     // inner face bounds the play area. Returns false unless all four sides are found, so the caller
-    // can fall back to the plain recenter. Matches the walls built by FixFieldColliders under
+    // can fall back to the plain recenter. Matches the walls built by RebuildFieldBounds under
     // "Perimeter/WallColliders".
     private static bool TryGetFieldInterior(out float minX, out float maxX, out float minZ, out float maxZ)
     {

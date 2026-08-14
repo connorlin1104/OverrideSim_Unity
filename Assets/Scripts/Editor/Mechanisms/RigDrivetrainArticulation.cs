@@ -57,7 +57,7 @@ public class RigDrivetrainArticulation
     internal const float RootMass = 4f;
 
     // NOT the real thing, on purpose. A VEX 2.75" omni is about 0.11 kg, and dropping the wheel
-    // links to 0.15 to match made the drivetrain stop working: PhysicsSmokeTest went from turning
+    // links to 0.15 to match made the drivetrain stop working: RobotPhysicsValidation went from turning
     // 80 degrees to 6, and then from driving to barely moving at all, on robots whose geometry and
     // drive tune were otherwise correct.
     //
@@ -71,7 +71,7 @@ public class RigDrivetrainArticulation
     // THE RATIO IS THE CONSTRAINT, NOT THE ABSOLUTE MASS — which is what makes 0.5 safe when 0.15
     // was not. Against a 4 kg chassis this is 8:1, essentially the 7:1 that was already proven, and
     // it takes 3 kg of dead weight off an 8-wheel robot's axles. Re-validated at 4/0.5 rather than
-    // assumed: PhysicsSmokeTest turns 35.7 degrees (floor 15) and drives 19.3 units (floor 2), so
+    // assumed: RobotPhysicsValidation turns 35.7 degrees (floor 15) and drives 19.3 units (floor 2), so
     // the drive joint is still transmitting force with margin. Anything that widens this ratio
     // further has to be re-validated the same way — that test is the only thing standing between a
     // sensible-looking mass and a drivetrain that silently stops working.
@@ -86,7 +86,7 @@ public class RigDrivetrainArticulation
     // Drivetrain-loss knobs baked into the wheel links (a real dt is never frictionless). These
     // match RobotMotorController.wheelRollingResistance / wheelSpinDamping, which re-applies them
     // to every wheel at play — that's the runtime authority; these keep edit-mode simulation
-    // (PhysicsSmokeTest) and freshly-rigged serialized values consistent with it.
+    // (RobotPhysicsValidation) and freshly-rigged serialized values consistent with it.
     private const float WheelRollingResistance = 0.3f; // Coulomb axle friction (coast-to-stop feel)
     private const float WheelSpinDamping = 0.5f;        // velocity-proportional spin loss (bleeds top speed)
     private const float AxleAngleToleranceDeg = 10f;
@@ -441,7 +441,7 @@ public class RigDrivetrainArticulation
             // Velocity drive: stiffness 0 (no position spring), damping as the velocity gain,
             // forceLimit as the motor stall torque. RobotMotorController re-bakes these same
             // values in Awake at runtime; baking them here too lets edit-mode simulation
-            // (PhysicsSmokeTest) drive the wheels without any MonoBehaviour running.
+            // (RobotPhysicsValidation) drive the wheels without any MonoBehaviour running.
             ArticulationDrive d = ab.xDrive;
             d.driveType = ArticulationDriveType.Velocity;
             d.forceLimit = WheelStallTorque;
@@ -511,7 +511,7 @@ public class RigDrivetrainArticulation
     // Re-bake every wheel drive from DrivetrainTuning so the values SERIALIZED into the robot match
     // what RobotMotorController.Awake computes at play.
     //
-    // This matters for one specific reason: PhysicsSmokeTest simulates in EDIT mode, where Awake
+    // This matters for one specific reason: RobotPhysicsValidation simulates in EDIT mode, where Awake
     // never runs, so it drives the wheels straight off the serialized xDrive. Without this the
     // smoke test would measure a drivetrain that no player ever experiences — it would keep
     // passing against the old 700/1000 while the shipped feel changed underneath it.

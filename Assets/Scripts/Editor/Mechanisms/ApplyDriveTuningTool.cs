@@ -10,7 +10,7 @@ using UnityEngine;
 // the four robots rigged before the drivetrain retune still carry the old forceLimit 700 /
 // damping 1000. At PLAY that doesn't matter — RobotMotorController.Awake re-derives and overwrites
 // everything, so gameplay is already correct. It matters in EDIT mode, where Awake never runs:
-// PhysicsSmokeTest drives the wheels straight off the serialized values, so without this sweep the
+// RobotPhysicsValidation drives the wheels straight off the serialized values, so without this sweep the
 // smoke test would keep measuring a drivetrain no player ever feels.
 //
 // Deliberately leaves maxWheelRpm, turnRate and the invert flags alone — those are genuine

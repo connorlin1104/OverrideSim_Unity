@@ -153,7 +153,7 @@ public static class ScoringDropValidation
         // spin that would erase the remaining error in ONE step (angleError / dt). At 100 Hz that
         // multiplies the error by a hundred — a piece sitting 0.2 degrees off its held pose reads as
         // ~0.35 rad/s of "spin" while not visibly moving at all. Reading the velocity therefore says very
-        // little about whether the piece is steady, which is exactly the trap FieldFeatureSmokeTest's
+        // little about whether the piece is steady, which is exactly the trap FieldFeatureValidation's
         // marginal 0.3 rad/s assertion falls into. Drift is the honest measurement.
         ValidationUtil.Assert(fastDriftDeg < 2f,
             $"a seated piece must hold the attitude it was dropped in — it turned {fastDriftDeg:0.##}° " +

@@ -13,7 +13,7 @@ using UnityEngine.SceneManagement;
 //   very rough, not flat" describes.
 //
 // Prints, per robot, what is penetrating at the raised pose that was clear at rest.
-public static class RaisedOverlapProbe
+public static class RaisedLiftOverlapProbe
 {
     private const int SettleSteps = 200;
     private const int LiftRampSteps = 200;

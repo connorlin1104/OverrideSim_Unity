@@ -2,7 +2,7 @@ using UnityEngine;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 
-// Headless validation of RobotSpawner's fall recovery (modeled on PhysicsSmokeTest): edit-mode
+// Headless validation of RobotSpawner's fall recovery (modeled on RobotPhysicsValidation): edit-mode
 // scripted physics (Physics.simulationMode = Script + Physics.Simulate) drops the real robot off
 // the bottom of the field and checks that the spawner puts it back.
 //
@@ -60,7 +60,7 @@ public static class RobotResetValidation
     {
         EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
 
-        GameObject prefab = PhysicsSmokeTest.ResolveRobotPrefab()
+        GameObject prefab = RobotPhysicsValidation.ResolveRobotPrefab()
             ?? throw new System.InvalidOperationException(
                 "RobotResetValidation: no robot prefab to test. Pick a robot on the home screen, or select " +
                 "one (e.g. Assets/Robots/654V_v1.prefab) in the Project window.");
@@ -115,17 +115,17 @@ public static class RobotResetValidation
         // Simulate. Centering the footprint keeps an off-pivot bot from starting inside a wall.
         instance.transform.SetPositionAndRotation(PreSettlePoint, Quaternion.identity);
         Physics.SyncTransforms();
-        if (PhysicsSmokeTest.TryGetFootprint(instance, out Bounds pre))
+        if (RobotPhysicsValidation.TryGetFootprint(instance, out Bounds pre))
         {
             Vector3 shift = PreSettlePoint - pre.center;
             shift.y = 0f;
             instance.transform.position += shift;
             Physics.SyncTransforms();
         }
-        PhysicsSmokeTest.Step(SettleSteps);
+        RobotPhysicsValidation.Step(SettleSteps);
 
         spawner.PlaceAndWatch(instance);
-        PhysicsSmokeTest.Step(SettleSteps);
+        RobotPhysicsValidation.Step(SettleSteps);
 
         Vector3 spawn = spawner.RestorePosition;
         float drift = PlanarDistance(instance.transform.position, spawn);
@@ -169,12 +169,12 @@ public static class RobotResetValidation
         // step writes the bodies back, so step once before reading the position (velocities above
         // come straight from the body and are readable immediately). At play time the physics step
         // that follows FixedUpdate does this for free.
-        PhysicsSmokeTest.Step(1);
+        RobotPhysicsValidation.Step(1);
         Require(instance.transform.position.y > spawner.FallThresholdY,
             $"the reset left the robot at Y {instance.transform.position.y:F2}, still below the fall line.");
 
         // It has to STAY back: settle it again and confirm it neither shot off nor fell through.
-        PhysicsSmokeTest.Step(SettleSteps);
+        RobotPhysicsValidation.Step(SettleSteps);
         Require(instance.transform.position.y > spawner.FallThresholdY,
             $"the robot fell back off the field within 2 s of being reset (Y {instance.transform.position.y:F2}).");
         float drift = PlanarDistance(instance.transform.position, spawner.RestorePosition);
@@ -196,7 +196,7 @@ public static class RobotResetValidation
             "the debounced call moved the robot anyway — it must be a no-op, not a quiet reset.");
 
         Require(spawner.CheckFallAndReset(2f), "past the cooldown a still-fallen robot must reset again.");
-        PhysicsSmokeTest.Step(1); // let the teleported pose reach the Transform (see TestFallAndRecover)
+        RobotPhysicsValidation.Step(1); // let the teleported pose reach the Transform (see TestFallAndRecover)
         Require(instance.transform.position.y > spawner.FallThresholdY, "that reset must actually move the robot.");
 
         Debug.Log("RobotResetValidation debounce: blocked inside the cooldown, fired once past it.");
@@ -237,7 +237,7 @@ public static class RobotResetValidation
         // behind a reset that just teleported the robot back (see TestFallAndRecover).
         Vector3 spawn = spawner.RestorePosition;
         root.TeleportRoot(new Vector3(spawn.x, spawner.FallThresholdY - 10f, spawn.z), instance.transform.rotation);
-        PhysicsSmokeTest.Step(30); // 0.3 s of gravity at -98: ~29 units/s of fall speed to be zeroed
+        RobotPhysicsValidation.Step(30); // 0.3 s of gravity at -98: ~29 units/s of fall speed to be zeroed
     }
 
     private static float MaxJointSpeed(GameObject robot)
