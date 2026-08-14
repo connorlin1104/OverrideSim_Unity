@@ -2,9 +2,12 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
-// The asset paths the editor tools share, declared once. These were re-declared as private
-// consts in over a dozen files under four different names, which is exactly how a moved scene
-// breaks half the tools and not the other half.
+// The assets the editor tools share: where they live, and how to reach them.
+//
+// The paths came first — they were re-declared as private consts in over a dozen files under four
+// different names, which is exactly how a moved scene breaks half the tools and not the other half.
+// The accessors underneath landed here for the same reason, having been copied into fourteen files
+// (the robot-prefab sweep) and seven (the catalog lookup) before anyone counted them.
 internal static class RoboSimPaths
 {
     // The full competition field scene — what the batch validators open and the scene tools edit.
@@ -54,5 +57,30 @@ internal static class RoboSimPaths
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (prefab != null) yield return prefab;
         }
+    }
+
+    public static RobotModelCatalog LoadRobotCatalog() =>
+        AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RobotModelCatalog);
+
+    // Does the catalog already list this robot? The builder validators ask BEFORE registering a
+    // synthetic test robot, so their cleanup removes only what the run added and never a real entry.
+    // Was a private copy in seven files.
+    public static bool HasCatalogEntry(string id)
+    {
+        RobotModelCatalog catalog = LoadRobotCatalog();
+        return catalog != null && catalog.models != null &&
+               catalog.models.Exists(e => e != null && e.id == id);
+    }
+
+    // The other half of that pair, in five files. Writes only when something was actually removed —
+    // a validator that dirties and re-saves the catalog on every run turns a passing suite into a
+    // permanent working-tree change.
+    public static void RemoveCatalogEntry(string id)
+    {
+        RobotModelCatalog catalog = LoadRobotCatalog();
+        if (catalog == null || catalog.models == null) return;
+        if (catalog.models.RemoveAll(e => e != null && e.id == id) == 0) return;
+        EditorUtility.SetDirty(catalog);
+        AssetDatabase.SaveAssets();
     }
 }

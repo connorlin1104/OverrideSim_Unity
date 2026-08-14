@@ -153,7 +153,7 @@ public static class MovingTurnValidation
         SimulationMode previousMode = Physics.simulationMode;
         try
         {
-            ArticulationBody root = TipOverValidation.SpawnOnBareFloor(prefab, out RobotMotorController motor);
+            ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
             motor.Initialise();
 
             Physics.simulationMode = SimulationMode.Script;

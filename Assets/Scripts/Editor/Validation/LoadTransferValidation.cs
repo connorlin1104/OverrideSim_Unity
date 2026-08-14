@@ -259,7 +259,7 @@ public static class LoadTransferValidation
             SimulationMode previousMode = Physics.simulationMode;
             try
             {
-                ArticulationBody root = TipOverValidation.SpawnOnBareFloor(prefab, out RobotMotorController motor);
+                ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
                 motor.Initialise();
                 Physics.simulationMode = SimulationMode.Script;
                 TipOverValidation.StepDriven(motor, 0f, 0f, SettleSteps);
@@ -427,7 +427,7 @@ public static class LoadTransferValidation
         SimulationMode previousMode = Physics.simulationMode;
         try
         {
-            ArticulationBody root = TipOverValidation.SpawnOnBareFloor(prefab, out RobotMotorController motor);
+            ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
 
             // Set BEFORE Initialise: MeasureLoadTransfer runs there, and a robot whose lean is off
             // should be measured with it off from the first step, not switched off afterwards.

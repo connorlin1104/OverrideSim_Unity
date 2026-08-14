@@ -112,7 +112,7 @@ public static class LiftMotionValidation
         SimulationMode previousMode = Physics.simulationMode;
         try
         {
-            ArticulationBody root = TipOverValidation.SpawnOnBareFloor(prefab, out RobotMotorController motor);
+            ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
             CascadeLift lift = root.GetComponentInChildren<CascadeLift>(true);
             motor.Initialise();
 

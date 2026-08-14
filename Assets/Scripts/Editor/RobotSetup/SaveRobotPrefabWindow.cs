@@ -237,7 +237,7 @@ public static class SaveRobotPrefab
         const string catalogEntryId = "testbot";
         string prefabPath = PrefabPathFor("testbot");
 
-        bool hadCatalogEntry = HasCatalogEntry(catalogEntryId);
+        bool hadCatalogEntry = RoboSimPaths.HasCatalogEntry(catalogEntryId);
         bool hadPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath) != null;
         try
         {
@@ -283,9 +283,4 @@ public static class SaveRobotPrefab
         }
     }
 
-    private static bool HasCatalogEntry(string id)
-    {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
-        return catalog != null && catalog.models != null && catalog.models.Exists(e => e != null && e.id == id);
-    }
 }

@@ -20,7 +20,7 @@ public static class MeshRobotValidation
     {
         const string robotName = "MeshBot";
         string catalogEntryId = UrdfPostProcessor.Slugify(robotName);
-        bool hadCatalogEntry = HasCatalogEntry(catalogEntryId);
+        bool hadCatalogEntry = RoboSimPaths.HasCatalogEntry(catalogEntryId);
         SimulationMode previousSimulationMode = Physics.simulationMode;
 
         try
@@ -118,7 +118,7 @@ public static class MeshRobotValidation
         finally
         {
             Physics.simulationMode = previousSimulationMode;
-            if (!hadCatalogEntry) RemoveCatalogEntry(catalogEntryId);
+            if (!hadCatalogEntry) RoboSimPaths.RemoveCatalogEntry(catalogEntryId);
             PlayerPrefs.DeleteKey(ControllerMapSettings.PrefKey(catalogEntryId));
             if (File.Exists(RoboSimPaths.MainScene)) EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
             else EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -157,20 +157,4 @@ public static class MeshRobotValidation
         return null;
     }
 
-    private static bool HasCatalogEntry(string id)
-    {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
-        return catalog != null && catalog.models != null && catalog.models.Exists(e => e != null && e.id == id);
-    }
-
-    private static void RemoveCatalogEntry(string id)
-    {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
-        if (catalog != null && catalog.models != null &&
-            catalog.models.RemoveAll(e => e != null && e.id == id) > 0)
-        {
-            EditorUtility.SetDirty(catalog);
-            AssetDatabase.SaveAssets();
-        }
-    }
 }

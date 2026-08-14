@@ -670,7 +670,7 @@ public class UrdfPostProcessor : EditorWindow
 
         // PostProcess upserts a catalog entry; remember whether it existed so cleanup can
         // remove only what this validation run added.
-        bool hadCatalogEntry = HasCatalogEntry(catalogEntryId);
+        bool hadCatalogEntry = RoboSimPaths.HasCatalogEntry(catalogEntryId);
         SimulationMode previousSimulationMode = Physics.simulationMode;
         try
         {
@@ -758,7 +758,7 @@ public class UrdfPostProcessor : EditorWindow
         const string urdfAssetPath = "Assets/TestRobots/testbot_mech.urdf";
         const string catalogEntryId = "testbot-mech";
 
-        bool hadCatalogEntry = HasCatalogEntry(catalogEntryId);
+        bool hadCatalogEntry = RoboSimPaths.HasCatalogEntry(catalogEntryId);
         SimulationMode previousSimulationMode = Physics.simulationMode;
         try
         {
@@ -906,7 +906,7 @@ public class UrdfPostProcessor : EditorWindow
         const string urdfAssetPath = "Assets/TestRobots/testbot_massgeom.urdf";
         const string catalogEntryId = "testbot-massgeom";
 
-        bool hadCatalogEntry = HasCatalogEntry(catalogEntryId);
+        bool hadCatalogEntry = RoboSimPaths.HasCatalogEntry(catalogEntryId);
         SimulationMode previousSimulationMode = Physics.simulationMode;
         try
         {
@@ -950,7 +950,7 @@ public class UrdfPostProcessor : EditorWindow
         const string urdfAssetPath = "Assets/TestRobots/testbot_jointtool.urdf";
         const string catalogEntryId = "testbot-jointtool";
 
-        bool hadCatalogEntry = HasCatalogEntry(catalogEntryId);
+        bool hadCatalogEntry = RoboSimPaths.HasCatalogEntry(catalogEntryId);
         SimulationMode previousSimulationMode = Physics.simulationMode;
         try
         {
@@ -1071,13 +1071,6 @@ public class UrdfPostProcessor : EditorWindow
         if (robot == null)
             throw new InvalidOperationException("URDF batch validation FAILED: import produced no robot GameObject.");
         return robot;
-    }
-
-    private static bool HasCatalogEntry(string id)
-    {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
-        return catalog != null && catalog.models != null &&
-               catalog.models.Exists(e => e != null && e.id == id);
     }
 
     // Restores sim mode, discards the scratch scene (and the robot in it) without saving,

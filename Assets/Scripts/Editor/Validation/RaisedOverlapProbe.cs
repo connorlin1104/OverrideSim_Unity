@@ -17,9 +17,6 @@ public static class RaisedOverlapProbe
 {
     private const int SettleSteps = 200;
     private const int LiftRampSteps = 200;
-    private const float FloorSize = 400f;
-    private const float DropHeight = 2f;
-    private const string FloorMaterialPath = "Assets/ZeroBounce.physicMaterial";
 
     public static void RunBatchValidate() => ValidationUtil.RunBatch("Probe Raised Overlaps", Run);
 
@@ -39,24 +36,13 @@ public static class RaisedOverlapProbe
         var report = new System.Text.StringBuilder();
         report.AppendLine("overlaps present at the RAISED pose that the rest-pose scan never saw:");
 
-        foreach (string path in RoboSimPaths.RobotPrefabPaths())
+        foreach (GameObject prefab in RoboSimPaths.RobotPrefabs())
         {
-            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-            if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
+            if (prefab.GetComponent<RobotMotorController>() == null) continue;
 
-            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            var floor = new GameObject("Floor");
-            floor.transform.position = new Vector3(0f, -0.5f, 0f);
-            BoxCollider fc = floor.AddComponent<BoxCollider>();
-            fc.size = new Vector3(FloorSize, 1f, FloorSize);
-            fc.sharedMaterial = AssetDatabase.LoadAssetAtPath<PhysicsMaterial>(FloorMaterialPath);
-
-            GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, SceneManager.GetActiveScene());
-            instance.transform.position = new Vector3(0f, DropHeight, 0f);
-            Physics.SyncTransforms();
-
-            ArticulationBody root = instance.GetComponent<ArticulationBody>();
-            RobotMotorController motor = root.GetComponent<RobotMotorController>();
+            // The shared rig, rather than the copy this file used to carry — that copy had dropped
+            // the floor-material assertion, so it was measuring against PhysX's default friction.
+            ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
 
             // Exactly what the game does: clear the rest-pose overlaps, once.
             var restPairs = new List<string>();

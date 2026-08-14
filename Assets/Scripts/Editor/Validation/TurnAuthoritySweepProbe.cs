@@ -70,7 +70,7 @@ public static class TurnAuthoritySweepProbe
         SimulationMode previousMode = Physics.simulationMode;
         try
         {
-            ArticulationBody root = TipOverValidation.SpawnOnBareFloor(prefab, out RobotMotorController motor);
+            ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
             motor.backDriveTractionMultiple = multiple;   // before Initialise, which derives the torque
             motor.Initialise();
 

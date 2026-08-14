@@ -38,18 +38,6 @@ public static class RobotInboxValidation
         if (result.StartsWith("FAILED")) throw new System.InvalidOperationException(result);
     }
 
-    private class Checks
-    {
-        public readonly List<string> Failures = new List<string>();
-        public int Count;
-
-        public void That(bool condition, string failureMessage)
-        {
-            Count++;
-            if (!condition) Failures.Add(failureMessage);
-        }
-    }
-
     private static RobotInboxService.Item Arrival(string name, string code)
         => new RobotInboxService.Item { robotName = name, code = code, message = string.Empty };
 
@@ -59,7 +47,7 @@ public static class RobotInboxValidation
     private static string Validate()
     {
         string savedSeen = PlayerPrefs.GetString(RobotInboxSettings.SeenPrefKey, string.Empty);
-        var checks = new Checks();
+        var checks = new ValidationUtil.Checks();
 
         try
         {
@@ -88,7 +76,7 @@ public static class RobotInboxValidation
     // An item is an arrival, a note, or neither — and the home screen does something different for
     // each. The two must be mutually exclusive: an item counted as both would have its code added AND
     // be written to the seen list, so re-sending a corrected note would silently never show.
-    private static void CheckClassification(Checks checks)
+    private static void CheckClassification(ValidationUtil.Checks checks)
     {
         RobotInboxService.Item arrival = Arrival("654V Claw", "654V-8213");
         checks.That(RobotInboxService.IsArrival(arrival), "An item with a code is not an arrival.");
@@ -117,7 +105,7 @@ public static class RobotInboxValidation
         checks.That(!RobotInboxService.IsNote(null), "null counted as a note.");
     }
 
-    private static void CheckKeys(Checks checks)
+    private static void CheckKeys(ValidationUtil.Checks checks)
     {
         // An explicit id wins and is used verbatim (trimmed), so a message can be rewritten without
         // re-showing it — the escape hatch from the fingerprint rule below.
@@ -150,7 +138,7 @@ public static class RobotInboxValidation
         checks.That(RobotInboxService.KeyFor(null) == string.Empty, "KeyFor(null) is not empty.");
     }
 
-    private static void CheckSeenMemory(Checks checks)
+    private static void CheckSeenMemory(ValidationUtil.Checks checks)
     {
         RobotInboxSettings.Forget();
 
@@ -186,7 +174,7 @@ public static class RobotInboxValidation
     // The inbox file is hand-written from the Firebase console, so its JSON is the one input here
     // with no compiler behind it. These are the exact shapes Docs/Robot-Submissions.md tells you to
     // write; if JsonUtility stops reading them, that document becomes wrong instructions.
-    private static void CheckParsing(Checks checks)
+    private static void CheckParsing(ValidationUtil.Checks checks)
     {
         const string json =
             "{\"items\":[" +
@@ -227,7 +215,7 @@ public static class RobotInboxValidation
     private const string Sent = "2026-08-02T14:32:05.1234567Z";
     private const string SentStamp = "20260802-143205";
 
-    private static void CheckUploadPaths(Checks checks)
+    private static void CheckUploadPaths(ValidationUtil.Checks checks)
     {
         string folder = RobotUploadService.UploadFolderName(Sent, "654V", Uid);
         checks.That(folder == $"{SentStamp}_654V_{Uid}", $"An ordinary team folder is wrong: '{folder}'.");
@@ -280,7 +268,7 @@ public static class RobotInboxValidation
     // order and the time order are the same order. Every case below is a way for that to come apart
     // silently — and the failure looks like a submission that never arrived, because the newest one
     // is sitting in the middle of the list where nobody looks.
-    private static void CheckUploadOrder(Checks checks)
+    private static void CheckUploadOrder(ValidationUtil.Checks checks)
     {
         // Chronological, and deliberately crossing every boundary where an unpadded or
         // wrongly-ordered field would sort backwards: single-digit month and day against

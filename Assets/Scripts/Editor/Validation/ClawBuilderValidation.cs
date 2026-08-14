@@ -37,7 +37,7 @@ public static class ClawBuilderValidation
 
     private static string Run()
     {
-        bool hadEntry = HasCatalogEntry(TestRobotId);
+        bool hadEntry = RoboSimPaths.HasCatalogEntry(TestRobotId);
         SimulationMode previousSimulation = Physics.simulationMode;
         Vector3 previousGravity = Physics.gravity;
         try
@@ -94,7 +94,7 @@ public static class ClawBuilderValidation
             Physics.gravity = previousGravity;
             PlayerPrefs.DeleteKey(ControllerMapSettings.PrefKey(TestRobotId));
             PlayerPrefs.Save();
-            if (!hadEntry) RemoveCatalogEntry(TestRobotId);
+            if (!hadEntry) RoboSimPaths.RemoveCatalogEntry(TestRobotId);
             // The scratch scenes are never saved, so the synthetic robots die with them.
         }
     }
@@ -1518,21 +1518,4 @@ public static class ClawBuilderValidation
         return null;
     }
 
-    private static bool HasCatalogEntry(string id)
-    {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
-        return catalog != null && catalog.models != null &&
-               catalog.models.Exists(e => e != null && e.id == id);
-    }
-
-    // The build registers the synthetic robot in the shared catalog asset; drop it again so a
-    // validation run leaves no trace in a committed asset.
-    private static void RemoveCatalogEntry(string id)
-    {
-        RobotModelCatalog catalog = AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RoboSimPaths.RobotModelCatalog);
-        if (catalog == null || catalog.models == null) return;
-        if (catalog.models.RemoveAll(e => e != null && e.id == id) == 0) return;
-        EditorUtility.SetDirty(catalog);
-        AssetDatabase.SaveAssets();
-    }
 }

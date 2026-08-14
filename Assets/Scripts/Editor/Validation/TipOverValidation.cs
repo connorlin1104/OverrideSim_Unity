@@ -42,7 +42,6 @@ public static class TipOverValidation
     private const int AccelSteps = 200;         // 2 s — comfortably past 95% of top speed
     private const int ReversalSteps = 60;       // 0.6 s — a 0.8 g stop from top speed takes ~0.18 s
 
-
     // The lift's tuned raise time (CascadeLift/Dr4bLift default 2 s) and how long the turn is held.
     private const int LiftRampSteps = 200;
     private const int TurnSteps = 250;
@@ -240,10 +239,7 @@ public static class TipOverValidation
     private const float MaxLiftTravel = 1.0f;
 
     // The turn rig.
-    private const float FloorSize = 400f;          // 40 m: nothing can drive off it in 3 s
-    private const float DropHeight = 2f;
     private const int SettleSteps = 200;
-    private const string FloorMaterialPath = "Assets/ZeroBounce.physicMaterial";
     private const string ChatterSubject = "654V_v3";
 
     private static int TurningWithTheLiftUpDoesNotRollIt(out string report)
@@ -544,7 +540,7 @@ public static class TipOverValidation
     private static Turn DriveATurn(GameObject prefab, bool clearSelfOverlaps, bool jamAWheel = false,
         float turnSign = 1f)
     {
-        ArticulationBody root = SpawnOnBareFloor(prefab, out RobotMotorController motor);
+        ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
 
         var result = new Turn();
         if (!clearSelfOverlaps)
@@ -585,7 +581,6 @@ public static class TipOverValidation
         result.turnSign = turnSign;
         MeasureLateralBalance(root, out result.lateralComOffset, out result.halfTrack,
             out result.comHeight, out result.frictionTipLimitDeg);
-
 
         // Straight line to speed FIRST. A turn only loads a robot laterally if it is travelling; a
         // spin from rest rolls every one of these robots 0.1 degrees and proves nothing.
@@ -640,31 +635,6 @@ public static class TipOverValidation
         result.finalTilt = Vector3.Angle(root.transform.up, Vector3.up);
         result.exitSpeed = Planar(root.linearVelocity);
         return result;
-    }
-
-    // The rig both dynamic halves run on: an empty scene with one floor, and nothing else at all.
-    internal static ArticulationBody SpawnOnBareFloor(GameObject prefab, out RobotMotorController motor)
-    {
-        EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-        var floor = new GameObject("Floor");
-        floor.transform.position = new Vector3(0f, -0.5f, 0f);
-        BoxCollider fc = floor.AddComponent<BoxCollider>();
-        fc.size = new Vector3(FloorSize, 1f, FloorSize);
-        fc.sharedMaterial = AssetDatabase.LoadAssetAtPath<PhysicsMaterial>(FloorMaterialPath);
-        ValidationUtil.Assert(fc.sharedMaterial != null,
-            $"the rig's floor material is missing at {FloorMaterialPath} — without it the floor takes " +
-            "PhysX's default friction and every grip number here is measured against the wrong surface");
-
-        GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, SceneManager.GetActiveScene())
-            ?? throw new System.InvalidOperationException($"could not instantiate '{prefab.name}'");
-        instance.transform.position = new Vector3(0f, DropHeight, 0f);
-        Physics.SyncTransforms();
-
-        ArticulationBody root = instance.GetComponent<ArticulationBody>()
-            ?? throw new System.InvalidOperationException($"'{prefab.name}' has no root ArticulationBody");
-        motor = root.GetComponent<RobotMotorController>()
-            ?? throw new System.InvalidOperationException($"'{prefab.name}' has no RobotMotorController");
-        return root;
     }
 
     // Roll about the robot's own forward axis, SIGNED. An unsigned Vector3.Angle tilt cannot
@@ -810,7 +780,7 @@ public static class TipOverValidation
     // is attributable to it and nothing else.
     private static Shoved Shove(GameObject prefab, float rollRelief)
     {
-        ArticulationBody root = SpawnOnBareFloor(prefab, out RobotMotorController motor);
+        ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
         motor.rollRelief = rollRelief;
         motor.Initialise();
 
@@ -1205,7 +1175,7 @@ public static class TipOverValidation
             // measured 8.7 u/s of entry speed one run and 1.3 the next depending on what the robot
             // drove into, and a deceleration measured from 1.3 u/s stops in two steps and says
             // almost nothing.
-            ArticulationBody root = SpawnOnBareFloor(prefab, out RobotMotorController motor);
+            ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
             ArticulationBody[] wheels = PhysicsSmokeTest.FindWheels(root, out _, out _);
 
             // The same tune the controller would compute at Awake, from the same measurements —

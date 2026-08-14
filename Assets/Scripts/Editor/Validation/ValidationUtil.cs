@@ -88,6 +88,37 @@ internal static class ValidationUtil
         if (!condition) throw new InvalidOperationException(why);
     }
 
+    // ACCUMULATING assertions, for validators that would rather report every failure than stop at the
+    // first. Assert() above aborts the run, which is right when later checks depend on earlier ones
+    // and wrong when they are independent: the first offender is then whichever asset the
+    // AssetDatabase happened to return first, so a project-wide problem reads as one asset's problem
+    // and the asset actually being complained about may never be reached.
+    //
+    // Was a private copy in five validators — four byte-identical, and ModelStore's a superset with
+    // Refuses. The superset is the one worth having, so it is the one that lives here.
+    public class Checks
+    {
+        public readonly System.Collections.Generic.List<string> Failures =
+            new System.Collections.Generic.List<string>();
+        public int Count;
+
+        public void That(bool condition, string failureMessage)
+        {
+            Count++;
+            if (!condition) Failures.Add(failureMessage);
+        }
+
+        // The mutation half: something that MUST be refused. A guard nobody has watched reject
+        // anything is a guard nobody knows is wired up.
+        public void Refuses(Action action, string what)
+        {
+            Count++;
+            try { action(); }
+            catch (Exception) { return; }
+            Failures.Add($"{what} was accepted, but it must be refused");
+        }
+    }
+
     // Approximate equality with the actual/expected baked into the message. The NaN test is not
     // paranoia: NaN compares false against everything, so without it a NaN sails through the
     // tolerance check and "passes".
@@ -140,6 +171,50 @@ internal static class ValidationUtil
         go.transform.SetPositionAndRotation(position, rotation);
         go.transform.localScale = size;
         return go;
+    }
+
+    // THE BARE-FLOOR RIG: an empty scene with one floor, and nothing else at all.
+    //
+    // Lived inside TipOverValidation, which meant five other validators reached into a 1350-line test
+    // file to get their fixture, and a third copy (RaisedOverlapProbe) re-implemented it rather than
+    // do that — dropping the floor-material assertion on the way, so it was silently measuring grip
+    // against PhysX's default friction instead of the project's.
+    //
+    // The bare floor is deliberately NOT the field: the field's tape, walls and settled pieces all
+    // perturb a dynamics measurement. It has no tape either, which has cost a diagnosis before — if
+    // what you are measuring depends on the surface the robot is standing on, check which rig you are
+    // on first.
+    public const float RigFloorSize = 400f;      // 40 m: nothing can drive off it in 3 s
+    public const float RigDropHeight = 2f;
+    public const string RigFloorMaterialPath = "Assets/ZeroBounce.physicMaterial";
+
+    public static ArticulationBody SpawnOnBareFloor(GameObject prefab, out RobotMotorController motor)
+    {
+        UnityEditor.SceneManagement.EditorSceneManager.NewScene(
+            UnityEditor.SceneManagement.NewSceneSetup.EmptyScene,
+            UnityEditor.SceneManagement.NewSceneMode.Single);
+
+        var floor = new GameObject("Floor");
+        floor.transform.position = new Vector3(0f, -0.5f, 0f);
+        BoxCollider fc = floor.AddComponent<BoxCollider>();
+        fc.size = new Vector3(RigFloorSize, 1f, RigFloorSize);
+        fc.sharedMaterial = AssetDatabase.LoadAssetAtPath<PhysicsMaterial>(RigFloorMaterialPath);
+        Assert(fc.sharedMaterial != null,
+            $"the rig's floor material is missing at {RigFloorMaterialPath} — without it the floor " +
+            "takes PhysX's default friction and every grip number here is measured against the wrong " +
+            "surface");
+
+        GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(
+                prefab, UnityEngine.SceneManagement.SceneManager.GetActiveScene())
+            ?? throw new InvalidOperationException($"could not instantiate '{prefab.name}'");
+        instance.transform.position = new Vector3(0f, RigDropHeight, 0f);
+        Physics.SyncTransforms();
+
+        ArticulationBody root = instance.GetComponent<ArticulationBody>()
+            ?? throw new InvalidOperationException($"'{prefab.name}' has no root ArticulationBody");
+        motor = root.GetComponent<RobotMotorController>()
+            ?? throw new InvalidOperationException($"'{prefab.name}' has no RobotMotorController");
+        return root;
     }
 
     // A big static floor for edit-mode physics fixtures, so a simulated robot has something to

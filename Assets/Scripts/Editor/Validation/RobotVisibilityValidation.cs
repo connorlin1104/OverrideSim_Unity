@@ -36,26 +36,13 @@ public static class RobotVisibilityValidation
         if (result.StartsWith("FAILED")) throw new System.InvalidOperationException(result);
     }
 
-    // Counts itself, so adding a check never leaves the summary line lying about how many ran.
-    private class Checks
-    {
-        public readonly List<string> Failures = new List<string>();
-        public int Count;
-
-        public void That(bool condition, string failureMessage)
-        {
-            Count++;
-            if (!condition) Failures.Add(failureMessage);
-        }
-    }
-
     private static string Validate()
     {
         // Snapshot the two prefs this test writes so a run never disturbs the real device state.
         string savedSelection = PlayerPrefs.GetString(RobotModelCatalog.SelectedModelPrefKey, string.Empty);
         string savedCodes = PlayerPrefs.GetString(RobotOwnerSettings.CodesPrefKey, string.Empty);
 
-        var checks = new Checks();
+        var checks = new ValidationUtil.Checks();
         RobotModelCatalog catalog = null;
         GameObject publicPrefab = null;
         GameObject privatePrefab = null;

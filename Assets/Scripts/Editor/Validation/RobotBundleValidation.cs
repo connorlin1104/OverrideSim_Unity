@@ -43,21 +43,9 @@ public static class RobotBundleValidation
         if (result.StartsWith("FAILED")) throw new System.InvalidOperationException(result);
     }
 
-    private class Checks
-    {
-        public readonly List<string> Failures = new List<string>();
-        public int Count;
-
-        public void That(bool condition, string failureMessage)
-        {
-            Count++;
-            if (!condition) Failures.Add(failureMessage);
-        }
-    }
-
     private static string Validate()
     {
-        var checks = new Checks();
+        var checks = new ValidationUtil.Checks();
 
         CheckPaths(checks);
         CheckVersionGate(checks);
@@ -81,7 +69,7 @@ public static class RobotBundleValidation
     // The path has to carry BOTH versions, because "can this app read that bundle" is answered by
     // whether the file exists — a check made before anything is downloaded rather than after tens of
     // megabytes have crossed a phone connection.
-    private static void CheckPaths(Checks checks)
+    private static void CheckPaths(ValidationUtil.Checks checks)
     {
         string path = RobotBundleFormat.RelativePath("654v-claw", "a1b2c3d4", 3);
         checks.That(path.Contains("/v3/"),
@@ -115,7 +103,7 @@ public static class RobotBundleValidation
     // A version-mismatched bundle usually LOADS. That is the whole danger: it hands back a robot
     // whose serialized fields have quietly reverted to their defaults, which is far worse than a
     // refusal because nobody can see it happen.
-    private static void CheckVersionGate(Checks checks)
+    private static void CheckVersionGate(ValidationUtil.Checks checks)
     {
         var current = new RobotModelCatalog.BundleRef
         { id = "claw", version = "abc", scriptVersion = RobotBundleFormat.Version };
@@ -151,7 +139,7 @@ public static class RobotBundleValidation
     private const string PinnedCode = "654V-1104";
     private const string PinnedFolder = "ce3d330822475faba6ae91da2f4404784";
 
-    private static void CheckAddresses(Checks checks)
+    private static void CheckAddresses(ValidationUtil.Checks checks)
     {
         checks.That(RobotBundleAddress.FolderForCode(PinnedCode) == PinnedFolder,
             $"The address of code '{PinnedCode}' changed: got " +
@@ -186,7 +174,7 @@ public static class RobotBundleValidation
     }
 
     // The address only means anything if nothing else gives it away.
-    private static void CheckPrivacy(Checks checks)
+    private static void CheckPrivacy(ValidationUtil.Checks checks)
     {
         var publicEntry = new RobotModelCatalog.Entry
         { id = "a", visibility = RobotModelCatalog.Visibility.Public, ownerCode = "654V-1104" };
@@ -270,7 +258,7 @@ public static class RobotBundleValidation
     // The index is written by an editor tool and read by JsonUtility on a phone. JsonUtility silently
     // drops what it cannot map, so a field that survives the round trip in one direction and not the
     // other produces a robot that lists with no name, or one that can't be downloaded.
-    private static void CheckIndexRoundTrip(Checks checks)
+    private static void CheckIndexRoundTrip(ValidationUtil.Checks checks)
     {
         var index = new RobotCatalogIndex();
         index.robots.Add(new RobotCatalogIndex.Robot
@@ -314,7 +302,7 @@ public static class RobotBundleValidation
 
     // Two fallbacks with different jobs, and swapping them is the kind of mistake that only shows up
     // on a slow connection.
-    private static void CheckCatalogResolution(Checks checks)
+    private static void CheckCatalogResolution(ValidationUtil.Checks checks)
     {
         var catalog = ScriptableObject.CreateInstance<RobotModelCatalog>();
         try
@@ -407,7 +395,7 @@ public static class RobotBundleValidation
         "RobotMotorController=6a478539",
     };
 
-    private static void CheckScriptLayout(Checks checks)
+    private static void CheckScriptLayout(ValidationUtil.Checks checks)
     {
         SortedDictionary<string, string> actual = ScriptLayouts();
         var pinned = new SortedDictionary<string, string>();

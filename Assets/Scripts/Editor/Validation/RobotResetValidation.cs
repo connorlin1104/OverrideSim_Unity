@@ -60,7 +60,7 @@ public static class RobotResetValidation
     {
         EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
 
-        GameObject prefab = ResolveRobotPrefab()
+        GameObject prefab = PhysicsSmokeTest.ResolveRobotPrefab()
             ?? throw new System.InvalidOperationException(
                 "RobotResetValidation: no robot prefab to test. Pick a robot on the home screen, or select " +
                 "one (e.g. Assets/Robots/654V_v1.prefab) in the Project window.");
@@ -115,17 +115,17 @@ public static class RobotResetValidation
         // Simulate. Centering the footprint keeps an off-pivot bot from starting inside a wall.
         instance.transform.SetPositionAndRotation(PreSettlePoint, Quaternion.identity);
         Physics.SyncTransforms();
-        if (TryGetFootprint(instance, out Bounds pre))
+        if (PhysicsSmokeTest.TryGetFootprint(instance, out Bounds pre))
         {
             Vector3 shift = PreSettlePoint - pre.center;
             shift.y = 0f;
             instance.transform.position += shift;
             Physics.SyncTransforms();
         }
-        Step(SettleSteps);
+        PhysicsSmokeTest.Step(SettleSteps);
 
         spawner.PlaceAndWatch(instance);
-        Step(SettleSteps);
+        PhysicsSmokeTest.Step(SettleSteps);
 
         Vector3 spawn = spawner.RestorePosition;
         float drift = PlanarDistance(instance.transform.position, spawn);
@@ -169,12 +169,12 @@ public static class RobotResetValidation
         // step writes the bodies back, so step once before reading the position (velocities above
         // come straight from the body and are readable immediately). At play time the physics step
         // that follows FixedUpdate does this for free.
-        Step(1);
+        PhysicsSmokeTest.Step(1);
         Require(instance.transform.position.y > spawner.FallThresholdY,
             $"the reset left the robot at Y {instance.transform.position.y:F2}, still below the fall line.");
 
         // It has to STAY back: settle it again and confirm it neither shot off nor fell through.
-        Step(SettleSteps);
+        PhysicsSmokeTest.Step(SettleSteps);
         Require(instance.transform.position.y > spawner.FallThresholdY,
             $"the robot fell back off the field within 2 s of being reset (Y {instance.transform.position.y:F2}).");
         float drift = PlanarDistance(instance.transform.position, spawner.RestorePosition);
@@ -196,7 +196,7 @@ public static class RobotResetValidation
             "the debounced call moved the robot anyway — it must be a no-op, not a quiet reset.");
 
         Require(spawner.CheckFallAndReset(2f), "past the cooldown a still-fallen robot must reset again.");
-        Step(1); // let the teleported pose reach the Transform (see TestFallAndRecover)
+        PhysicsSmokeTest.Step(1); // let the teleported pose reach the Transform (see TestFallAndRecover)
         Require(instance.transform.position.y > spawner.FallThresholdY, "that reset must actually move the robot.");
 
         Debug.Log("RobotResetValidation debounce: blocked inside the cooldown, fired once past it.");
@@ -237,12 +237,7 @@ public static class RobotResetValidation
         // behind a reset that just teleported the robot back (see TestFallAndRecover).
         Vector3 spawn = spawner.RestorePosition;
         root.TeleportRoot(new Vector3(spawn.x, spawner.FallThresholdY - 10f, spawn.z), instance.transform.rotation);
-        Step(30); // 0.3 s of gravity at -98: ~29 units/s of fall speed to be zeroed
-    }
-
-    private static void Step(int steps)
-    {
-        for (int i = 0; i < steps; i++) Physics.Simulate(ValidationUtil.StepSeconds);
+        PhysicsSmokeTest.Step(30); // 0.3 s of gravity at -98: ~29 units/s of fall speed to be zeroed
     }
 
     private static float MaxJointSpeed(GameObject robot)
@@ -267,41 +262,4 @@ public static class RobotResetValidation
         if (!ok) throw new System.InvalidOperationException("RobotResetValidation FAILED: " + message);
     }
 
-    // Combined world-space collision footprint (non-trigger colliders). Mirrors
-    // RobotSpawner.TryGetWorldFootprint / PhysicsSmokeTest.TryGetFootprint.
-    private static bool TryGetFootprint(GameObject robot, out Bounds bounds)
-    {
-        bounds = new Bounds();
-        bool has = false;
-        foreach (Collider c in robot.GetComponentsInChildren<Collider>())
-        {
-            if (c.isTrigger) continue;
-            if (!has) { bounds = c.bounds; has = true; }
-            else bounds.Encapsulate(c.bounds);
-        }
-        return has;
-    }
-
-    // The robot the user most likely means: an explicitly selected robot prefab, else the model
-    // picked on the home screen, else the first catalog entry that has a prefab.
-    private static GameObject ResolveRobotPrefab()
-    {
-        GameObject selected = Selection.activeObject as GameObject;
-        if (selected != null && PrefabUtility.IsPartOfPrefabAsset(selected) &&
-            selected.GetComponentInChildren<ArticulationBody>(true) != null)
-            return selected;
-
-        foreach (string guid in AssetDatabase.FindAssets("t:RobotModelCatalog"))
-        {
-            RobotModelCatalog catalog =
-                AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(AssetDatabase.GUIDToAssetPath(guid));
-            if (catalog == null) continue;
-            if (catalog.SelectedModel != null && catalog.SelectedModel.prefab != null)
-                return catalog.SelectedModel.prefab;
-            if (catalog.models != null)
-                foreach (RobotModelCatalog.Entry entry in catalog.models)
-                    if (entry != null && entry.prefab != null) return entry.prefab;
-        }
-        return null;
-    }
 }

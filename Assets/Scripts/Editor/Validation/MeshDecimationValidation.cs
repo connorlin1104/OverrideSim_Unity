@@ -41,21 +41,9 @@ public static class MeshDecimationValidation
         if (result.StartsWith("FAILED")) throw new System.InvalidOperationException(result);
     }
 
-    private class Checks
-    {
-        public readonly List<string> Failures = new List<string>();
-        public int Count;
-
-        public void That(bool condition, string failureMessage)
-        {
-            Count++;
-            if (!condition) Failures.Add(failureMessage);
-        }
-    }
-
     private static string Validate()
     {
-        var checks = new Checks();
+        var checks = new ValidationUtil.Checks();
 
         CheckWelding(checks);
         CheckHolesSurvive(checks);
@@ -91,7 +79,7 @@ public static class MeshDecimationValidation
     // actually looks like, and it is entirely coplanar — so every collapse on it costs exactly zero
     // and a working decimator should take it to the floor. If positions aren't welded first there
     // are no shared edges, no collapse is possible, and it comes back untouched.
-    private static void CheckWelding(Checks checks)
+    private static void CheckWelding(ValidationUtil.Checks checks)
     {
         Mesh split = SplitGrid(24);
         int before = MeshDecimator.TriangleCount(split);
@@ -126,7 +114,7 @@ public static class MeshDecimationValidation
     // A VEX part is mostly holes. The rim of a small hole is the cheapest thing in the mesh to
     // collapse, so this is the failure that happens by default rather than the one that happens
     // rarely: hole gone, triangle count on target, part wrong.
-    private static void CheckHolesSurvive(Checks checks)
+    private static void CheckHolesSurvive(ValidationUtil.Checks checks)
     {
         Mesh annulus = Annulus(64, 0.4f, 1f);
         checks.That(BoundaryLoops(annulus) == 2,
@@ -151,7 +139,7 @@ public static class MeshDecimationValidation
 
     // Decimation moves the surface; it must not move the object. A part that shrinks has changed
     // where it sits relative to the colliders that were generated from the original.
-    private static void CheckSizeIsKept(Checks checks)
+    private static void CheckSizeIsKept(ValidationUtil.Checks checks)
     {
         Mesh sphere = Sphere(32, 16);
         Bounds before = sphere.bounds;
@@ -180,7 +168,7 @@ public static class MeshDecimationValidation
 
     // Zero-area and inside-out triangles are what a collapse produces when it isn't checked, and
     // both render as black. They also poison anything downstream that computes a normal.
-    private static void CheckNoBrokenTriangles(Checks checks)
+    private static void CheckNoBrokenTriangles(ValidationUtil.Checks checks)
     {
         foreach (Mesh source in new[] { Sphere(24, 12), SplitGrid(16), Annulus(48, 0.3f, 1f) })
         {
@@ -235,7 +223,7 @@ public static class MeshDecimationValidation
     // normals from that without a smoothing angle averages across the edge and rounds it off: right
     // triangle count, wrong-looking robot. A cube is the clearest case — it must come back with six
     // distinct face normals, not eight smeared vertex normals.
-    private static void CheckSharpEdgesStaySharp(Checks checks)
+    private static void CheckSharpEdgesStaySharp(ValidationUtil.Checks checks)
     {
         Mesh cube = Cube();
         MeshDecimator.Result sharp = MeshDecimator.Simplify(cube, Options(1f, 0.01f, 55f));
@@ -261,7 +249,7 @@ public static class MeshDecimationValidation
 
     // Submesh index is what picks the material. Lose it and a robot comes back one colour, or with
     // its plastic and metal swapped.
-    private static void CheckSubmeshesSurvive(Checks checks)
+    private static void CheckSubmeshesSurvive(ValidationUtil.Checks checks)
     {
         Mesh two = TwoMaterialGrid(16);
         checks.That(two.subMeshCount == 2, "The test mesh does not have two submeshes.");
@@ -283,7 +271,7 @@ public static class MeshDecimationValidation
     }
 
     // The floor and the ratio are the two things a caller sets, so they have to mean what they say.
-    private static void CheckLimits(Checks checks)
+    private static void CheckLimits(ValidationUtil.Checks checks)
     {
         var floored = new MeshDecimator.Options
         {
@@ -311,7 +299,7 @@ public static class MeshDecimationValidation
     // The source is shared: several renderers point at one mesh, and the tool decimates it once and
     // repoints them all. Modifying it in place would corrupt whatever else still holds it, including
     // the FBX sub-asset itself.
-    private static void CheckSourceIsNotModified(Checks checks)
+    private static void CheckSourceIsNotModified(ValidationUtil.Checks checks)
     {
         Mesh source = Sphere(24, 12);
         int triangles = MeshDecimator.TriangleCount(source);
@@ -331,7 +319,7 @@ public static class MeshDecimationValidation
     // A mesh imported with Read/Write off has no CPU-side copy, and Unity returns an EMPTY vertex
     // array for it rather than throwing. Decimating that would silently produce a robot with no
     // geometry — and it would look like a decimation bug, not a settings one.
-    private static void CheckUnreadableMeshIsRefused(Checks checks)
+    private static void CheckUnreadableMeshIsRefused(ValidationUtil.Checks checks)
     {
         Mesh mesh = Sphere(16, 8);
         int triangles = MeshDecimator.TriangleCount(mesh);

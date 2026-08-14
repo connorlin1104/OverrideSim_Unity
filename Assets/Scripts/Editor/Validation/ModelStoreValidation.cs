@@ -64,31 +64,9 @@ public static class ModelStoreValidation
         if (result.StartsWith("FAILED")) throw new InvalidOperationException(result);
     }
 
-    private class Checks
-    {
-        public readonly List<string> Failures = new List<string>();
-        public int Count;
-
-        public void That(bool condition, string failureMessage)
-        {
-            Count++;
-            if (!condition) Failures.Add(failureMessage);
-        }
-
-        // The mutation half: something that MUST be refused. A guard nobody has watched reject
-        // anything is a guard nobody knows is wired up.
-        public void Refuses(Action action, string what)
-        {
-            Count++;
-            try { action(); }
-            catch (Exception) { return; }
-            Failures.Add($"{what} was accepted, but it must be refused");
-        }
-    }
-
     private static string Validate()
     {
-        var checks = new Checks();
+        var checks = new ValidationUtil.Checks();
 
         CheckStoreRoot(checks);
         CheckIgnoreRule(checks);
@@ -107,7 +85,7 @@ public static class ModelStoreValidation
 
     // ---------------------------------------------------------------------------------------------
 
-    private static void CheckStoreRoot(Checks checks)
+    private static void CheckStoreRoot(ValidationUtil.Checks checks)
     {
         string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         string project = Directory.GetParent(Application.dataPath).FullName;
@@ -162,7 +140,7 @@ public static class ModelStoreValidation
     // The ignore rule is what keeps submitted models out of git, and it has to be a DIRECTORY rule.
     // A per-filename rule cannot work: Fusion exports are called export.fbx, so a rule written for
     // one player's model silently swallows the next player's.
-    private static void CheckIgnoreRule(Checks checks)
+    private static void CheckIgnoreRule(ValidationUtil.Checks checks)
     {
         string gitignore = Path.Combine(Directory.GetParent(Application.dataPath).FullName, ".gitignore");
         checks.That(File.Exists(gitignore), ".gitignore is missing");
@@ -178,7 +156,7 @@ public static class ModelStoreValidation
     // The field is the reason ReferrersOf returns a list. It is referenced by both scenes and four
     // match-load prefabs, so it is needed at every app build and can never be stowed; each robot is
     // referenced by exactly one prefab, which is what makes stowing bounded.
-    private static void CheckOwnership(Checks checks)
+    private static void CheckOwnership(ValidationUtil.Checks checks)
     {
         List<string> fieldReferrers = ModelStore.ReferrersOf(FieldGuid);
         checks.That(fieldReferrers.Count > 1,
@@ -199,7 +177,7 @@ public static class ModelStoreValidation
     // Pinned counts, plus the mutation that proves the counter counts. Without the mutation, a regex
     // that matched nothing would report 0 == 0 and pass, and the same bug at fetch time would wave
     // through a model that restored nothing at all.
-    private static void CheckCensusCounts(Checks checks)
+    private static void CheckCensusCounts(ValidationUtil.Checks checks)
     {
         foreach ((string prefab, string fbx, string guid, int pointers) in Robots)
         {
@@ -227,7 +205,7 @@ public static class ModelStoreValidation
     // Delete a single pointer from a copy of a real prefab and require the count to drop by exactly
     // one. This is the check that proves a partial reconnection would be VISIBLE — it is the same
     // arithmetic a fetch does, run against a file where the answer is known.
-    private static void MutateOnePointerAway(Checks checks)
+    private static void MutateOnePointerAway(ValidationUtil.Checks checks)
     {
         (string prefab, string fbx, string guid, int pointers) = Robots[3];  // 654V v3
         if (!File.Exists(prefab) || !File.Exists(fbx)) return;
@@ -259,7 +237,7 @@ public static class ModelStoreValidation
 
     // The fingerprint's whole job is catching pointers that resolve to the WRONG object, which no
     // count can see. Two properties have to hold at once, and they pull in opposite directions.
-    private static void CheckFingerprint(Checks checks)
+    private static void CheckFingerprint(ValidationUtil.Checks checks)
     {
         // Stable: the same input twice is the same hash. FNV rather than string.GetHashCode, which
         // is randomized per process and would make every fingerprint meaningless across runs.

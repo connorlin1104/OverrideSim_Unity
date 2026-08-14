@@ -555,7 +555,7 @@ public class PhysicsSmokeTest
 
     // Combined world-space collision footprint (non-trigger colliders), for centering the robot in
     // the field before validation. Mirrors RobotSpawner.TryGetWorldFootprint.
-    private static bool TryGetFootprint(GameObject robot, out Bounds bounds)
+    internal static bool TryGetFootprint(GameObject robot, out Bounds bounds)
     {
         bounds = new Bounds();
         bool has = false;
