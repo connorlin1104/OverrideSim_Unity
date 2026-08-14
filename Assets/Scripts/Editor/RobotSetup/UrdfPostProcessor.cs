@@ -659,11 +659,37 @@ public class UrdfPostProcessor : EditorWindow
         else UnityEngine.Object.DestroyImmediate(obj);
     }
 
+    // Menu wrapper for the four headless validators below. They were written for -executeMethod
+    // only: each one replaces the open scene outright and reports by throwing, which is correct for
+    // a batch run and wrong for a mouse click. Giving them menu items without this wrapper is what
+    // made picking one discard unsaved scene edits with no prompt and answer with a raw exception.
+    //
+    // Same split every validator already uses (ValidationUtil.RunInteractive vs RunBatch): a chance
+    // to save first, then a dialog. It lives here rather than in ValidationUtil because these four
+    // return void and report by throwing, where ValidationUtil's contract is a Func<string>.
+    private static void RunFromMenu(string title, Action run)
+    {
+        if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+        try
+        {
+            run();
+            EditorUtility.DisplayDialog(title, title + " PASSED. The console has the full summary.", "OK");
+        }
+        catch (Exception e)
+        {
+            EditorUtility.DisplayDialog(title, "FAILED\n\n" + e.Message, "OK");
+            Debug.LogException(e);
+        }
+    }
+
     // Headless end-to-end validation for -executeMethod: imports Assets/TestRobots/testbot.urdf,
     // post-processes it in a scratch scene, and drives it with edit-mode physics. Throws (nonzero
     // exit) on failure; throws "EDITMODE_SIM_UNSUPPORTED ..." specifically when the articulation
     // never moves at all so the orchestrator can pivot to a play-mode test.
     [MenuItem("Tools/RoboSim/Validate/Validate URDF Testbot", false, 63)]
+    private static void ValidateTestbotFromMenu() =>
+        RunFromMenu("Validate URDF Testbot", RunBatchValidateTestbot);
+
     public static void RunBatchValidateTestbot()
     {
         const string urdfAssetPath = "Assets/TestRobots/testbot.urdf";
@@ -755,6 +781,9 @@ public class UrdfPostProcessor : EditorWindow
     // wired, and actually move: the arm under its MotorActuator, the piston under its
     // PneumaticActuator toggle. Throws (nonzero exit) on failure.
     [MenuItem("Tools/RoboSim/Validate/Validate URDF Mechanisms", false, 64)]
+    private static void ValidateMechanismsFromMenu() =>
+        RunFromMenu("Validate URDF Mechanisms", RunBatchValidateMechanisms);
+
     public static void RunBatchValidateMechanisms()
     {
         const string urdfAssetPath = "Assets/TestRobots/testbot_mech.urdf";
@@ -904,6 +933,9 @@ public class UrdfPostProcessor : EditorWindow
     // asserts each fallback branch — density token overriding a zero/clamped mass, default density
     // for an unrecognized name, and a genuinely-authored mass being preserved. Throws on failure.
     [MenuItem("Tools/RoboSim/Validate/Validate URDF Mass From Geometry", false, 65)]
+    private static void ValidateMassFromGeometryFromMenu() =>
+        RunFromMenu("Validate URDF Mass From Geometry", RunBatchValidateMassFromGeometry);
+
     public static void RunBatchValidateMassFromGeometry()
     {
         const string urdfAssetPath = "Assets/TestRobots/testbot_massgeom.urdf";
@@ -949,6 +981,9 @@ public class UrdfPostProcessor : EditorWindow
     // via AddMechanismJoint.Apply and asserts it registers in the registry + catalog and sweeps
     // under its motor. Throws on failure.
     [MenuItem("Tools/RoboSim/Validate/Validate URDF Joint Tool", false, 66)]
+    private static void ValidateJointToolFromMenu() =>
+        RunFromMenu("Validate URDF Joint Tool", RunBatchValidateJointTool);
+
     public static void RunBatchValidateJointTool()
     {
         const string urdfAssetPath = "Assets/TestRobots/testbot_jointtool.urdf";

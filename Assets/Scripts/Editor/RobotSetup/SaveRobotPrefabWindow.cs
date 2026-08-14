@@ -231,7 +231,27 @@ public static class SaveRobotPrefab
     // Headless validation for -executeMethod: imports testbot, sets it up, saves + links the prefab,
     // and asserts the prefab exists (as a full robot) and the catalog entry points at it. Cleans up
     // the prefab, catalog entry, and importer artifacts it created.
+    // The menu half — see MeshRobotValidation.RunInteractive for why the batch method can't carry
+    // the menu item itself: it imports into a scratch scene and reports by throwing. The window's
+    // own Title const belongs to SaveRobotPrefabWindow above, not to this static class.
+    private const string ValidateTitle = "Validate Saved Robot Prefab";
     [MenuItem("Tools/RoboSim/Validate/Validate Saved Robot Prefab", false, 62)]
+    private static void RunInteractive()
+    {
+        if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+        try
+        {
+            RunBatchValidate();
+            EditorUtility.DisplayDialog(ValidateTitle, "Validate Saved Robot Prefab PASSED. The " +
+                                                       "console has the full summary.", "OK");
+        }
+        catch (System.Exception e)
+        {
+            EditorUtility.DisplayDialog(ValidateTitle, "FAILED\n\n" + e.Message, "OK");
+            Debug.LogException(e);
+        }
+    }
+
     public static void RunBatchValidate()
     {
         const string urdfAssetPath = "Assets/TestRobots/testbot.urdf";

@@ -16,8 +16,20 @@ using UnityEngine;
 //   Unity -batchmode -executeMethod MeshRobotValidation.RunBatchValidateMeshRobot -quit
 public static class MeshRobotValidation
 {
+    // The menu half. It must NOT just call the batch method: that one builds its robot by replacing
+    // the open scene outright and reports by throwing, so a mouse click would bin unsaved scene
+    // edits with no prompt and answer with a bare stack trace. Every other validator menu item
+    // offers the save first and reports in a dialog; this one now does too.
     [MenuItem("Tools/RoboSim/Validate/Validate Mesh Robot", false, 60)]
-    private static void RunInteractive() => RunBatchValidateMeshRobot();
+    private static void RunInteractive()
+    {
+        if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+        ValidationUtil.RunInteractive("Validate Mesh Robot", () =>
+        {
+            RunBatchValidateMeshRobot();
+            return "Mesh robot path PASSED. The console has the full summary.";
+        });
+    }
 
     public static void RunBatchValidateMeshRobot()
     {

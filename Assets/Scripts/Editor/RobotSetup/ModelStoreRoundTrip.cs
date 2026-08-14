@@ -27,7 +27,41 @@ public static class ModelStoreRoundTrip
     // Filed under Robot > Advanced rather than Validate, deliberately: this exercises the DELETE
     // path and must stay out of the suite (see the header). It is here so that "run it after a Unity
     // upgrade" is something you can actually find, rather than a class name you have to remember.
+    //
+    // The menu item CANNOT sit on Run(). Run() ends in EditorApplication.Exit, which is right for
+    // -executeMethod and catastrophic from a mouse click: it terminates the editor with no save
+    // prompt, so every unsaved scene and prefab edit is gone, and it skips finally blocks on the way
+    // out. This wrapper is also the only place the cleanup is guaranteed, which is what keeps a
+    // failed interactive run from stranding the copied RoundTripTest.fbx inside Assets/.
     [MenuItem("Tools/RoboSim/Robot/Advanced/Check Model Store Round-Trip", false, 11)]
+    private static void RunInteractive()
+    {
+        if (!EditorUtility.DisplayDialog("Model Store Round-Trip",
+                "This copies a real FBX to " + TestFbx + ", stows it, fetches it back, and then " +
+                "DELETES the copy — it exercises the delete path on purpose.\n\nRun it?",
+                "Run", "Cancel"))
+            return;
+
+        string root = Path.Combine(Path.GetTempPath(), "RoboSimStoreRoundTrip");
+        try
+        {
+            string log = Execute(root);
+            Debug.Log(log);
+            EditorUtility.DisplayDialog("Model Store Round-Trip", log, "OK");
+        }
+        catch (Exception e)
+        {
+            Debug.LogException(e);
+            EditorUtility.DisplayDialog("Model Store Round-Trip", "FAILED\n\n" + e.Message, "OK");
+        }
+        finally
+        {
+            Cleanup(root);
+        }
+    }
+
+    // Batch: -executeMethod ModelStoreRoundTrip.Run. Keeps its name and its Exit calls — the header
+    // documents that string, and renaming it would break the invocation with no compile error.
     public static void Run()
     {
         string root = Path.Combine(Path.GetTempPath(), "RoboSimStoreRoundTrip");
