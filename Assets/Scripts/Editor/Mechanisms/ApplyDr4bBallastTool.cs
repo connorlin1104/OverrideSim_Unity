@@ -45,7 +45,7 @@ public class ApplyDr4bBallastTool
         total = 0;
         var report = new StringBuilder();
 
-        foreach (string path in PrefabPaths())
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
             // An isolated, fully-instantiated copy, so the component references EnsureBallast walks
             // (translators, rotators, each follower's pivot) resolve normally and nothing touches
@@ -83,12 +83,5 @@ public class ApplyDr4bBallastTool
 
         if (total == 0) report.AppendLine($"  (no robot prefabs with a DR4B under {RoboSimPaths.RobotsFolder})");
         return report.ToString().TrimEnd();
-    }
-
-    private static IEnumerable<string> PrefabPaths()
-    {
-        if (!AssetDatabase.IsValidFolder(RoboSimPaths.RobotsFolder)) yield break;
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
-            yield return AssetDatabase.GUIDToAssetPath(guid);
     }
 }

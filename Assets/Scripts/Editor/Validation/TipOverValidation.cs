@@ -39,7 +39,6 @@ using UnityEngine.SceneManagement;
 //   Unity -batchmode -nographics -quit -projectPath . -executeMethod TipOverValidation.RunBatchValidate
 public static class TipOverValidation
 {
-    private const float StepSeconds = 0.01f;    // the project's fixed timestep
     private const int AccelSteps = 200;         // 2 s — comfortably past 95% of top speed
     private const int ReversalSteps = 60;       // 0.6 s — a 0.8 g stop from top speed takes ~0.18 s
 
@@ -255,7 +254,7 @@ public static class TipOverValidation
         var lines = new System.Text.StringBuilder();
         var failures = new List<string>();
         int checks = 0, tested = 0;
-        foreach (string path in RobotPaths())
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
             GameObject candidate = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (candidate == null || candidate.GetComponent<RobotMotorController>() == null) continue;
@@ -318,13 +317,6 @@ public static class TipOverValidation
         }
     }
 
-    private static IEnumerable<string> RobotPaths()
-    {
-        if (!AssetDatabase.IsValidFolder(RoboSimPaths.RobotsFolder)) yield break;
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
-            yield return AssetDatabase.GUIDToAssetPath(guid);
-    }
-
     // Hold a stick position and advance the simulation, running the controller's own per-step work
     // in between — the edit-mode stand-in for FixedUpdate, which never fires here.
     internal static void StepDriven(RobotMotorController motor, float throttle, float turn, int steps)
@@ -332,7 +324,7 @@ public static class TipOverValidation
         for (int i = 0; i < steps; i++)
         {
             motor.SetManualInput(throttle, turn);
-            motor.ApplyStep(StepSeconds);
+            motor.ApplyStep(ValidationUtil.StepSeconds);
             PhysicsSmokeTest.Step(1);
         }
     }
@@ -400,7 +392,7 @@ public static class TipOverValidation
             // exceeding 0.21 degrees of lean, so every amplitude-based check called it perfect.
             ValidationUtil.Assert(result.rollReversals <= MaxRollReversals,
                 $"'{prefab.name}' changed roll direction {result.rollReversals} times in " +
-                $"{TurnSteps * StepSeconds:0.0} s of turning with its lift raised (limit {MaxRollReversals}). " +
+                $"{TurnSteps * ValidationUtil.StepSeconds:0.0} s of turning with its lift raised (limit {MaxRollReversals}). " +
                 "That is chatter, not a lean, and it reads to a driver as the robot wobbling all over the " +
                 $"place. It travelled {result.rollTravel:0.0} degrees of roll to end up at " +
                 $"{result.finalTilt:0.0}. First thing to check is RobotSelfOverlapValidation: parts of the " +
@@ -622,10 +614,10 @@ public static class TipOverValidation
             StepDriven(motor, 1f, turnSign, 1);
             float roll = SignedRoll(root.transform);
             result.peakRoll = Mathf.Max(result.peakRoll, Mathf.Abs(roll));
-            float rate = (roll - lastRoll) / StepSeconds;
+            float rate = (roll - lastRoll) / ValidationUtil.StepSeconds;
             if (i > 0 && Mathf.Sign(rate) != Mathf.Sign(prevRate) && Mathf.Abs(rate) > RollRateNoiseFloor)
                 result.rollReversals++;
-            result.rollTravel += Mathf.Abs(rate) * StepSeconds;
+            result.rollTravel += Mathf.Abs(rate) * ValidationUtil.StepSeconds;
             prevRate = rate;
             lastRoll = roll;
 
@@ -635,10 +627,10 @@ public static class TipOverValidation
             {
                 if (liftLinks[k] == null || liftLinks[k].jointPosition.dofCount == 0) continue;
                 float pos = liftLinks[k].jointPosition[0];
-                float r = (pos - liftLast[k]) / StepSeconds;
+                float r = (pos - liftLast[k]) / ValidationUtil.StepSeconds;
                 if (i > 0 && Mathf.Sign(r) != Mathf.Sign(liftPrevRate[k])
                     && Mathf.Abs(r) > LiftRateNoiseFloor) result.liftReversals++;
-                result.liftTravel += Mathf.Abs(r) * StepSeconds;
+                result.liftTravel += Mathf.Abs(r) * ValidationUtil.StepSeconds;
                 liftPrevRate[k] = r;
                 liftLast[k] = pos;
             }
@@ -738,7 +730,7 @@ public static class TipOverValidation
     {
         var lines = new System.Text.StringBuilder();
         int checks = 0, tested = 0, witnesses = 0;
-        foreach (string path in RobotPaths())
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
             GameObject candidate = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (candidate == null || candidate.GetComponent<RobotMotorController>() == null) continue;
@@ -974,7 +966,7 @@ public static class TipOverValidation
     private static int ChatterMetricSeesChatter(out string report)
     {
         GameObject subject = null;
-        foreach (string path in RobotPaths())
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
             GameObject p = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (p != null && p.name == ChatterSubject) { subject = p; break; }
@@ -1078,9 +1070,8 @@ public static class TipOverValidation
             throw new System.InvalidOperationException(
                 $"{RoboSimPaths.RobotsFolder} is missing — robot prefabs moved?");
 
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
-            string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
 
@@ -1243,7 +1234,7 @@ public static class TipOverValidation
             // A robot that never got moving cannot say anything about how it stops, and would let
             // a broken drivetrain pass this as "decelerated fine".
             ValidationUtil.Assert(speedBefore > 1f,
-                $"'{prefab.name}' only reached {speedBefore:0.00} u/s in {AccelSteps * StepSeconds:0.0} s — " +
+                $"'{prefab.name}' only reached {speedBefore:0.00} u/s in {AccelSteps * ValidationUtil.StepSeconds:0.0} s — " +
                 "it never got moving, so the reversal measures nothing. Almost always a chassis part " +
                 "hanging below the drive wheels and carrying the robot's weight instead of them: run " +
                 "Validate Robot Physics, which names the part, or Mass & Balance, which reports its " +
@@ -1273,11 +1264,11 @@ public static class TipOverValidation
                 if (stopStep == 0 && Vector3.Dot(root.linearVelocity, heading) <= 0f) stopStep = i;
             }
             ValidationUtil.Assert(stopStep > 0,
-                $"'{prefab.name}' was still moving forwards {ReversalSteps * StepSeconds:0.0} s after the stick " +
+                $"'{prefab.name}' was still moving forwards {ReversalSteps * ValidationUtil.StepSeconds:0.0} s after the stick " +
                 "was slammed into reverse — the brake is doing essentially nothing.");
 
             float g = Mathf.Abs(Physics.gravity.y);
-            float decelG = speedBefore / (stopStep * StepSeconds) / g;
+            float decelG = speedBefore / (stopStep * ValidationUtil.StepSeconds) / g;
 
             // The discriminator. brakeG is what a released stick pulls and plowG is what a slam
             // should; landing below the midpoint means the reversal is being treated as a coast,
@@ -1294,7 +1285,7 @@ public static class TipOverValidation
             // threshold has to be. It is reported because the number is the whole point of the
             // change, and a run where it silently reads 0.0 on every robot is worth seeing.
             report = $"reversal on '{prefab.name}': {speedBefore:0.0} u/s to a stop in " +
-                     $"{stopStep * StepSeconds:0.00} s = {decelG:0.00} g " +
+                     $"{stopStep * ValidationUtil.StepSeconds:0.00} s = {decelG:0.00} g " +
                      $"(coast {tuning.brakeG:0.00} g, plow {tuning.plowG:0.00} g), " +
                      $"peak tilt {peakTilt:0.0}° from {tiltBefore:0.0}°, " +
                      $"travelled {Planar(root.transform.position - beforePos):0.0} u";

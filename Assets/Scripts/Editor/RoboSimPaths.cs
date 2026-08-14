@@ -1,3 +1,7 @@
+using System.Collections.Generic;
+using UnityEditor;
+using UnityEngine;
+
 // The asset paths the editor tools share, declared once. These were re-declared as private
 // consts in over a dozen files under four different names, which is exactly how a moved scene
 // breaks half the tools and not the other half.
@@ -11,6 +15,11 @@ internal static class RoboSimPaths
     // keeps the bug the expensive one was fixed for.
     public const string LiteScene = "Assets/Scenes/LiteScene.unity";
 
+    // The generated home screen — the scene the app boots into, and the fallback Reopen Last Scene
+    // On Launch falls back to. Was a private const in three separate files, which is the same
+    // hazard this file was written for.
+    public const string HomeScene = "Assets/Scenes/HomeScene.unity";
+
     // The RobotModelCatalog ScriptableObject listing every playable robot.
     public const string RobotModelCatalog = "Assets/Settings/RobotModelCatalog.asset";
 
@@ -19,4 +28,31 @@ internal static class RoboSimPaths
 
     // The match-load piece prefabs the loaders spawn.
     public const string MatchLoadPrefabsFolder = "Assets/Models/MatchLoadPreFabs";
+
+    // Every robot prefab, by asset path. The FindAssets call underneath was written out at eighteen
+    // sites across fourteen files — twice as identically-bodied private iterators under two
+    // different names (TipOverValidation.RobotPaths, ApplyDriveTuningTool.PrefabPaths).
+    //
+    // The IsValidFolder guard matters: FindAssets on a folder that does not exist logs a console
+    // error and returns nothing, so a renamed Robots folder used to read as "no robots found" —
+    // which several validators then reported as a pass over zero robots.
+    public static IEnumerable<string> RobotPrefabPaths()
+    {
+        if (!AssetDatabase.IsValidFolder(RobotsFolder)) yield break;
+        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RobotsFolder }))
+            yield return AssetDatabase.GUIDToAssetPath(guid);
+    }
+
+    // The same list, loaded. Callers still do their own filtering — GetComponent<RobotMotorController>()
+    // for "is this driveable", GetComponentInChildren<CascadeLift>() for "does it have a lift" — because
+    // what counts as a robot differs per tool and hiding that behind this would be the more confusing
+    // shortcut.
+    public static IEnumerable<GameObject> RobotPrefabs()
+    {
+        foreach (string path in RobotPrefabPaths())
+        {
+            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            if (prefab != null) yield return prefab;
+        }
+    }
 }

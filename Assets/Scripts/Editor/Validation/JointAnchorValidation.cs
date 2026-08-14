@@ -53,9 +53,8 @@ public static class JointAnchorValidation
         var offenders = new List<string>();
         int robots = 0, joints = 0;
 
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
-            string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (prefab == null || prefab.GetComponent<ArticulationBody>() == null) continue;
             robots++;

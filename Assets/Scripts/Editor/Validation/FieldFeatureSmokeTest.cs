@@ -20,7 +20,6 @@ using UnityEditor.SceneManagement;
 // Detents). Batch: -executeMethod FieldFeatureSmokeTest.RunBatch (throws -> nonzero exit).
 public static class FieldFeatureSmokeTest
 {
-    private const float StepSeconds = 0.01f;   // matches the project's fixed timestep
 
     private const float MaxSeatedAxisError = 0.15f;   // world units off the stack axis once seated
     private const float MinUprightDot = 0.95f;        // cos of allowed tilt once seated
@@ -95,11 +94,11 @@ public static class FieldFeatureSmokeTest
     {
         for (int i = 0; i < steps; i++)
         {
-            foreach (GoalStackMagnet m in magnets) if (m != null) m.StepMagnet(StepSeconds);
+            foreach (GoalStackMagnet m in magnets) if (m != null) m.StepMagnet(ValidationUtil.StepSeconds);
             if (_cupMagnets != null)
-                foreach (PieceStackMagnet c in _cupMagnets) if (c != null) c.StepMagnet(StepSeconds);
-            foreach (RollerSnap s in snaps) if (s != null) s.StepDetent(StepSeconds);
-            Physics.Simulate(StepSeconds);
+                foreach (PieceStackMagnet c in _cupMagnets) if (c != null) c.StepMagnet(ValidationUtil.StepSeconds);
+            foreach (RollerSnap s in snaps) if (s != null) s.StepDetent(ValidationUtil.StepSeconds);
+            Physics.Simulate(ValidationUtil.StepSeconds);
         }
     }
 
@@ -130,7 +129,7 @@ public static class FieldFeatureSmokeTest
             if (i % 20 == 0)
             {
                 Vector3 rel = cup.worldCenterOfMass - magnet.stackAnchor.position;
-                trace.Append($"[t={i * StepSeconds:0.0} h={Vector3.Dot(rel, up):0.00} " +
+                trace.Append($"[t={i * ValidationUtil.StepSeconds:0.0} h={Vector3.Dot(rel, up):0.00} " +
                              $"r={(rel - up * Vector3.Dot(rel, up)).magnitude:0.00} vy={Vector3.Dot(cup.linearVelocity, up):0.0} " +
                              $"stack={magnet.SeatedCount} claimed={GoalStackMagnet.IsClaimed(cup)}] ");
             }

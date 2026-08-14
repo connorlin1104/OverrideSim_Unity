@@ -29,7 +29,6 @@ public static class CascadeBuilderValidation
     private const float ChannelLength = 4f;
     private const float OverlapHoles = 2f;
     private const float RaiseSeconds = 0.5f;   // short, so a test run is a second of simulation
-    private const float Step = 0.02f;
 
     // travel = channel - overlap x pitch, the rule the window shows before you build.
     private static float ExpectedTravel =>
@@ -190,7 +189,7 @@ public static class CascadeBuilderValidation
         // was never re-derived jumps on the very first step — this is that check, and it's why the
         // reparent path re-derives anchors rather than trusting the transforms.
         lift.ApplyStep();
-        for (int i = 0; i < 10; i++) { Physics.Simulate(Step); lift.ApplyStep(); }
+        for (int i = 0; i < 10; i++) { Physics.Simulate(ValidationUtil.StepSeconds); lift.ApplyStep(); }
         float drift = Vector3.Distance(f.arm.transform.position, armRest);
         ValidationUtil.Assert(drift < 0.05f,
             $"the carried arm moved {drift:F2} units just by being simulated — its joint is still " +
@@ -377,7 +376,7 @@ public static class CascadeBuilderValidation
         Physics.simulationMode = SimulationMode.Script;
         Physics.gravity = Vector3.zero;
         Vector3 armAt = f.arm.transform.position;
-        for (int i = 0; i < 10; i++) Physics.Simulate(Step);
+        for (int i = 0; i < 10; i++) Physics.Simulate(ValidationUtil.StepSeconds);
         float drift = Vector3.Distance(f.arm.transform.position, armAt);
         ValidationUtil.Assert(drift < 0.05f,
             $"the arm moved {drift:F2} units after Delete — putting it back on the chassis has to " +
@@ -441,7 +440,7 @@ public static class CascadeBuilderValidation
         motor.SetInput(input);
         for (int i = 0; i < steps; i++)
         {
-            Physics.Simulate(Step);
+            Physics.Simulate(ValidationUtil.StepSeconds);
             lift.ApplyStep();   // stands in for FixedUpdate, which edit-mode simulation never calls
         }
     }
@@ -461,7 +460,7 @@ public static class CascadeBuilderValidation
         driver.xDrive = d;
         driver.SetDriveTarget(ArticulationDriveAxis.X, lift.sweepDeg * progress);
 
-        for (int i = 0; i < 200; i++) { Physics.Simulate(Step); lift.ApplyStep(); }
+        for (int i = 0; i < 200; i++) { Physics.Simulate(ValidationUtil.StepSeconds); lift.ApplyStep(); }
 
         var extensions = new float[rig.bars.Count];
         for (int i = 0; i < rig.bars.Count; i++)

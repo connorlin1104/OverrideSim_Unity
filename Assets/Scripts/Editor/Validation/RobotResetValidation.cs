@@ -26,7 +26,6 @@ public static class RobotResetValidation
 {
     private const string MenuTitle = "Validate Fall Reset";
 
-    private const float StepSeconds = 0.01f;   // matches the project's fixed timestep
     private const int SettleSteps = 200;       // 2 s
 
     // Field interior point (above the floor, clear of the walls) the robot is parked at just long
@@ -243,7 +242,7 @@ public static class RobotResetValidation
 
     private static void Step(int steps)
     {
-        for (int i = 0; i < steps; i++) Physics.Simulate(StepSeconds);
+        for (int i = 0; i < steps; i++) Physics.Simulate(ValidationUtil.StepSeconds);
     }
 
     private static float MaxJointSpeed(GameObject robot)

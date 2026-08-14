@@ -15,7 +15,6 @@ using UnityEngine.SceneManagement;
 // Prints, per robot, what is penetrating at the raised pose that was clear at rest.
 public static class RaisedOverlapProbe
 {
-    private const float StepSeconds = 0.01f;
     private const int SettleSteps = 200;
     private const int LiftRampSteps = 200;
     private const float FloorSize = 400f;
@@ -40,9 +39,8 @@ public static class RaisedOverlapProbe
         var report = new System.Text.StringBuilder();
         report.AppendLine("overlaps present at the RAISED pose that the rest-pose scan never saw:");
 
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
-            string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
 
@@ -100,8 +98,8 @@ public static class RaisedOverlapProbe
         for (int i = 0; i < steps; i++)
         {
             motor.SetManualInput(0f, 0f);
-            motor.ApplyStep(StepSeconds);
-            Physics.Simulate(StepSeconds);
+            motor.ApplyStep(ValidationUtil.StepSeconds);
+            Physics.Simulate(ValidationUtil.StepSeconds);
         }
     }
 }

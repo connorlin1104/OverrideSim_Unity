@@ -29,7 +29,6 @@ using UnityEngine;
 // here that cannot be dismissed as a badly-chosen threshold.
 public static class LiftMotionValidation
 {
-    private const float StepSeconds = 0.01f;
     private const int SettleSteps = 200;
     private const int MaxTravelSteps = 600;      // 6 s — three times the default 2 s raise
     private const float DoneProgress = 0.99f;
@@ -67,9 +66,8 @@ public static class LiftMotionValidation
         var failures = new List<string>();
         int checks = 0, tested = 0;
 
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
-            string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
             if (prefab.GetComponentInChildren<CascadeLift>(true) == null) continue;
@@ -140,11 +138,11 @@ public static class LiftMotionValidation
             // a lift that stops moving reads as perfectly steady and would PASS the ratio below.
             ValidationUtil.Assert(up.reachedEnd,
                 $"'{prefab.name}' never finished raising: progress reached {up.endProgress:0.00} after " +
-                $"{up.steps * StepSeconds:0.0} s of holding the up button. Nothing below this means " +
+                $"{up.steps * ValidationUtil.StepSeconds:0.0} s of holding the up button. Nothing below this means " +
                 "anything — check the driver's sweep and CascadeLift.raiseSeconds.");
             ValidationUtil.Assert(down.reachedEnd,
                 $"'{prefab.name}' never came back down: progress stopped at {down.endProgress:0.00} " +
-                $"after {down.steps * StepSeconds:0.0} s of holding the down button. The lift is " +
+                $"after {down.steps * ValidationUtil.StepSeconds:0.0} s of holding the down button. The lift is " +
                 "stuck out, which a driver reads as the mechanism jamming.");
 
             // THE COMPARISON. The ascent is the control.
@@ -172,9 +170,9 @@ public static class LiftMotionValidation
 
             lines.AppendLine(
                 $"  '{prefab.name}': raising peaks {up.peakAngularDegPerSec:0.0} deg/s " +
-                $"({up.reversals} direction changes, {up.steps * StepSeconds:0.0} s), " +
+                $"({up.reversals} direction changes, {up.steps * ValidationUtil.StepSeconds:0.0} s), " +
                 $"lowering peaks {down.peakAngularDegPerSec:0.0} deg/s " +
-                $"({down.reversals} direction changes, {down.steps * StepSeconds:0.0} s) " +
+                $"({down.reversals} direction changes, {down.steps * ValidationUtil.StepSeconds:0.0} s) " +
                 $"= {ratio:0.0}x; chassis drifted at most " +
                 $"{Mathf.Max(up.peakLinearUnitsPerSec, down.peakLinearUnitsPerSec):0.00} u/s");
             return 4;
@@ -228,7 +226,7 @@ public static class LiftMotionValidation
         for (int i = 0; i < steps; i++)
         {
             motor.SetManualInput(0f, 0f);
-            motor.ApplyStep(StepSeconds);
+            motor.ApplyStep(ValidationUtil.StepSeconds);
             lift.ApplyStep();
             PhysicsSmokeTest.Step(1);
         }

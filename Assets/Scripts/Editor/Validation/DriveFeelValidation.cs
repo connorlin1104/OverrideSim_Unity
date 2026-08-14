@@ -658,9 +658,8 @@ public static class DriveFeelValidation
         if (!AssetDatabase.IsValidFolder(RoboSimPaths.RobotsFolder))
             throw new InvalidOperationException($"{RoboSimPaths.RobotsFolder} is missing — robot prefabs moved?");
 
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
-            string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             RobotMotorController motor = prefab != null ? prefab.GetComponent<RobotMotorController>() : null;
             if (motor == null) continue; // not a drivable robot

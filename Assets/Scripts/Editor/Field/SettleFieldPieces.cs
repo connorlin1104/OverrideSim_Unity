@@ -34,7 +34,6 @@ public static class SettleFieldPieces
     // Long enough for a genuine settle, short enough that a field with something falling forever
     // reports that instead of hanging. 100 Hz, so 1200 steps is 12 s.
     private const int MaxSteps = 1200;
-    private const float Step = 0.01f;
 
     // How still it has to be, for how long, before we believe it. A stack can pause mid-collapse,
     // and this window is deliberately longer than the validator's 2 s so a pause cannot be mistaken
@@ -97,7 +96,7 @@ public static class SettleFieldPieces
             int still = 0;
             for (int s = 0; s < MaxSteps; s++)
             {
-                Physics.Simulate(Step);
+                Physics.Simulate(ValidationUtil.StepSeconds);
 
                 float fastest = 0f;
                 foreach (Rigidbody rb in bodies)
@@ -144,10 +143,10 @@ public static class SettleFieldPieces
         EditorSceneManager.MarkSceneDirty(bodies[0].gameObject.scene);
 
         string when = settledAt < 0
-            ? $"NOTHING SETTLED within {MaxSteps * Step:0.0} s — something in this field is still " +
+            ? $"NOTHING SETTLED within {MaxSteps * ValidationUtil.StepSeconds:0.0} s — something in this field is still " +
               "moving, and baking that pose would only freeze a frame of it. Look at the fastest " +
               "piece before trusting this scene"
-            : $"came to rest after {settledAt * Step:0.00} s of simulation";
+            : $"came to rest after {settledAt * ValidationUtil.StepSeconds:0.00} s of simulation";
 
         var lines = new List<string>
         {

@@ -29,7 +29,6 @@ public class PhysicsSmokeTest
 {
     private const string MenuTitle = "Validate Rigged Robot";
 
-    private const float StepSeconds = 0.01f;   // matches the project's fixed timestep
     private const int StepsPerPhase = 200;     // 2 s of simulation per phase
     private const float DriveDegPerSec = 2160f; // 360 RPM in the degrees/s revolute drives use
 
@@ -171,7 +170,7 @@ public class PhysicsSmokeTest
         // which would trip its "fell through / exploded" guard.
         SimulationMode prev = Physics.simulationMode;
         Physics.simulationMode = SimulationMode.Script;
-        try { for (int i = 0; i < StepsPerPhase; i++) Physics.Simulate(StepSeconds); }
+        try { for (int i = 0; i < StepsPerPhase; i++) Physics.Simulate(ValidationUtil.StepSeconds); }
         finally { Physics.simulationMode = prev; }
 
         if (root != null)
@@ -504,7 +503,7 @@ public class PhysicsSmokeTest
 
     internal static void Step(int steps)
     {
-        for (int i = 0; i < steps; i++) Physics.Simulate(StepSeconds);
+        for (int i = 0; i < steps; i++) Physics.Simulate(ValidationUtil.StepSeconds);
     }
 
     // The robot root already present in the active scene, found via RobotMotorController (the reliable

@@ -33,7 +33,6 @@ using UnityEngine.SceneManagement;
 //         -executeMethod GoalEntrapmentValidation.RunBatchValidate
 public static class GoalEntrapmentValidation
 {
-    private const float StepSeconds = 0.01f;
     private const int ApproachSteps = 250;      // 2.5 s of full throttle at the goal
     private const int SettleSteps = 100;        // ...then let the contact resolve
 
@@ -115,7 +114,7 @@ public static class GoalEntrapmentValidation
 
         try
         {
-            foreach (string robotPath in RobotPaths())
+            foreach (string robotPath in RoboSimPaths.RobotPrefabPaths())
             {
                 GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(robotPath);
                 if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
@@ -457,7 +456,7 @@ public static class GoalEntrapmentValidation
                 // 654V_v2, which has no pneumatic at all and never leaves the wall.
                 Vector3 toCentre = ringCentre - root.transform.position; toCentre.y = 0f;
                 DrivetrainTuning.TryMeasureCompositeCom(bodies, out Vector3 comNow);
-                Vector3 comVelocity = (comNow - comPrev) / StepSeconds;
+                Vector3 comVelocity = (comNow - comPrev) / ValidationUtil.StepSeconds;
                 comPrev = comNow;
                 float closing = Vector3.Dot(comVelocity, toCentre.normalized);
                 result.impactSpeed = Mathf.Max(result.impactSpeed, closing);
@@ -615,13 +614,6 @@ public static class GoalEntrapmentValidation
             bestDistance = d; best = ring.Value; goalName = ring.Key; centre = c;
         }
         return best;
-    }
-
-    private static IEnumerable<string> RobotPaths()
-    {
-        if (!AssetDatabase.IsValidFolder(RoboSimPaths.RobotsFolder)) yield break;
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
-            yield return AssetDatabase.GUIDToAssetPath(guid);
     }
 
     private static float Planar(Vector3 v) => new Vector2(v.x, v.z).magnitude;

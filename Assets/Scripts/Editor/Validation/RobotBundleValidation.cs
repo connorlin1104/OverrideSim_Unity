@@ -470,9 +470,8 @@ public static class RobotBundleValidation
     {
         var layouts = new SortedDictionary<string, string>();
 
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (GameObject prefab in RoboSimPaths.RobotPrefabs())
         {
-            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(guid));
             if (prefab == null) continue;
 
             foreach (MonoBehaviour behaviour in prefab.GetComponentsInChildren<MonoBehaviour>(true))

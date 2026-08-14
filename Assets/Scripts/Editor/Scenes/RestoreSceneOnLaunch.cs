@@ -96,7 +96,7 @@ public static class RestoreSceneOnLaunch
 
         string remembered = EditorPrefs.GetString(LastScenePrefKey, string.Empty);
         string target = File.Exists(remembered) ? remembered
-            : File.Exists(HomeScenePath) ? HomeScenePath
+            : File.Exists(RoboSimPaths.HomeScene) ? RoboSimPaths.HomeScene
             : null;
         if (target == null) return;
 
@@ -106,5 +106,4 @@ public static class RestoreSceneOnLaunch
                   $"if a build tool looked necessary here before, it wasn't. Turn this off under {MenuPath}.");
     }
 
-    private const string HomeScenePath = "Assets/Scenes/HomeScene.unity";
 }

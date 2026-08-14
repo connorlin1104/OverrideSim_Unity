@@ -22,7 +22,6 @@ public static class LoadTransferValidation
 {
     // Enough steps at 100 Hz for a 12 rad/s spring to be done ringing (about 2 s).
     private const int SettleSteps = 200;
-    private const float StepSeconds = 0.01f;
 
     // 2 s each way, matching TipOverValidation's accel phase: comfortably past 95% of top speed on
     // the fastest robot here, and long enough for the slowest to finish stopping and start back.
@@ -80,7 +79,7 @@ public static class LoadTransferValidation
             {
                 float deg = 0f, rate = 0f;
                 for (int i = 0; i < SettleSteps; i++)
-                    RobotMotorController.LeanStep(ref deg, ref rate, target, 12f, zeta, 8f, StepSeconds);
+                    RobotMotorController.LeanStep(ref deg, ref rate, target, 12f, zeta, 8f, ValidationUtil.StepSeconds);
 
                 ValidationUtil.Assert(Mathf.Abs(deg - target) < SettledDeg,
                     $"a lean spring at zeta {zeta} settled on {deg:0.000} deg instead of the " +
@@ -123,7 +122,7 @@ public static class LoadTransferValidation
         float deg = 0f, rate = 0f, peak = 0f;
         for (int i = 0; i < SettleSteps; i++)
         {
-            RobotMotorController.LeanStep(ref deg, ref rate, target, 12f, zeta, 8f, StepSeconds);
+            RobotMotorController.LeanStep(ref deg, ref rate, target, 12f, zeta, 8f, ValidationUtil.StepSeconds);
             peak = Mathf.Max(peak, deg);
         }
         return peak;
@@ -252,9 +251,8 @@ public static class LoadTransferValidation
         var failures = new List<string>();
         int tested = 0;
 
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (GameObject prefab in RoboSimPaths.RobotPrefabs())
         {
-            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(guid));
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
             tested++;
 
@@ -341,9 +339,8 @@ public static class LoadTransferValidation
         var failures = new List<string>();
         int tested = 0, checks = 0;
 
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (GameObject prefab in RoboSimPaths.RobotPrefabs())
         {
-            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(guid));
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
 
             List<Vector3> leaning = SlamAReversal(prefab, 2.5f, out Slam slam);
@@ -506,7 +503,7 @@ public static class LoadTransferValidation
             // rather than calling it because the measurements below have to land between the
             // controller's step and the physics step, which that helper does not expose.
             motor.SetManualInput(throttle, 0f);
-            motor.ApplyStep(StepSeconds);
+            motor.ApplyStep(ValidationUtil.StepSeconds);
             PhysicsSmokeTest.Step(1);
             track.Add(root.transform.position);
             slam.peakLeanDeg = Mathf.Max(slam.peakLeanDeg, Mathf.Abs(motor.LeanDegrees));
@@ -514,11 +511,11 @@ public static class LoadTransferValidation
             float now = Forward(root, motor);
             if (braking)
             {
-                slam.peakDecel = Mathf.Max(slam.peakDecel, Mathf.Abs(now - last) / StepSeconds);
+                slam.peakDecel = Mathf.Max(slam.peakDecel, Mathf.Abs(now - last) / ValidationUtil.StepSeconds);
                 // The stop is over the moment the robot stops travelling the way it came in. Past
                 // that it is accelerating the other way, which is a different event.
                 if (stillSlowing && Mathf.Sign(now) == Mathf.Sign(slam.topSpeed) && Mathf.Abs(now) > 0.05f)
-                    slam.decelSeconds += StepSeconds;
+                    slam.decelSeconds += ValidationUtil.StepSeconds;
                 else stillSlowing = false;
             }
             last = now;

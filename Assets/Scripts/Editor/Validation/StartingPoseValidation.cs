@@ -25,7 +25,6 @@ using UnityEngine;
 public static class StartingPoseValidation
 {
     private const string TestRobotId = "startingposetestbot";
-    private const float Step = 0.01f;
     private const float Lower = 0f;
     private const float Upper = 90f;
 
@@ -360,6 +359,6 @@ public static class StartingPoseValidation
 
     private static void Simulate(int steps)
     {
-        for (int i = 0; i < steps; i++) Physics.Simulate(Step);
+        for (int i = 0; i < steps; i++) Physics.Simulate(ValidationUtil.StepSeconds);
     }
 }

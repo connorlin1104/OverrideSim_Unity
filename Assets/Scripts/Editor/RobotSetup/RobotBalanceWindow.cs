@@ -239,9 +239,8 @@ public class RobotBalanceWindow : EditorWindow
     {
         var log = new StringBuilder("Robot Mass & Balance\n");
         int found = 0;
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
-            string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
             log.AppendLine(Describe(Measure(prefab, path)));
@@ -263,9 +262,8 @@ public class RobotBalanceWindow : EditorWindow
     {
         var log = new StringBuilder();
         int changed = 0, total = 0;
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
-            string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
             total++;
@@ -307,9 +305,8 @@ public class RobotBalanceWindow : EditorWindow
     {
         reports.Clear();
         status = null;
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
-            string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
             reports.Add(Measure(prefab, path));

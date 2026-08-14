@@ -47,7 +47,7 @@ public class ApplyDriveTuningTool
         total = 0;
         var report = new StringBuilder();
 
-        foreach (string path in PrefabPaths())
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
             // LoadPrefabContents gives an isolated, fully-instantiated copy: component references
             // inside it resolve normally (which DrivetrainTuning's measuring needs), and nothing
@@ -95,13 +95,6 @@ public class ApplyDriveTuningTool
 
         if (total == 0) report.AppendLine($"  (no robot prefabs found under {RoboSimPaths.RobotsFolder})");
         return report.ToString().TrimEnd();
-    }
-
-    private static IEnumerable<string> PrefabPaths()
-    {
-        if (!AssetDatabase.IsValidFolder(RoboSimPaths.RobotsFolder)) yield break;
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
-            yield return AssetDatabase.GUIDToAssetPath(guid);
     }
 
     private static bool TryFirstWheel(RobotMotorController motor, out ArticulationBody wheel)

@@ -72,6 +72,17 @@ internal static class ValidationUtil
         finally { Physics.simulationMode = SimulationMode.FixedUpdate; }
     }
 
+    // The project's fixed timestep, and the size of every hand-driven Physics.Simulate step in the
+    // suite. Declared once here because it was previously a private const in fifteen files under two
+    // names (StepSeconds and Step) — and one of those copies had drifted to 0.02f, so the cascade
+    // lift was being measured at half the rate the game actually runs at. A number that appears in
+    // fifteen places is a number that is eventually wrong in one of them.
+    //
+    // PhysicsEngineValidation asserts this still equals Time.fixedDeltaTime, so changing the project
+    // setting without changing this fails loudly instead of quietly making every timing in the suite
+    // describe a game nobody plays.
+    public const float StepSeconds = 0.01f;
+
     public static void Assert(bool condition, string why)
     {
         if (!condition) throw new InvalidOperationException(why);

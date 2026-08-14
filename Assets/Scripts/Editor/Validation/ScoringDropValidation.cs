@@ -22,7 +22,6 @@ using UnityEngine;
 //   Unity -batchmode -quit -projectPath . -executeMethod ScoringDropValidation.RunBatchValidate
 public static class ScoringDropValidation
 {
-    private const float StepSeconds = 0.01f;   // the project's fixed timestep
 
     [MenuItem("Tools/RoboSim/Validation/Validate Scoring Drop", false, 18)]
     private static void RunInteractive()
@@ -88,12 +87,12 @@ public static class ScoringDropValidation
 
         // One step short of the window: still ghosted. Without this, a window of any length — including
         // one that expired immediately — would satisfy the check below.
-        StepFor(outtake, outtake.dropGhostSeconds - StepSeconds * 2f);
+        StepFor(outtake, outtake.dropGhostSeconds - ValidationUtil.StepSeconds * 2f);
         ValidationUtil.Assert(!AnyColliderLive(piece),
             "it must still be ghosted just BEFORE the window runs out, or 'wait for the window' is not " +
             "what turns it solid and dropGhostSeconds means nothing");
 
-        StepFor(outtake, StepSeconds * 3f);
+        StepFor(outtake, ValidationUtil.StepSeconds * 3f);
         ValidationUtil.Assert(AllCollidersLive(piece),
             "...and solid once the window has run out. A piece that stayed ghosted would fall straight " +
             "through the goal it was dropped onto");
@@ -201,8 +200,8 @@ public static class ScoringDropValidation
         Quaternion seatedRotation = Quaternion.identity;
         for (int step = 1; step <= MaxSteps; step++)
         {
-            magnet.StepMagnet(StepSeconds);
-            Physics.Simulate(StepSeconds);
+            magnet.StepMagnet(ValidationUtil.StepSeconds);
+            Physics.Simulate(ValidationUtil.StepSeconds);
 
             if (seatedAt == 0 && (piece.worldCenterOfMass - slot).magnitude < 0.15f)
             {
@@ -285,7 +284,7 @@ public static class ScoringDropValidation
 
     private static void StepFor(IntakePull intake, float seconds)
     {
-        for (float t = 0f; t < seconds; t += StepSeconds) intake.StepEjected(StepSeconds);
+        for (float t = 0f; t < seconds; t += ValidationUtil.StepSeconds) intake.StepEjected(ValidationUtil.StepSeconds);
     }
 
     private static bool AnyColliderLive(Rigidbody rb)

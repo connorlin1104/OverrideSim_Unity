@@ -33,7 +33,6 @@ public static class FieldAtRestValidation
 
     public static void RunBatchValidate() => ValidationUtil.RunBatch("Field At Rest", Run);
 
-    private const float Step = 0.01f;
     private const int Steps = 200;             // 2.0 s — the window the symptom lives in
 
     // A piece may creep this far as the solver polishes its contacts. Chosen from the measured
@@ -131,7 +130,7 @@ public static class FieldAtRestValidation
             try
             {
                 sw.Start();
-                for (int i = 0; i < Steps; i++) Physics.Simulate(Step);
+                for (int i = 0; i < Steps; i++) Physics.Simulate(ValidationUtil.StepSeconds);
                 sw.Stop();
             }
             finally { Physics.simulationMode = previous; }
@@ -148,7 +147,7 @@ public static class FieldAtRestValidation
 
             ValidationUtil.Assert(drifted.Count == 0,
                 $"{drifted.Count} of {bodies.Count} piece(s) in {scene} MOVE in the first " +
-                $"{Steps * Step:0.0} s, worst {worstDrift * 100f:0.0} mm. The match is being played " +
+                $"{Steps * ValidationUtil.StepSeconds:0.0} s, worst {worstDrift * 100f:0.0} mm. The match is being played " +
                 "on a field that is still falling into place: every one of those bodies stays awake " +
                 "and the physics step costs many times what it does once they sleep, which the " +
                 "driver feels as the ground being rough rather than as pieces moving. Run Tools > " +
@@ -157,7 +156,7 @@ public static class FieldAtRestValidation
                 (drifted.Count > 10 ? $"\n    ...and {drifted.Count - 10} more" : ""));
 
             report.Add($"  {scene}: {bodies.Count} piece(s), none starting inside anything, " +
-                       $"worst drift {worstDrift * 100f:0.00} mm over {Steps * Step:0.0} s " +
+                       $"worst drift {worstDrift * 100f:0.00} mm over {Steps * ValidationUtil.StepSeconds:0.0} s " +
                        $"({sw.Elapsed.TotalMilliseconds / Steps:0.00} ms/step).");
         }
 

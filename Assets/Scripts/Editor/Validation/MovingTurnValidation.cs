@@ -30,7 +30,6 @@ using UnityEngine;
 // answer to.
 public static class MovingTurnValidation
 {
-    private const float StepSeconds = 0.01f;
     private const int SettleSteps = 60;
     private const int AccelSteps = 150;      // 1.5 s: enough to reach terminal speed in a straight line
     private const int TurnSteps = 200;       // 2 s of held turn, which is where the metrics come from
@@ -69,9 +68,8 @@ public static class MovingTurnValidation
         var failures = new List<string>();
         int tested = 0, checks = 0;
 
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
-            string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
             tested++;
@@ -205,7 +203,7 @@ public static class MovingTurnValidation
                     // Direction changes in the wheel's own spin. A tyre tracking its command turns
                     // steadily; one snatching at the floor keeps swapping direction.
                     float spin = Spin(wheels[w]);
-                    float rate = (spin - lastSpin[w]) / StepSeconds;
+                    float rate = (spin - lastSpin[w]) / ValidationUtil.StepSeconds;
                     if (i > 0 && Mathf.Sign(spin) != Mathf.Sign(lastSpin[w])
                         && Mathf.Abs(rate) > WheelRateNoiseFloor) result.wheelReversals++;
                     lastSpin[w] = spin;

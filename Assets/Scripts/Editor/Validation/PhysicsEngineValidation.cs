@@ -25,7 +25,6 @@ using UnityEngine.SceneManagement;
 // session means anything.
 public static class PhysicsEngineValidation
 {
-    private const float StepSeconds = 0.01f;
     private const int Steps = 50;          // 0.5 s
     private const float DropFrom = 100f;   // high enough that nothing can be resting on anything
     private const float MinFall = 1f;      // at -98.1 u/s^2 a real fall is ~12 u; 1 u is unmissable
@@ -52,7 +51,7 @@ public static class PhysicsEngineValidation
             Physics.SyncTransforms();
 
             Physics.simulationMode = SimulationMode.Script;
-            for (int i = 0; i < Steps; i++) Physics.Simulate(StepSeconds);
+            for (int i = 0; i < Steps; i++) Physics.Simulate(ValidationUtil.StepSeconds);
 
             float fell = DropFrom - probe.transform.position.y;
 
@@ -64,9 +63,20 @@ public static class PhysicsEngineValidation
                 "ProjectSettings/DynamicsManager.asset m_Gravity (this project runs at -98.1, " +
                 "because 1 unit = 0.1 m).");
 
+            // Every hand-driven Physics.Simulate in the suite steps by ValidationUtil.StepSeconds, so
+            // that number has to BE the project's fixed timestep — otherwise every duration, speed and
+            // settle count measured here describes a game running at a rate nobody plays at. This was
+            // worth adding because it had already happened: one validator's private copy of the
+            // constant said 0.02f, and it measured a cascade lift at half the real rate for as long
+            // as nothing compared the two.
+            ValidationUtil.Near(ValidationUtil.StepSeconds, Time.fixedDeltaTime, 1e-4f,
+                $"ValidationUtil.StepSeconds is {ValidationUtil.StepSeconds} but the project's fixed " +
+                $"timestep is {Time.fixedDeltaTime} (ProjectSettings/TimeManager.asset). The whole " +
+                "suite simulates at the wrong rate until these agree");
+
             ValidationUtil.Assert(fell >= MinFall,
                 $"a sphere dropped in mid-air with gravity fell {fell:0.00} units in " +
-                $"{Steps * StepSeconds:0.0} s — the physics engine is not simulating, and its " +
+                $"{Steps * ValidationUtil.StepSeconds:0.0} s — the physics engine is not simulating, and its " +
                 $"Rigidbody reports position {body.position} against a transform at " +
                 $"{probe.transform.position}. A body at (0,0,0) that was never placed there means " +
                 "PhysX created no body at all. Check ProjectSettings/DynamicsManager.asset: " +
@@ -76,7 +86,7 @@ public static class PhysicsEngineValidation
                 "blame the robot.");
 
             return $"Physics Engine Is Running: PASSED (2 checks). A sphere fell {fell:0.0} units in " +
-                   $"{Steps * StepSeconds:0.0} s under gravity {Physics.gravity.y:0.0}.";
+                   $"{Steps * ValidationUtil.StepSeconds:0.0} s under gravity {Physics.gravity.y:0.0}.";
         }
         finally { Physics.simulationMode = previousMode; }
     }

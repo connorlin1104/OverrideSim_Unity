@@ -17,7 +17,6 @@ using UnityEngine;
 // inner wheel locking, and whether such a point exists at all. Delete this once that is answered.
 public static class TurnAuthoritySweepProbe
 {
-    private const float StepSeconds = 0.01f;
     private const int SettleSteps = 60;
     private const int AccelSteps = 150;
     private const int TurnSteps = 200;
@@ -34,9 +33,8 @@ public static class TurnAuthoritySweepProbe
     {
         var lines = new System.Text.StringBuilder();
 
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (GameObject prefab in RoboSimPaths.RobotPrefabs())
         {
-            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(guid));
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
 
             lines.AppendLine($"'{prefab.name}':");
@@ -106,7 +104,7 @@ public static class TurnAuthoritySweepProbe
                 {
                     if (wheels[w] == null) continue;
                     float spin = Spin(wheels[w]);
-                    float rate = (spin - lastSpin[w]) / StepSeconds;
+                    float rate = (spin - lastSpin[w]) / ValidationUtil.StepSeconds;
                     if (i > 0 && Mathf.Sign(spin) != Mathf.Sign(lastSpin[w])
                         && Mathf.Abs(rate) > WheelRateNoiseFloor) result.wheelReversals++;
                     lastSpin[w] = spin;

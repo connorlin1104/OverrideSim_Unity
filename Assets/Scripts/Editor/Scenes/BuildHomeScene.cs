@@ -33,7 +33,6 @@ using Scene = UnityEngine.SceneManagement.Scene;
 // except the HomeScene itself which is rebuilt). Batch: -executeMethod BuildHomeScene.RunBatch.
 public class BuildHomeScene
 {
-    private const string HomeScenePath = "Assets/Scenes/HomeScene.unity";
     private const string UploadConfigPath = "Assets/Settings/RobotUploadConfig.asset";
     private const string TmpSettingsPath = "Assets/TextMesh Pro/Resources/TMP Settings.asset";
 
@@ -105,7 +104,7 @@ public class BuildHomeScene
         {
             Scene homeScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             BuildHomeSceneContents(catalog);
-            EditorSceneManager.SaveScene(homeScene, HomeScenePath);
+            EditorSceneManager.SaveScene(homeScene, RoboSimPaths.HomeScene);
 
             // Cross-asset references can fail to persist when the referenced asset was created in
             // the same batch as the scene save (the shipped scene once carried catalog: {fileID: 0}
@@ -120,12 +119,12 @@ public class BuildHomeScene
         //    scenes added later).
         var buildScenes = new List<EditorBuildSettingsScene>
         {
-            new EditorBuildSettingsScene(HomeScenePath, true),
+            new EditorBuildSettingsScene(RoboSimPaths.HomeScene, true),
             new EditorBuildSettingsScene(RoboSimPaths.MainScene, true),
         };
         foreach (EditorBuildSettingsScene existing in EditorBuildSettings.scenes)
         {
-            if (existing.path != HomeScenePath && existing.path != RoboSimPaths.MainScene)
+            if (existing.path != RoboSimPaths.HomeScene && existing.path != RoboSimPaths.MainScene)
                 buildScenes.Add(existing);
         }
         EditorBuildSettings.scenes = buildScenes.ToArray();
@@ -164,8 +163,8 @@ public class BuildHomeScene
     // button someone asked to delete keeps shipping — now wired to a handler that no longer exists.
     private static bool HomeSceneIsValid()
     {
-        if (!File.Exists(HomeScenePath)) return false;
-        Scene scene = EditorSceneManager.OpenScene(HomeScenePath, OpenSceneMode.Single);
+        if (!File.Exists(RoboSimPaths.HomeScene)) return false;
+        Scene scene = EditorSceneManager.OpenScene(RoboSimPaths.HomeScene, OpenSceneMode.Single);
         HomeScreenController controller = null;
         ControllerConfigScreen configScreen = null;
         foreach (GameObject rootGo in scene.GetRootGameObjects())
@@ -262,7 +261,7 @@ public class BuildHomeScene
     // reference was lost; throws in batch mode so -executeMethod exits nonzero.
     private static bool VerifySavedWiring(bool interactive)
     {
-        Scene reloaded = EditorSceneManager.OpenScene(HomeScenePath, OpenSceneMode.Single);
+        Scene reloaded = EditorSceneManager.OpenScene(RoboSimPaths.HomeScene, OpenSceneMode.Single);
         HomeScreenController saved = null;
         foreach (GameObject rootGo in reloaded.GetRootGameObjects())
         {

@@ -38,9 +38,8 @@ public static class RepairJointAnchorsTool
         var repaired = new List<string>();
         int robots = 0, joints = 0;
 
-        foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { RoboSimPaths.RobotsFolder }))
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
-            string path = AssetDatabase.GUIDToAssetPath(guid);
             GameObject contents = PrefabUtility.LoadPrefabContents(path);
             try
             {
