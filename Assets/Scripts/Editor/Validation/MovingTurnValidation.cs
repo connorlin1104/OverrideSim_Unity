@@ -66,14 +66,19 @@ public static class MovingTurnValidation
     {
         var lines = new System.Text.StringBuilder();
         var failures = new List<string>();
-        int tested = 0, checks = 0;
+        int tested = 0, checks = 0, failed = 0;
 
         foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
             tested++;
+            // Count robots that FAILED, not robots measured. Reporting `tested` here sent two
+            // separate investigations looking for a fourth broken robot that does not exist:
+            // 4 robots are measured, 3 fail, and 654V_v3 passes cleanly.
+            int before = failures.Count;
             checks += OneRobot(prefab, lines, failures);
+            if (failures.Count > before) failed++;
         }
 
         ValidationUtil.Assert(tested > 0,
@@ -81,7 +86,7 @@ public static class MovingTurnValidation
             "nothing was measured");
 
         ValidationUtil.Assert(failures.Count == 0,
-            $"{failures.Count} failure(s) across {tested} robot(s) turning while moving " +
+            $"{failures.Count} failure(s) across {failed} of {tested} robot(s) turning while moving " +
             "(one robot can contribute more than one):\n    " + string.Join("\n    ", failures) +
             "\n  Every one of these is measured against THE SAME ROBOT spinning from a standstill " +
             "with the same lift height and the same turn stick, so it is not a claim that turning " +

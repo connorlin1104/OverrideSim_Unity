@@ -64,15 +64,20 @@ public static class LiftMotionValidation
     {
         var lines = new System.Text.StringBuilder();
         var failures = new List<string>();
-        int checks = 0, tested = 0;
+        int checks = 0, tested = 0, failed = 0;
 
         foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (prefab == null || prefab.GetComponent<RobotMotorController>() == null) continue;
+            // Only robots with a cascade are measurable here, so `tested` is 2, not the 4 robots in
+            // the project. Reporting "across 2 robot(s)" read as 2-of-4 and hid that this is 2 of 2
+            // — every robot this file can test currently fails it.
             if (prefab.GetComponentInChildren<CascadeLift>(true) == null) continue;
             tested++;
+            int before = failures.Count;
             checks += OneRobot(prefab, lines, failures);
+            if (failures.Count > before) failed++;
         }
 
         ValidationUtil.Assert(tested > 0,
@@ -80,7 +85,8 @@ public static class LiftMotionValidation
             "measure a cascade going down and it measured nothing");
 
         ValidationUtil.Assert(failures.Count == 0,
-            $"{failures.Count} failure(s) across {tested} robot(s) lowering the lift " +
+            $"{failures.Count} failure(s) across {failed} of {tested} robot(s) with a cascade " +
+            "lowering the lift " +
             "(one robot can contribute more than one):" +
             "\n    " + string.Join("\n    ", failures) +
             "\n  The robot is standing still on a flat floor in every one of these, so this is the " +
