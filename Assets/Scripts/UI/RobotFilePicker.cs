@@ -28,22 +28,34 @@ public static class RobotFilePicker
     //
     // .f3d is Fusion's own archive; .step is what every other CAD package exports. Both keep the
     // component names the setup tools read, which is the only structure this project needs.
+    //
+    // '.f3z' is that same archive holding a DISTRIBUTED design: a zip of one or more .f3d files that
+    // carries the externally referenced components along with the parent. Fusion chooses between the
+    // two on the sender's behalf — a design with any linked component offers no .f3d at all — and a
+    // robot assembly is usually exactly that design, so refusing .f3z would refuse the format most
+    // assemblies actually export as. It is also the better one to receive: the .f3d of such a design
+    // would arrive without the parts it links to.
+    //
     // '.stp' is the same format as '.step' — exporters are split roughly evenly between the two
     // spellings, and a player whose file is silently refused has no way to work out why.
     //
     // FBX/URDF/ZIP stay accepted because they are what people already have. URDF needs its meshes
     // alongside it, hence the archive format.
     public static readonly string[] AcceptedExtensions =
-        { "step", "stp", "f3d", "fbx", "urdf", "zip" };
+        { "step", "stp", "f3d", "f3z", "fbx", "urdf", "zip" };
 
     // The preference, said in full where a player is choosing a file. Lives here rather than in the
     // screen so the advice and the list it describes cannot drift apart.
+    //
+    // Both Fusion extensions are named because the sender does not get to pick which one they have,
+    // and being told to export a format their File menu never offers reads as "you can't send this".
     public const string FormatAdvice =
-        "Send your CAD. Made in Fusion 360 — export a .f3d. " +
+        "Send your CAD. Made in Fusion 360 — export a .f3d or .f3z. " +
         "Any other CAD — export a .step. FBX, URDF and ZIP also works.";
 
-    // The short form, for one-line status messages. '.stp' is left out on purpose: it is accepted,
-    // but naming both spellings in a list this size reads as two formats rather than one.
+    // The short form, for one-line status messages. '.stp' and '.f3z' are left out on purpose: both
+    // are accepted, so nobody is ever shown this list because they sent one. Its job is to tell
+    // someone whose file was refused what to send instead, and for that '.f3d' names Fusion once.
     public const string AcceptedList = ".step, .f3d, .fbx, .urdf or .zip";
 
     // True when the platform can open a real file dialog; false means the player uses the inbox.

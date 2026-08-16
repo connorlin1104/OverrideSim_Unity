@@ -1244,12 +1244,15 @@ public class BuildHomeScene
 
         // Which format to send, said immediately above the button that picks one — the only moment
         // the advice can still change what someone exports. It reads as a preference rather than a
-        // rule because all six formats are genuinely accepted; a player who only has an FBX should
-        // send the FBX rather than give up.
+        // rule because all seven extensions are genuinely accepted; a player who only has an FBX
+        // should send the FBX rather than give up.
         TextMeshProUGUI formatHint = CreateText("SubmitFormatHint", content.transform,
             RobotFilePicker.FormatAdvice, 24f);
         formatHint.fontStyle = FontStyles.Italic;
-        SetLayoutHeight(formatHint.gameObject, 90f); // three lines at 24pt across this panel
+        // Four lines at 24pt across this panel. The advice wrapped to three until '.f3z' was named
+        // alongside '.f3d'; a fixed height does not grow with the text, so the last line would have
+        // been clipped rather than the panel getting taller.
+        SetLayoutHeight(formatHint.gameObject, 120f);
 
         parts.chooseFile = CreateButton("ChooseFileButton", content.transform, "Choose File", 36f, NeutralColor);
         SetLayoutHeight(parts.chooseFile.gameObject, 72f);

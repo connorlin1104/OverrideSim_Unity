@@ -190,14 +190,21 @@ For that folder to be visible in the iOS Files app the build needs `UIFileSharin
 `LSSupportsOpeningDocumentsInPlace` set to `YES` in Info.plist (Xcode, or a post-build script).
 If a native picker is added later, `ROBOSIM_NATIVE_FILE_PICKER` is the seam in `RobotFilePicker`.
 
-Accepted, best first: `.step` / `.stp`, `.f3d`, then `.fbx`, `.urdf`, `.zip` (a URDF needs its
-meshes, hence the archive). The screen says which to prefer in as many words — *Fusion 360 → export
-a `.f3d`; any other CAD → export a `.step`* — because the choice is made in the exporter, before the
-app ever sees a file. The mesh formats stay accepted: a player who only has an FBX should send the
-FBX rather than give up. If CAD becomes the norm they can be dropped later.
+Accepted, best first: `.step` / `.stp`, `.f3d` / `.f3z`, then `.fbx`, `.urdf`, `.zip` (a URDF needs
+its meshes, hence the archive). The screen says which to prefer in as many words — *Fusion 360 →
+export a `.f3d` or `.f3z`; any other CAD → export a `.step`* — because the choice is made in the
+exporter, before the app ever sees a file. The mesh formats stay accepted: a player who only has an
+FBX should send the FBX rather than give up. If CAD becomes the norm they can be dropped later.
 
 `.stp` and `.step` are the same format. Both are listed because exporters are split between the two
 spellings, and a file silently refused for a spelling tells the sender nothing.
+
+`.f3z` is the Fusion archive of a **distributed design** — a zip of one or more `.f3d` files that
+carries the externally referenced components along with the parent. Fusion decides which one the
+sender gets: a design with any linked component offers no `.f3d` at all, and a robot assembly is
+usually that design. So `.f3z` is the one to expect, and it is the better one to receive — the
+`.f3d` of such a design would arrive without the parts it links to. It opens exactly like an `.f3d`:
+upload it to Fusion and open it. Nothing downstream of the Fusion step changes.
 
 **Size is the real constraint.** The robot FBX files in this project run 100–205 MB. A phone upload
 that size takes a while, so the screen shows progress and checks for a connection first.
@@ -252,18 +259,19 @@ decimation note in [Robot-Delivery.md](Robot-Delivery.md) — the failure mode i
 VEX metal). **Both formats are accepted by the picker, and the screen asks for them first.**
 
 `.step` is the one to ask for. It is what every CAD package exports — Onshape, SolidWorks, Inventor,
-Creo, FreeCAD — where `.f3d` exists only if the sender happens to be on Fusion. It also asks for
-less: an `.f3d` carries the whole parametric design, sketches and timeline included, while a `.step`
-carries the shape. For a robot someone may have marked private, the smaller ask is the right default.
+Creo, FreeCAD — where `.f3d`/`.f3z` exists only if the sender happens to be on Fusion. It also asks
+for less: a Fusion archive carries the whole parametric design, sketches and timeline included,
+while a `.step` carries the shape. For a robot someone may have marked private, the smaller ask is
+the right default.
 
 What `.step` drops, this pipeline discards anyway. Joints are rebuilt as ArticulationBodies in Unity
 regardless; appearances don't matter because the plastic-vs-metal gate is name-based
 (`IsUnderPlastic` in `GeneratePartColliders.cs`). What the setup tools actually read is the component
-names and hierarchy — and STEP keeps both. Take the `.f3d` when a Fusion team's STEP export comes out
-mangled, which occasionally happens on thin walls and patterns.
+names and hierarchy — and STEP keeps both. Take the Fusion archive when a Fusion team's STEP export
+comes out mangled, which occasionally happens on thin walls and patterns.
 
-**Which means the practical answer is usually: do it yourself.** Open the `.step` or `.f3d` in Fusion
-and export the FBX at the refinement you want. That is the one path where the person choosing the
+**Which means the practical answer is usually: do it yourself.** Open the `.step`, `.f3d` or `.f3z`
+in Fusion and export the FBX at the refinement you want. That is the one path where the person choosing the
 tessellation is the person who knows what the simulator needs, and it makes every number above
 someone else's problem.
 
