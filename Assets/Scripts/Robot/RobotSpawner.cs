@@ -37,7 +37,7 @@ public class RobotSpawner : MonoBehaviour
     [Tooltip("World position the robot is spawned at (the old inline robot's pose).")]
     [SerializeField] private Vector3 spawnPosition = new Vector3(15.99f, 0.974f, 7.91f);
 
-    [Tooltip("World rotation (Euler degrees) the robot is spawned with.")]
+    [Tooltip("Extra world rotation (Euler degrees) applied to every robot on spawn. This is composed ON TOP OF the prefab root's own rotation, not used in place of it, so a robot whose FBX imported rotated stays the way it looks in the editor.")]
     [SerializeField] private Vector3 spawnEuler = Vector3.zero;
 
     [Tooltip("Keep the robot's collider footprint at least this far (world units) inside the field walls.")]
@@ -139,7 +139,7 @@ public class RobotSpawner : MonoBehaviour
         // that has to be read out of a bundle waits, because only that one can't be had immediately.
         if (entry.prefab != null)
         {
-            PlaceAndWatch(Instantiate(entry.prefab, spawnPosition, Quaternion.Euler(spawnEuler)));
+            PlaceAndWatch(Instantiate(entry.prefab, spawnPosition, SpawnRotationFor(entry.prefab)));
             return;
         }
 
@@ -148,6 +148,24 @@ public class RobotSpawner : MonoBehaviour
 
     private static bool IsSpawnable(RobotModelCatalog.Entry entry) =>
         entry != null && (entry.prefab != null || (entry.bundle != null && entry.bundle.IsSet));
+
+    // The world rotation a robot spawns with: the field's spawn heading applied ON TOP OF whatever
+    // orientation the prefab itself was authored with.
+    //
+    // Instantiate SETS a rotation, it does not compose one, so passing Quaternion.Euler(spawnEuler)
+    // alone silently threw away the prefab root's own rotation. That is a nasty way to fail: the
+    // robot stands upright in the Project view, in Prefab Mode and in the scene, and lies on its
+    // side the instant Play spawns it — which reads as the editor showing a stale copy, and sends
+    // you hunting through bundles and caches for a robot that was never wrong.
+    //
+    // It is not a rare case either. An FBX authored in a Z-up tool (Blender, most CAD) imports with
+    // a 90 degrees rotation on the model root, and Bake Axis Conversion does not always fold it into
+    // the mesh, so for those robots the correction has nowhere to live EXCEPT the root.
+    //
+    // Composing is safe for everything that came before: every robot prefab that shipped up to now
+    // has an identity root rotation, so this multiplies by one for them.
+    private Quaternion SpawnRotationFor(GameObject prefab) =>
+        Quaternion.Euler(spawnEuler) * (prefab != null ? prefab.transform.rotation : Quaternion.identity);
 
     // Loads a bundled robot and places it. The field is empty for as long as this takes, which on a
     // first download is a real wait — the caller that got the player here is responsible for saying
@@ -177,11 +195,11 @@ public class RobotSpawner : MonoBehaviour
             Debug.LogWarning($"RobotSpawner: couldn't load '{entry.displayName}' ({error}). " +
                              $"Spawning '{fallback.displayName}' instead.", this);
             ControllerMapSettings.SeedDefault(fallback);
-            PlaceAndWatch(Instantiate(fallback.prefab, spawnPosition, Quaternion.Euler(spawnEuler)));
+            PlaceAndWatch(Instantiate(fallback.prefab, spawnPosition, SpawnRotationFor(fallback.prefab)));
             yield break;
         }
 
-        PlaceAndWatch(Instantiate(prefab, spawnPosition, Quaternion.Euler(spawnEuler)));
+        PlaceAndWatch(Instantiate(prefab, spawnPosition, SpawnRotationFor(prefab)));
     }
 
     // Places `robot` at the geometry-derived spawn pose and starts watching it for falls. Awake
@@ -202,7 +220,7 @@ public class RobotSpawner : MonoBehaviour
         // Where the robot sits if its footprint can't be measured: the pose Instantiate applied,
         // which is what RecenterFootprint leaves it at when it bails out.
         restorePosition = spawnPosition;
-        restoreRotation = Quaternion.Euler(spawnEuler);
+        restoreRotation = robot.transform.rotation;
 
         RecenterFootprint(robot); // overwrites the restore pose with the geometry-derived one
 
