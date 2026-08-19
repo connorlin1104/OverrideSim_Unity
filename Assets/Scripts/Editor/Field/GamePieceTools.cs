@@ -8,7 +8,7 @@ using System.IO;
 //   • RebuildCupColliders         — Rebuild Cup Colliders
 //   • RebuildPinColliders      — Rebuild Pin Colliders (Any Color)
 //   • AddPieceFloorClamps  — Add Floor Clamp to Pieces
-//   • TunePiecePhysics— Tune Roll and Friction
+//   • TunePiecePhysics— Tune Mass, Roll and Friction
 // One-shot tools that build/tune the cup & pin game pieces. Independent of each other; merged into
 // one file to tidy the Editor folder.
 
@@ -322,6 +322,28 @@ public static class TunePiecePhysics
     private const float StaticFriction = 0.2f;  // grip to start moving from rest
     private const float Bounciness = 0f;        // pieces shouldn't trampoline
 
+    // ---- Mass (2026-08-19) ----
+    // Mass in this project is KILOGRAMS, 1:1 — a wheel link is 0.5 kg, a chassis 4 kg, and a whole
+    // robot 6.5-11.8 kg. The pieces were on Unity's default Rigidbody mass of 1 kg each, i.e. a cup
+    // weighing as much as two drive wheels, and Connor's report after handling the real elements was
+    // that they are "incredibly lightweight".
+    //
+    // These are DERIVED, not guessed: the piece meshes enclose 64.9 cm^3 (cup) and 67.7 cm^3 (pin),
+    // measured with the same volume->density math RobotMassFromGeometry uses to mass a lift link, at
+    // 1050 kg/m^3 for moulded ABS. If you put the real ones on a scale, these are the two numbers to
+    // replace — re-run the menu item and every piece in the scene AND in the match-load prefabs is
+    // updated together.
+    //
+    // NOTHING ELSE HAS TO BE RETUNED, and that is worth knowing before touching them: every piece
+    // manipulation in the project is ForceMode.VelocityChange or ForceMode.Acceleration — the goal
+    // and cup magnets, the intake's eject, the roller detent — all of which are mass-independent by
+    // construction. Mass changes how the ROBOT and gravity move a piece, and nothing else.
+    private const float CupMassKg = 0.068f;
+    private const float PinMassKg = 0.071f;
+    // Below this a body is light enough that PhysX contact resolution against a 12 kg robot starts to
+    // jitter. Not a tuning knob — a guard, so a typo'd gram value can't quietly wreck the field.
+    private const float MinPieceMassKg = 0.005f;
+
     private const string MaterialPath = "Assets/PiecePhysics.physicMaterial";
 
     // The field surfaces use this material, and it was set to FrictionCombine = Maximum — which
@@ -330,8 +352,27 @@ public static class TunePiecePhysics
     // Minimum so the lower of the two wins and the piece material above becomes the single authority.
     private const string FieldMaterialPath = "Assets/ZeroBounce.physicMaterial";
 
-    [MenuItem("Tools/RoboSim/Field & Pieces/Tune Roll and Friction", false, 20)]
-    private static void Tune()
+    [MenuItem("Tools/RoboSim/Field & Pieces/Tune Mass, Roll and Friction", false, 20)]
+    private static void Tune() => Apply();
+
+    // Batch: -executeMethod TunePiecePhysics.RunBatch (opens and SAVES SampleScene).
+    //
+    // Deliberately NOT the same method as the menu item. The menu item runs against whatever scene is
+    // already open and leaves it dirty for the user to save; a batch run must open the shipped scene
+    // and save it itself, and a [MenuItem] on a batch method that calls EditorApplication.Exit quits
+    // the editor with unsaved work — see the menu-vs-batch note in the project's tooling.
+    public static void RunBatch()
+    {
+        var scene = EditorSceneManager.OpenScene(RoboSimPaths.MainScene, OpenSceneMode.Single);
+        int touched = Apply();
+        if (touched == 0)
+            throw new System.InvalidOperationException(
+                $"Tune Piece Physics: no Cup*/Pin* rigidbodies found in {RoboSimPaths.MainScene}.");
+        if (!EditorSceneManager.SaveScene(scene))
+            throw new System.InvalidOperationException($"Tune Piece Physics: failed to save {RoboSimPaths.MainScene}.");
+    }
+
+    private static int Apply()
     {
         PhysicsMaterial mat = GetOrCreateMaterial();
         bool fieldFixed = NeutralizeFieldMaterial();
@@ -350,9 +391,11 @@ public static class TunePiecePhysics
         // The prefabs, so match-load spawns inherit the same feel.
         int prefabBodies = TunePrefabs(mat);
 
-        Debug.Log($"Tune Piece Physics: damping {LinearDamping}/{AngularDamping}, friction {DynamicFriction} " +
+        Debug.Log($"Tune Piece Physics: cup {CupMassKg * 1000f:0.#} g, pin {PinMassKg * 1000f:0.#} g, " +
+                  $"damping {LinearDamping}/{AngularDamping}, friction {DynamicFriction} " +
                   $"via '{Path.GetFileName(MaterialPath)}' → {sceneBodies} scene bodies, {prefabBodies} prefab bodies. " +
                   $"Field material combine fixed: {fieldFixed}.");
+        return sceneBodies + prefabBodies;
     }
 
     // The field's ZeroBounce material was set to FrictionCombine = Maximum, which forces every
@@ -370,8 +413,16 @@ public static class TunePiecePhysics
 
     private static bool IsPiece(string n) => GamePiece.IsPiece(n);
 
+    // The mass a piece should carry, by type. Unknown prefixes keep whatever they have rather than
+    // being given a cup's mass — GamePiece.IsPiece is a NAME test, so a future third piece type would
+    // otherwise silently inherit numbers measured off a different mesh.
+    private static float MassFor(string pieceName) =>
+        pieceName.StartsWith("Cup") ? CupMassKg : pieceName.StartsWith("Pin") ? PinMassKg : 0f;
+
     private static void ApplyToBody(Rigidbody body, PhysicsMaterial mat, bool recordUndo)
     {
+        float mass = MassFor(body.gameObject.name);
+        if (mass > 0f) body.mass = Mathf.Max(mass, MinPieceMassKg);
         body.linearDamping = LinearDamping;
         body.angularDamping = AngularDamping;
         foreach (Collider c in body.GetComponentsInChildren<Collider>())

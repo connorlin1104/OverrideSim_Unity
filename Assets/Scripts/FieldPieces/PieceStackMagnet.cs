@@ -188,6 +188,11 @@ public class PieceStackMagnet : MonoBehaviour
         {
             Rigidbody rb = overlapScratch[i] != null ? overlapScratch[i].attachedRigidbody : null;
             if (rb == null || rb == body || rb.isKinematic || Claimed.Contains(rb)) continue;
+            // ...and never a piece a GOAL already holds. Two magnets that each run a deadbeat hold
+            // (desiredVel = toSlot/step) to a DIFFERENT slot do not average out — they alternate,
+            // one AddForce per step each, and the piece ping-pongs between the two targets at half
+            // the physics rate. See the note on GoalStackMagnet.IsClaimed for the measurement.
+            if (GoalStackMagnet.IsClaimed(rb)) continue;
             if (!GamePiece.IsPiece(rb.gameObject)) continue;
 
             Vector3 velocity = rb.linearVelocity;

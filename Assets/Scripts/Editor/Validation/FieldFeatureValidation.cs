@@ -37,7 +37,8 @@ public static class FieldFeatureValidation
         {
             Run();
             EditorUtility.DisplayDialog("Validate Field Features",
-                "All field-feature smoke tests PASSED (magnet hit, hold, miss; roller detent; cup magnet).\n" +
+                "All field-feature smoke tests PASSED (magnet hit, hold, miss; roller detent; cup magnet;\n" +
+                "seated pieces sit still).\n" +
                 "See the Console for details.", "OK");
         }
         catch (System.Exception e)
@@ -74,6 +75,7 @@ public static class FieldFeatureValidation
             TestMagnetMiss(magnets, snaps, failures);
             TestDetent(magnets, snaps, failures);
             TestCupMagnet(magnets, snaps, failures);
+            TestSeatedPiecesSitStill(magnets, snaps, failures);
         }
         finally
         {
@@ -85,7 +87,8 @@ public static class FieldFeatureValidation
         if (failures.Count > 0)
             throw new System.InvalidOperationException(
                 "Field-feature smoke tests FAILED:\n  - " + string.Join("\n  - ", failures));
-        Debug.Log("FieldFeatureValidation: PASSED (magnet hit, hold, miss; roller detent; cup magnet).");
+        Debug.Log("FieldFeatureValidation: PASSED (magnet hit, hold, miss; roller detent; cup magnet; "
+                  + "seated pieces sit still).");
     }
 
     // One combined physics step: manual component ticks (edit-mode sim runs no MonoBehaviours),
@@ -221,6 +224,104 @@ public static class FieldFeatureValidation
             failures.Add($"detent: roller '{snap.name}' settled {errorDeg:0.#} deg off a 120-deg face (max {MaxDetentErrorDeg})");
         if (axisSpeed > MaxDetentRestSpeed)
             failures.Add($"detent: roller '{snap.name}' is still spinning at {axisSpeed:0.##} rad/s after 3 s");
+    }
+
+
+    // A scored piece must SIT there. Connor's report, standing for months: cups pulled onto a goal
+    // "are like jittery and most of the time vibrating".
+    //
+    // The cause was two magnets holding one piece. GoalStackMagnet and PieceStackMagnet each keep a
+    // private claim registry, and neither used to consult the other, so a cup could be seated on a
+    // goal AND stacked on the cup below it at once. Two holds do not average out: each is a deadbeat
+    // (desiredVel = toSlot/step) aimed at a DIFFERENT slot, each does one AddForce per step, and the
+    // last writer wins — alternately. Measured on three cups seated on one goal and left 2 s:
+    //     goal-claimed only        0 direction reversals, peak |v| 0.000 u/s  (the body sleeps)
+    //     goal + cup claimed     199 direction reversals in 200 steps, peak |v| 4.0 u/s
+    // 40 u of path to end up 0.4 u from where it started, at half the physics rate — a visible buzz.
+    //
+    // TWO ASSERTIONS, because either alone is weak. The double-claim sweep is the sharp one: it is
+    // exact, deterministic, and names the actual invariant. The motion budget is the one that still
+    // holds if some future third holder invents a new way to fight over a piece — and the gap it is
+    // policing is three orders of magnitude (8000 mm of path against 1), so a generous budget is
+    // still a real check rather than a threshold nobody can trip.
+    private static void TestSeatedPiecesSitStill(GoalStackMagnet[] magnets, RollerSnap[] snaps,
+        List<string> failures)
+    {
+        GoalStackMagnet magnet = PickMagnet(magnets);
+        if (magnet == null || magnet.stackAnchor == null)
+        {
+            failures.Add("seated stillness: no goal magnet with a stack anchor to test with");
+            return;
+        }
+
+        Vector3 up = magnet.stackAnchor.up;
+        Vector3 lateral = Vector3.Cross(up, Vector3.forward).sqrMagnitude > 1e-4f
+            ? Vector3.Cross(up, Vector3.forward).normalized : Vector3.right;
+
+        // Stack three, because ONE is not enough to reproduce this: the bottom piece rests on the
+        // goal itself and is held by a real contact, and it was quiet even while the pieces above it
+        // buzzed. The conflict needs a piece sitting on another piece.
+        var seated = new List<Rigidbody>();
+        for (int c = 0; c < 3; c++)
+        {
+            Rigidbody cup = FindLoosePieceExcluding("Cup", seated);
+            if (cup == null) break;
+            PlacePieceCenter(cup, magnet.stackAnchor.position + up * (2.5f + c * 0.4f) + lateral * 0.15f);
+            Step(magnets, snaps, 300);
+            if (GoalStackMagnet.IsClaimed(cup)) seated.Add(cup);
+        }
+        if (seated.Count < 2)
+        {
+            failures.Add($"seated stillness: only {seated.Count} cup(s) seated on '{magnet.name}' — " +
+                         "cannot measure a stack. Usually means capture itself is broken; the magnet " +
+                         "hit test above says which.");
+            return;
+        }
+        Step(magnets, snaps, 300); // settle
+
+        // ONE PIECE, ONE MAGNET. Exact, and it is the invariant that actually regressed.
+        var doubled = new List<string>();
+        foreach (Rigidbody rb in Object.FindObjectsByType<Rigidbody>(FindObjectsInactive.Exclude))
+            if (GoalStackMagnet.IsClaimed(rb) && PieceStackMagnet.IsClaimed(rb)) doubled.Add(rb.name);
+        if (doubled.Count > 0)
+            failures.Add($"seated stillness: {doubled.Count} piece(s) held by a goal AND a cup magnet " +
+                         $"at once ({string.Join(", ", doubled)}). Two deadbeat holds aimed at " +
+                         "different slots alternate one AddForce per step and buzz the piece at half " +
+                         "the physics rate. Both TryCapture filters must skip what the other holds.");
+
+        // ...and the felt form: a piece at rest travels essentially nowhere over a second.
+        foreach (Rigidbody cup in seated)
+        {
+            if (!GoalStackMagnet.IsClaimed(cup)) continue;   // drifted off on its own — not this test's claim
+            Vector3 previous = cup.worldCenterOfMass;
+            float path = 0f;
+            for (int i = 0; i < 100; i++)
+            {
+                Step(magnets, snaps, 1);
+                Vector3 p = cup.worldCenterOfMass;
+                path += (p - previous).magnitude;
+                previous = p;
+            }
+            if (path > MaxSeatedPathPerSecond)
+                failures.Add($"seated stillness: '{cup.name}' travelled {path:0.00} u in 1 s while " +
+                             $"seated and undisturbed (budget {MaxSeatedPathPerSecond:0.00} u). A scored " +
+                             "piece must sit still — something is fighting the magnet for it.");
+        }
+    }
+
+    // How far a seated, undisturbed piece may travel in one second. Measured: 0.001 u when one
+    // magnet holds it, 40 u when two do.
+    private const float MaxSeatedPathPerSecond = 0.5f;
+
+    private static Rigidbody FindLoosePieceExcluding(string prefix, List<Rigidbody> exclude)
+    {
+        foreach (Rigidbody rb in Object.FindObjectsByType<Rigidbody>(FindObjectsInactive.Exclude))
+        {
+            if (!rb.name.StartsWith(prefix) || rb.isKinematic || exclude.Contains(rb)) continue;
+            if (GoalStackMagnet.IsClaimed(rb) || PieceStackMagnet.IsClaimed(rb)) continue;
+            return rb;
+        }
+        return null;
     }
 
     // Cup magnet: drop a pin onto a cup held perfectly still + upright (re-pinned each step at a

@@ -411,7 +411,7 @@ Rigidbody:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 3145831851861226603}
   serializedVersion: 5
-  m_Mass: 1
+  m_Mass: 0.068
   m_LinearDamping: 0.05
   m_AngularDamping: 0.05
   m_CenterOfMass: {x: 0, y: 0, z: 0}
@@ -448,6 +448,7 @@ MonoBehaviour:
   restAngularSpeed: 1.2
   maxCupTiltDeg: 35
   captureRadius: 0.5
+  seatedCaptureRadius: 0.25
   captureAbove: 0.7
   captureBelow: 0.3
   maxCaptureLinearSpeed: 3
@@ -460,6 +461,7 @@ MonoBehaviour:
   tiltGain: 6
   maxTiltCorrectionPerStep: 0.8
   releaseRadius: 0.9
+  stackClearance: 0.15
   maxStack: 3
   pieceProfiles:
   - namePrefix: Cup
@@ -1725,7 +1727,7 @@ Rigidbody:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 8239434132057543380}
   serializedVersion: 5
-  m_Mass: 1
+  m_Mass: 0.071
   m_LinearDamping: 0.05
   m_AngularDamping: 0.05
   m_CenterOfMass: {x: 0, y: 0, z: 0}

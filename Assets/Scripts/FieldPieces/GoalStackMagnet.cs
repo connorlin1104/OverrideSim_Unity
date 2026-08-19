@@ -165,6 +165,22 @@ public class GoalStackMagnet : MonoBehaviour
 
     // All live magnets + every rigidbody seated on (or being pulled into) ANY goal, so two goals
     // never fight over one piece and the intake can release a piece wherever it's seated.
+    //
+    // ONE PIECE, ONE MAGNET — AND PieceStackMagnet COUNTS (2026-08-19). This registry stopped two
+    // GOALS fighting, but PieceStackMagnet keeps a registry of its own and for a long time neither
+    // consulted the other, so a cup could be seated on a goal AND stacked on the cup below it at the
+    // same time. Two holds do not average out: each is a deadbeat (desiredVel = toSlot/step) aimed
+    // at a DIFFERENT slot, each does one AddForce(VelocityChange) per step, and the last writer
+    // wins — alternately. The piece ping-pongs between the two targets at half the physics rate.
+    // Measured on a settled field, three cups seated on one goal and left alone for 2 s:
+    //     goal-claimed only        0 direction reversals, peak |v| 0.000 u/s   (asleep)
+    //     goal + cup claimed     199 direction reversals in 200 steps, peak |v| 4.0 u/s
+    // 40 u of path travelled to end up 0.4 u from where it started — that is the "scored cups sit
+    // there vibrating" report, and it was one piece in the scene doing it.
+    //
+    // So both TryCapture filters now skip anything the other kind already holds. Claims are added at
+    // capture (pull-in included, not just seated), and both are runtime-only, so nothing needs
+    // migrating — but any THIRD thing that ever holds a piece has to join this rule.
     private static readonly List<GoalStackMagnet> All = new List<GoalStackMagnet>();
     private static readonly HashSet<Rigidbody> Claimed = new HashSet<Rigidbody>();
 
@@ -404,6 +420,7 @@ public class GoalStackMagnet : MonoBehaviour
         {
             Rigidbody rb = overlapScratch[i] != null ? overlapScratch[i].attachedRigidbody : null;
             if (rb == null || rb.isKinematic || Claimed.Contains(rb)) continue;   // kinematic = held by the intake
+            if (PieceStackMagnet.IsClaimed(rb)) continue;  // ...or held by a cup-on-cup magnet
             if (!GamePiece.IsPiece(rb.gameObject)) continue;
 
             // Speed gates, split along the stack axis: a piece FALLING into the goal is fast but

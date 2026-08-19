@@ -41,6 +41,12 @@ public static class TipOverValidation
 {
     private const int AccelSteps = 200;         // 2 s — comfortably past 95% of top speed
     private const int ReversalSteps = 60;       // 0.6 s — a 0.8 g stop from top speed takes ~0.18 s
+    private const int ReleaseSteps = 250;       // 2.5 s — a 0.16 g coast from top speed takes ~0.9 s
+    private const float StoppedSpeed = 0.05f;   // u/s — below this the robot is parked, not rolling
+    // How much firmer than its own coast any single step of a released-stick stop may be. The slew
+    // transient right after release measures 1.1x; the parking-hold cliff this exists to catch
+    // measured 4x. Anything in between is a cliff, and 1.5 is the line.
+    private const float MaxCoastSpike = 1.5f;
 
     // The lift's tuned raise time (CascadeLift/Dr4bLift default 2 s) and how long the turn is held.
     private const int LiftRampSteps = 200;
@@ -72,11 +78,12 @@ public static class TipOverValidation
         int checks = ClearanceIsFrameIndependent(out string clearance);
         checks += StaticThresholds(out string summary);
         checks += ReversalDecelerates(out string dynamic);
+        checks += ReleaseStopsSmoothly(out string release);
         checks += TurningWithTheLiftUpDoesNotRollIt(out string turning);
         checks += NothingSidewaysCanLayItOver(out string shove);
         checks += ChatterMetricSeesChatter(out string chatter);
         return $"Validate Tipping: PASSED ({checks} checks).\n{clearance}\n{summary}\n{dynamic}\n" +
-               $"{turning}\n{shove}\n{chatter}";
+               $"{release}\n{turning}\n{shove}\n{chatter}";
     }
 
     // --- Ground clearance: the answer must not depend on where the prefab sits ------------------
@@ -1261,6 +1268,105 @@ public static class TipOverValidation
                      $"peak tilt {peakTilt:0.0}° from {tiltBefore:0.0}°, " +
                      $"travelled {Planar(root.transform.position - beforePos):0.0} u";
             return 2;
+        }
+        finally
+        {
+            Physics.simulationMode = previousMode;
+        }
+    }
+
+
+    // The other end of the same brake: what LETTING GO feels like, step by step.
+    //
+    // ReversalDecelerates asks whether a slam is strong enough. This asks whether a release is
+    // SMOOTH — whether the deceleration a driver gets is the one number all the way down, or
+    // whether it has a cliff in it somewhere. Connor's report, on a 360 RPM robot: "it doesn't act
+    // like it's all omnis, for some of it it does, but the end part it just comes to a sudden stop."
+    //
+    // WHY THIS NEEDS PHYSICS AND DriveFeelValidation COULD NOT HAVE CAUGHT IT. The cliff was the
+    // parking hold: below a moving gate the wheel is handed back to Drive authority at target 0,
+    // and a PhysX articulation velocity drive is solved implicitly — it is a velocity CONSTRAINT
+    // bounded by forceLimit, not a spring pulling at damping * error. Reason about it as
+    // damping * error, as the arithmetic naturally invites, and the parking hold looks gentle at
+    // low speed; measure it and it deletes 0.77 u/s in a single 10 ms step, a 0.76 g spike at the
+    // end of an otherwise flat 0.19 g stop. 900 arithmetic checks passed throughout. Only a trace
+    // of real steps says which model PhysX is actually running, which is the whole reason the
+    // dynamic half of this file exists.
+    //
+    // Asserted as a RATIO to the robot's own coast deceleration, so it holds at any gearing and
+    // needs only one robot to be sharp: the old gate was a fraction of free speed, so it put a
+    // spike into every robot's stop — 2.3x the coast even on the 240 RPM one, which is why it was
+    // "hardly noticeable" rather than absent there.
+    private static int ReleaseStopsSmoothly(out string report)
+    {
+        GameObject prefab = RobotPhysicsValidation.ResolveRobotPrefab()
+            ?? throw new System.InvalidOperationException(
+                "No robot prefab to measure a released-stick stop on.");
+
+        SimulationMode previousMode = Physics.simulationMode;
+        try
+        {
+            ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
+            ArticulationBody[] wheels = RobotPhysicsValidation.FindWheels(root, out _, out _);
+
+            DrivetrainTuning.Result tuning = DrivetrainTuning.Compute(
+                DrivetrainTuning.MeasureTotalMass(root),
+                DrivetrainTuning.MeasureWheelRadius(wheels),
+                wheels.Length,
+                motor.maxWheelRpm,
+                DrivetrainTuning.MeasureFriction(wheels),
+                Physics.gravity.y,
+                motor.driveForceTractionMultiple,
+                motor.omniBrakeFraction,
+                motor.plowFraction);
+
+            motor.Initialise();
+            Physics.simulationMode = SimulationMode.Script;
+            StepDriven(motor, 0f, 0f, SettleSteps);
+            StepDriven(motor, 1f, 0f, AccelSteps);
+
+            float dt = ValidationUtil.StepSeconds;
+            float g = Mathf.Abs(Physics.gravity.y);
+            float entry = Planar(root.linearVelocity);
+
+            ValidationUtil.Assert(entry > 1f,
+                $"'{prefab.name}' only reached {entry:0.00} u/s in {AccelSteps * dt:0.0} s — it never got " +
+                "moving, so a released-stick stop measures nothing. Run Validate Robot Physics.");
+
+            // THE STICK RELEASED, and nothing else. Every step through ApplyStep, so the slew, the
+            // authority decision and the force-limit swap are the ones the player gets.
+            float previous = entry;
+            float peakDecelG = 0f, peakAt = 0f;
+            int stopStep = 0;
+            for (int i = 1; i <= ReleaseSteps && stopStep == 0; i++)
+            {
+                StepDriven(motor, 0f, 0f, 1);
+                float speed = Planar(root.linearVelocity);
+                float decelG = (previous - speed) / dt / g;
+                if (decelG > peakDecelG) { peakDecelG = decelG; peakAt = previous; }
+                if (speed < StoppedSpeed) stopStep = i;
+                previous = speed;
+            }
+
+            ValidationUtil.Assert(stopStep > 0,
+                $"'{prefab.name}' was still rolling {ReleaseSteps * dt:0.0} s after the sticks were " +
+                "released — the brake is doing essentially nothing.");
+
+            // THE CHECK. Coasting is a single deceleration by design, so no step of it may be much
+            // firmer than that. The margin is for the slew transient in the first step or two after
+            // release, which measured 1.1x; the parking-hold cliff measured 4x.
+            float ceiling = tuning.brakeG * MaxCoastSpike;
+            ValidationUtil.Assert(peakDecelG <= ceiling,
+                $"'{prefab.name}' coasts at {tuning.brakeG:0.00} g but one step of the stop pulled " +
+                $"{peakDecelG:0.00} g, at {peakAt:0.00} u/s with the sticks already centred. A release " +
+                $"has to be one deceleration all the way down; anything over {ceiling:0.00} g is a " +
+                "cliff the driver feels as a sudden stop. Almost always the parking hold engaging " +
+                "while the robot still has speed left — see RobotMotorController.ParkGateDegPerSec.");
+
+            report = $"release on '{prefab.name}' ({motor.maxWheelRpm:0.} RPM): {entry:0.0} u/s to a stop " +
+                     $"in {stopStep * dt:0.00} s, coast {tuning.brakeG:0.00} g, " +
+                     $"firmest single step {peakDecelG:0.00} g at {peakAt:0.00} u/s";
+            return 3;
         }
         finally
         {

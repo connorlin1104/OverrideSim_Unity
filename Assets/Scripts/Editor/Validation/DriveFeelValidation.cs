@@ -47,6 +47,7 @@ public static class DriveFeelValidation
         checks += SlewTimestepInvariance();
         checks += MixPreservesTurn();
         checks += AuthorityDecision();
+        checks += ParkHandoff();
         checks += ShippedTune();
         checks += WheelTypeBrakes();
         checks += PlowRamp();
@@ -264,7 +265,9 @@ public static class DriveFeelValidation
     // turn.
     private static int AuthorityDecision()
     {
-        const float gate = 216f; // 15% of the 654V's 1440 deg/s free speed, in deg/s
+        // A stand-in gate, not the shipped one — this check is about WHICH SIDE of a gate each
+        // case lands on, and ParkHandoff is what pins where the gate actually goes.
+        const float gate = 216f; // deg/s, against the 654V's 1440 deg/s free speed
         float thr = RobotMotorController.TurnAuthorityThreshold;
 
         ValidationUtil.Near(thr, 0.05f, 1e-6f,
@@ -299,6 +302,78 @@ public static class DriveFeelValidation
             == RobotMotorController.DriveAuthority.Drive, "at the threshold the override must engage");
 
         return 9;
+    }
+
+    // The handoff from the brake to the parking hold. This is the check that "the end part just
+    // comes to a sudden stop" (2026-08-19, reported on a 360 RPM robot) cannot come back.
+    //
+    // The parking hold is a PhysX velocity drive at target 0 with forceLimit raised from brakeTorque
+    // to stallTorque, and an articulation drive is solved implicitly — it is a velocity CONSTRAINT
+    // bounded by its force limit, not a spring pulling at damping * error. So it does not ease the
+    // last of the speed away, it DELETES it, in one physics step, and the only question that matters
+    // is how much speed is left when the swap happens. Traced on the 360 RPM robot at the old gate:
+    // 0.771 u/s gone in one 10 ms step, a 0.76 g spike at the end of an otherwise flat 0.19 g stop.
+    //
+    // So the gate has to be one brake-step of speed, and this asserts exactly that: the deceleration
+    // implied by deleting everything below the gate in a single step must be the same brakeG the
+    // rest of the stop already runs at. Written as a deceleration rather than as the gate formula
+    // repeated back, so it is a claim about what the driver feels and not the code agreeing with
+    // itself.
+    private static int ParkHandoff()
+    {
+        const float Dt = 0.01f; // the project's 100 Hz step — ValidationUtil.StepSeconds
+        DrivetrainTuning.Result t = Shipped();
+        float fullStick = Rpm * 6f;
+        float gate = RobotMotorController.ParkGateDegPerSec(fullStick, t.brakeG, t.topSpeed, G, Dt);
+
+        // The whole claim, in one line: the last step of the stop decelerates at brakeG like every
+        // step before it. Below the gate the wheel is stopped outright, so the deceleration that
+        // costs is (gate speed) / dt — and that has to come out at the coast figure.
+        float gateSpeed = t.topSpeed * gate / fullStick;
+        ValidationUtil.Near(gateSpeed / Dt / G, t.brakeG, 0.005f,
+            $"stopping the last {gateSpeed:0.000} u/s outright in one {Dt * 1000:0.} ms step is " +
+            $"{gateSpeed / Dt / G:0.00} g against a coast of {t.brakeG:0.00} g — the parking hold is " +
+            "taking a bite the driver can feel, which IS the sudden stop");
+
+        // Same claim at every gearing. The old gate was a fraction of free speed, so the SPEED it
+        // dumped scaled with the robot: invisible at 240 RPM, a jolt at 360. This one is a fixed
+        // speed by construction, and the loop is what proves the RPM cancels.
+        float reference = 0f;
+        foreach (float rpm in new[] { 200f, 240f, 300f, 360f, 600f })
+        {
+            DrivetrainTuning.Result r = DrivetrainTuning.Compute(Mass, Radius, Wheels, rpm, Mu, G,
+                DrivetrainTuning.DefaultDriveForceTractionMultiple);
+            float gateAt = RobotMotorController.ParkGateDegPerSec(rpm * 6f, r.brakeG, r.topSpeed, G, Dt);
+            float speedAt = r.topSpeed * gateAt / (rpm * 6f);
+            if (reference == 0f) reference = speedAt;
+            ValidationUtil.Near(speedAt, reference, 1e-3f,
+                $"a {rpm:0.} RPM robot must hand over to the parking hold at the same {reference:0.000} u/s " +
+                "a 200 RPM one does — a gate that scales with gearing is what made the fast robot jolt");
+        }
+
+        // The gate is a real speed inside the range, not a degenerate end. Zero would delete the
+        // parking hold (a stopped robot left chattering on the brake); free speed would delete the
+        // brake (every stop a one-step skid).
+        ValidationUtil.Assert(gate > 0f && gate < fullStick * 0.05f,
+            $"the parking gate ({gate:0.#} deg/s) must be a slow crawl, not an end of the range or a " +
+            $"meaningful fraction of the {fullStick:0.} deg/s free speed");
+
+        // It has to move with the timestep, because it is defined per step: at half the rate the
+        // brake covers twice the speed before the next step, so the gate doubles. A gate that
+        // ignored dt would put the cliff back on anyone not running 100 Hz.
+        ValidationUtil.Near(
+            RobotMotorController.ParkGateDegPerSec(fullStick, t.brakeG, t.topSpeed, G, Dt * 2f),
+            gate * 2f, 0.01f,
+            "the parking gate is one brake-step of speed, so halving the physics rate must double it");
+
+        // Degenerate rigs must not divide by zero into a NaN force limit, which takes the whole
+        // articulation with it.
+        ValidationUtil.Near(RobotMotorController.ParkGateDegPerSec(fullStick, t.brakeG, 0f, G, Dt), 0f,
+            1e-6f, "a robot with no top speed must get a zero gate, not a NaN");
+        ValidationUtil.Near(RobotMotorController.ParkGateDegPerSec(fullStick, 1e6f, t.topSpeed, G, Dt),
+            fullStick, 1e-3f, "an absurd brake must clamp the gate to free speed, not overshoot it");
+
+        return 10;
     }
 
     // --- Tuning ------------------------------------------------------------------------------

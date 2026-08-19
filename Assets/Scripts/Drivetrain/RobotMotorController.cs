@@ -31,6 +31,12 @@ using UnityEngine.InputSystem;
 //      the driver a choice between two drivetrains, one of which was wrong, and it took 60 ms to
 //      engage so a stick swept through centre triggered it. This is one drivetrain with one brake,
 //      engaged instantly, every time.
+//        And the brake now hands over to the parking hold only once the wheel is ONE BRAKE-STEP
+//      from stopped. The gate used to be a flat 18.75% of free speed, and a PhysX velocity drive
+//      handed stallTorque deletes the speed that is left in a single step — so every stop coasted
+//      at 0.16 g and then dumped its last fifth at the traction limit in 10 ms. Harmless-looking at
+//      240 RPM, a jolt at 360, because the fraction is fixed but the speed it lands at is not.
+//      See ParkGateDegPerSec.
 //   4. The braking quadrant. Asking for a direction (or a speed) the wheels are already spinning
 //      against is not the same as accelerating: a real motor driven backwards against its own
 //      rotation is current-limited and much weaker there. Without that distinction a reversal got
@@ -72,8 +78,10 @@ public class RobotMotorController : MonoBehaviour
     public InputActionReference rightJoystickAction;
 
     [Header("Motor Settings")]
-    [Tooltip("Free-spin wheel speed at full stick, in RPM (VEX 360 RPM drivetrain).")]
-    public float maxWheelRpm = 360f;
+    [Tooltip("Free-spin wheel speed at full stick, in RPM. New robots start on a VEX 200/240 RPM " +
+             "green-cartridge drivetrain, which is what most competition bots actually run; raise " +
+             "it per robot for a blue-cartridge speed build.")]
+    public float maxWheelRpm = 240f;
     [Tooltip("LEGACY — ignored unless Auto Tune Drive is off. Drive force limit (motor stall torque). " +
              "The 700 the shipped prefabs carry is ~5x the traction budget, which is what made the " +
              "throttle an on/off switch; DrivetrainTuning now derives this from the robot instead.")]
@@ -957,7 +965,7 @@ public class RobotMotorController : MonoBehaviour
         float rightTargetDegPerSec = rightRaw * fullStickDegPerSec * (invertRight ? -1f : 1f);
 
         UpdateBrakingQuadrant(leftDegPerSec, rightDegPerSec,
-            leftTargetDegPerSec, rightTargetDegPerSec, fullStickDegPerSec);
+            leftTargetDegPerSec, rightTargetDegPerSec, fullStickDegPerSec, dt);
 
         // After the drives, because it reads the attitude the last step produced and pushes back on
         // it — an external torque for this step, alongside the wheel torques, not instead of them.
@@ -980,10 +988,47 @@ public class RobotMotorController : MonoBehaviour
     //
     // With centre stick as the brake pedal, this quadrant IS the brake: released sticks decay the
     // command to zero, every spinning wheel is back-driven, and the robot pulls up under
-    // brakeTorque. Below the moving gate (BrakeSpeedFraction of free speed) a wheel returns to
-    // Drive authority with target 0 — the parking hold — so a parked robot resists a shove with
-    // the motor curve instead of chattering on the brake.
-    private const float BrakeSpeedFraction = 0.15f;
+    // brakeTorque. Below the moving gate a wheel returns to Drive authority with target 0 — the
+    // parking hold — so a parked robot resists a shove with the motor curve instead of chattering
+    // on the brake.
+    //
+    // THE GATE IS DERIVED, AND THE DERIVATION IS THE WHOLE POINT (2026-08-19). It used to be a flat
+    // 0.15 of maxJointVelocity, which is free speed x 1.25 — so a wheel was released from the brake
+    // at 18.75% of free speed. Connor's report: "for some of it it does [feel like omnis], but the
+    // end part it just comes to a sudden stop", on a 360 RPM robot.
+    //
+    // WHAT ACTUALLY HAPPENS BELOW THE GATE, and it is not what the damping suggests. It is tempting
+    // to reason that the parking hold applies damping * speedError and is therefore gentle at low
+    // speed. Measured, it is not: a PhysX articulation velocity drive is solved IMPLICITLY, so it is
+    // effectively a velocity CONSTRAINT bounded by forceLimit, not a spring pulling at
+    // damping * error. Hand it stallTorque and it deletes whatever speed is left in a SINGLE step.
+    // Traced on the 360 RPM robot with a released stick, one 10 ms step either side of the old gate:
+    //     0.959 -> 0.771 u/s   0.19 g   <- coast, rock steady for the whole stop
+    //     0.771 -> 0.023 u/s   0.76 g   <- the parking hold, at the traction limit, in one step
+    // The 0.76 g is not a tune, it is 0.77 u/s divided by one physics step. The wheels lock and the
+    // robot skids to a halt. That is the sudden stop, and the force LIMIT is the only lever on it —
+    // damping never enters into it.
+    //
+    // So the gate is the speed at which the swap stops being observable: the speed the BRAKE ITSELF
+    // removes in one physics step, brakeG * g * dt. At or below it the wheel is stopping this step
+    // whichever authority holds it, so handing it stallTorque changes nothing a driver could feel,
+    // and the parking hold gets its full authority to resist a shove from rest. Above it the brake
+    // keeps the wheel and the deceleration stays at brakeG, by construction, all the way down.
+    //
+    // Which makes the whole stop flat at brakeG with no step anywhere in it — the last one included,
+    // because the last step is exactly one brake-step of speed by definition of the gate.
+    //
+    // Derived rather than pinned as a fraction because it has to track all four things it is made
+    // of: retune the brake fraction, re-gear the robot, change gravity or move off 100 Hz and a
+    // hard-coded fraction silently re-opens the cliff. dt is the step being applied, not
+    // Time.fixedDeltaTime, so an edit-mode harness stepping at its own rate gets the same answer.
+    public static float ParkGateDegPerSec(float fullStickDegPerSec, float brakeG, float topSpeed,
+        float gravity, float dt)
+    {
+        if (topSpeed <= 1e-6f) return 0f;
+        float perStep = Mathf.Max(brakeG, 0f) * Mathf.Abs(gravity) * Mathf.Max(dt, 0f);
+        return Mathf.Max(fullStickDegPerSec, 0f) * Mathf.Clamp01(perStep / topSpeed);
+    }
 
     // WHY THE BRAKE READS THE PRE-SLEW TARGET. The slew is what makes a keyboard tap a small input,
     // and a full reversal takes 1/throttleFallPerSec + 1/throttleRisePerSec = 0.375 s to get through
@@ -997,10 +1042,11 @@ public class RobotMotorController : MonoBehaviour
     // follows the stick with no ramp at all. So the drive target keeps the slew and the brake limit
     // does not.
     private void UpdateBrakingQuadrant(float leftDegPerSec, float rightDegPerSec,
-        float leftTargetDegPerSec, float rightTargetDegPerSec, float fullStickDegPerSec)
+        float leftTargetDegPerSec, float rightTargetDegPerSec, float fullStickDegPerSec, float dt)
     {
         if (allWheels.Length == 0) return;
-        float movingDegPerSec = tuning.maxJointVelocity * Mathf.Rad2Deg * BrakeSpeedFraction;
+        float movingDegPerSec = ParkGateDegPerSec(fullStickDegPerSec, tuning.brakeG,
+            tuning.topSpeed, Physics.gravity.y, dt);
 
         for (int i = 0; i < allWheels.Length; i++)
         {
