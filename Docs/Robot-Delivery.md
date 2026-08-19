@@ -220,6 +220,6 @@ robots a month after they were published.
 
 ```
 -executeMethod MeshDecimationValidation.RunBatchValidate   # 41 checks
--executeMethod RobotBundleValidation.RunBatchValidate      # 55 checks
+-executeMethod RobotBundleValidation.RunBatchValidate      # 64 checks
 -executeMethod RobotVisibilityValidation.RunBatchValidate  # 33 checks
 ```

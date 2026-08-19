@@ -1,7 +1,10 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 // Validates robot delivery: where a bundle lives, who can find it, and whether this build is allowed
 // to open it.
@@ -24,6 +27,12 @@ using UnityEngine;
 //   - THE ADDRESS LEAKED. A private robot listed in the public index is not private, however well
 //     the download is guarded.
 //
+//   - THE ROUTE WAS NEVER SWITCHED ON. Every check above can pass while the app is incapable of
+//     downloading anything, because the download begins at a RobotUploadConfig reference held by the
+//     RobotSpawner in the field scene — and that reference was null in both field scenes for the
+//     whole life of the route. CheckSceneWiring is the one check here that opens a scene, because it
+//     is the only part of delivery that lives in one.
+//
 // Usage: Tools > RoboSim > Validate > Validate Robot Bundles.
 // Batch: -executeMethod RobotBundleValidation.RunBatchValidate
 public static class RobotBundleValidation
@@ -31,6 +40,10 @@ public static class RobotBundleValidation
     [MenuItem("Tools/RoboSim/Validate/Validate Robot Bundles", false, 53)]
     private static void RunFromMenu()
     {
+        // CheckSceneWiring opens the field scenes, so unsaved edits to whatever is open would be
+        // thrown away without a word. Everything else here is pure logic and needed no prompt.
+        if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+
         string result = Validate();
         EditorUtility.DisplayDialog("Validate Robot Bundles", result, "OK");
         Debug.Log(result);
@@ -53,6 +66,7 @@ public static class RobotBundleValidation
         CheckPrivacy(checks);
         CheckIndexRoundTrip(checks);
         CheckCatalogResolution(checks);
+        CheckSceneWiring(checks);
         CheckScriptLayout(checks);
 
         if (checks.Failures.Count == 0)
@@ -357,6 +371,68 @@ public static class RobotBundleValidation
         {
             Object.DestroyImmediate(catalog);
         }
+    }
+
+    // Everything above proves a bundle can be addressed, published and read. This proves the app can
+    // ASK for one: the download route starts at a RobotUploadConfig held by the RobotSpawner in the
+    // field scene, and RobotBundleService.Download bails on a null config before a byte moves.
+    //
+    // That reference was null in BOTH field scenes for the whole life of the route, and nothing here
+    // or anywhere else noticed, because of how the failure presents: the spawner catches the refusal
+    // and puts a built-in robot on the field instead, logging a warning no player sees. You pick your
+    // robot, someone else's robot appears, and it reads as a bundle built against the wrong model.
+    //
+    // Both scenes are checked. The lite field holds a COPY of the spawner taken when it was pruned
+    // out of the full one, so it is a scene that can silently keep a bug the full field has had fixed.
+    private static void CheckSceneWiring(ValidationUtil.Checks checks)
+    {
+        string restoreTo = SceneManager.GetActiveScene().path;
+        try
+        {
+            foreach (string scenePath in new[] { RoboSimPaths.MainScene, RoboSimPaths.LiteScene })
+            {
+                // A lite field that has not been generated yet is not a failure; a missing full field
+                // is, and would be reported by every other scene tool too.
+                if (!File.Exists(scenePath)) continue;
+
+                Scene scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
+                RobotSpawner spawner = null;
+                foreach (GameObject root in scene.GetRootGameObjects())
+                {
+                    spawner = root.GetComponentInChildren<RobotSpawner>(true);
+                    if (spawner != null) break;
+                }
+
+                checks.That(spawner != null,
+                    $"{scenePath} has no RobotSpawner, so nothing puts a robot on the field at all. " +
+                    "Run Tools > RoboSim > Robot > Advanced > Build Robot Prefabs & Spawner.");
+                if (spawner == null) continue;
+
+                var so = new SerializedObject(spawner);
+                checks.That(IsRefSet(so, "catalog"),
+                    $"The RobotSpawner in {scenePath} has no RobotModelCatalog, so no robot spawns.");
+                checks.That(IsRefSet(so, "uploadConfig"),
+                    $"The RobotSpawner in {scenePath} has no RobotUploadConfig, so a robot that has " +
+                    "to be DOWNLOADED never starts downloading — every robot that arrives by catalog " +
+                    "sync or owner code is remote-only, and each one spawns as a different robot with " +
+                    "nothing but a console warning to say why. Run Tools > RoboSim > Robot > Advanced " +
+                    "> Build Robot Prefabs & Spawner, which re-wires both field scenes.");
+                so.Dispose();
+            }
+        }
+        finally
+        {
+            // The scenes are opened read-only, but leaving the validator's last one open would mean a
+            // menu run silently swapped the scene out from under whoever pressed it.
+            if (!string.IsNullOrEmpty(restoreTo) && SceneManager.GetActiveScene().path != restoreTo)
+                EditorSceneManager.OpenScene(restoreTo, OpenSceneMode.Single);
+        }
+    }
+
+    private static bool IsRefSet(SerializedObject so, string propertyName)
+    {
+        SerializedProperty property = so.FindProperty(propertyName);
+        return property != null && property.objectReferenceValue != null;
     }
 
     // ---------------------------------------------------------------------------------------------

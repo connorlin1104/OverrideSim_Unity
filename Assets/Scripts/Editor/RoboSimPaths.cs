@@ -26,6 +26,11 @@ internal static class RoboSimPaths
     // The RobotModelCatalog ScriptableObject listing every playable robot.
     public const string RobotModelCatalog = "Assets/Settings/RobotModelCatalog.asset";
 
+    // Where robot submissions are sent and where downloadable robots are read back from. Needed by
+    // both scene builders — the home screen submits and syncs through it, and the field spawner
+    // downloads through it — and it was written out as a literal in each of them.
+    public const string RobotUploadConfig = "Assets/Settings/RobotUploadConfig.asset";
+
     // Where the playable robot prefabs live.
     public const string RobotsFolder = "Assets/Robots";
 
@@ -61,6 +66,9 @@ internal static class RoboSimPaths
 
     public static RobotModelCatalog LoadRobotCatalog() =>
         AssetDatabase.LoadAssetAtPath<RobotModelCatalog>(RobotModelCatalog);
+
+    public static RobotUploadConfig LoadUploadConfig() =>
+        AssetDatabase.LoadAssetAtPath<RobotUploadConfig>(RobotUploadConfig);
 
     // Does the catalog already list this robot? The builder validators ask BEFORE registering a
     // synthetic test robot, so their cleanup removes only what the run added and never a real entry.

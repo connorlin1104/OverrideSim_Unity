@@ -1139,6 +1139,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RobotSpawner
   catalog: {fileID: 11400000, guid: afcc313cf0f574bcea3eff75ab51a0b1, type: 2}
+  uploadConfig: {fileID: 11400000, guid: 6c85f27acb84749d4b4e311c69d33c3e, type: 2}
   spawnPosition: {x: 15.990001, y: 0.9740399, z: 7.91}
   spawnEuler: {x: 0, y: 0, z: 0}
   wallClearance: 0.5

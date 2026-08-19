@@ -66,6 +66,13 @@ that has been done before.
   - Unsupported platforms are greyed out, so a missing iOS build module shows up here.
 - **10. Play, spawn it, drive it.** ⚠️ First time the bundle route has ever run in this project. A
   failure here has nothing to do with the Model Store — it means the delivery half is broken.
+  - With Serve From Storage **OFF** this only exercises StreamingAssets. **Downloading is a
+    different route and a separate test** — run it once with the toggle ON, and delete the
+    StreamingAssets copy first or that route answers before the download is ever tried.
+  - The download route starts at the field scene's **Upload Config**, which was null in both field
+    scenes until 2026-08-19. Unset, a downloaded robot spawns as *a different robot* and says so
+    only in the console. `Build Robot Prefabs & Spawner` now re-wires both field scenes on every
+    run, and `RobotBundleValidation` fails if either one comes unwired again.
 
 ## D — Reclaim the disk
 

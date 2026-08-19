@@ -33,7 +33,6 @@ using Scene = UnityEngine.SceneManagement.Scene;
 // except the HomeScene itself which is rebuilt). Batch: -executeMethod BuildHomeScene.RunBatch.
 public class BuildHomeScene
 {
-    private const string UploadConfigPath = "Assets/Settings/RobotUploadConfig.asset";
     private const string TmpSettingsPath = "Assets/TextMesh Pro/Resources/TMP Settings.asset";
 
     // The Input System package's built-in DefaultInputActions asset (same one the field
@@ -142,7 +141,7 @@ public class BuildHomeScene
 
         Debug.Log($"Build Home Scene: TMP essentials {(tmpImported ? "imported" : "already present")}, " +
                   $"catalog {(catalogCreated ? "created at " + RoboSimPaths.RobotModelCatalog : "found")}, " +
-                  $"upload config {(uploadConfigCreated ? "created at " + UploadConfigPath + " (fill in the Firebase bucket + key to switch submissions on)" : "found")}, " +
+                  $"upload config {(uploadConfigCreated ? "created at " + RoboSimPaths.RobotUploadConfig + " (fill in the Firebase bucket + key to switch submissions on)" : "found")}, " +
                   $"HomeScene {rebuildStatus}, build settings = [HomeScene, SampleScene], " +
                   $"field Home button {homeButtonStatus}, controls appearance {appearanceStatus}.");
     }
@@ -716,8 +715,7 @@ public class BuildHomeScene
         so.FindProperty("robotCodeInput").objectReferenceValue = robotCodeInput;
         so.FindProperty("robotCodeStatusLabel").objectReferenceValue = robotCodeStatus;
         so.FindProperty("yourCodesLabel").objectReferenceValue = yourCodesLabel;
-        so.FindProperty("uploadConfig").objectReferenceValue =
-            AssetDatabase.LoadAssetAtPath<RobotUploadConfig>(UploadConfigPath);
+        so.FindProperty("uploadConfig").objectReferenceValue = RoboSimPaths.LoadUploadConfig();
         so.FindProperty("inboxNotice").objectReferenceValue = inboxParts.overlay;
         so.FindProperty("inboxLabel").objectReferenceValue = inboxParts.label;
         so.FindProperty("inboxMessageLabel").objectReferenceValue = inboxParts.message;
@@ -768,8 +766,7 @@ public class BuildHomeScene
         SubmitRobotScreen submitScreen = homeRoot.AddComponent<SubmitRobotScreen>();
         SerializedObject submitSo = new SerializedObject(submitScreen);
         submitSo.FindProperty("panel").objectReferenceValue = submitParts.panel;
-        submitSo.FindProperty("config").objectReferenceValue =
-            AssetDatabase.LoadAssetAtPath<RobotUploadConfig>(UploadConfigPath);
+        submitSo.FindProperty("config").objectReferenceValue = RoboSimPaths.LoadUploadConfig();
         submitSo.FindProperty("teamInput").objectReferenceValue = submitParts.team;
         submitSo.FindProperty("robotInput").objectReferenceValue = submitParts.robot;
         submitSo.FindProperty("contactInput").objectReferenceValue = submitParts.contact;
@@ -1284,13 +1281,13 @@ public class BuildHomeScene
     // them rather than failing halfway through an upload.
     private static RobotUploadConfig EnsureUploadConfig(out bool created)
     {
-        RobotUploadConfig config = AssetDatabase.LoadAssetAtPath<RobotUploadConfig>(UploadConfigPath);
+        RobotUploadConfig config = RoboSimPaths.LoadUploadConfig();
         created = false;
         if (config != null) return config;
 
         if (!AssetDatabase.IsValidFolder("Assets/Settings")) AssetDatabase.CreateFolder("Assets", "Settings");
         config = ScriptableObject.CreateInstance<RobotUploadConfig>();
-        AssetDatabase.CreateAsset(config, UploadConfigPath);
+        AssetDatabase.CreateAsset(config, RoboSimPaths.RobotUploadConfig);
         AssetDatabase.SaveAssets();
         created = true;
         return config;

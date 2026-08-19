@@ -454,8 +454,17 @@ public class BuildLiteFieldScene
         if (magnets.Count == 1)
             Expect(problems, magnets[0].stackAnchor != null, "the kept goal magnet lost its stackAnchor");
         if (spawners.Count == 1)
-            Expect(problems, IsRefSet(new SerializedObject(spawners[0]), "catalog"),
+        {
+            SerializedObject spawnerSo = new SerializedObject(spawners[0]);
+            Expect(problems, IsRefSet(spawnerSo, "catalog"),
                 "RobotSpawner lost its RobotModelCatalog — no robot would spawn");
+            // Not the same severity as losing the catalog, and far harder to see: without the config
+            // a downloaded robot can't even start its download, so the spawner quietly puts a
+            // different robot on the field and says so only in the console.
+            Expect(problems, IsRefSet(spawnerSo, "uploadConfig"),
+                "RobotSpawner lost its RobotUploadConfig — a downloaded robot would spawn as some " +
+                "other robot instead");
+        }
 
         Expect(problems, wallColliders != null, "Perimeter/WallColliders is missing (spawn clamp + containment)");
         if (wallColliders != null)
