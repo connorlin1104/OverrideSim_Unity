@@ -21,6 +21,14 @@ using UnityEditor.SceneManagement;
 public static class FieldFeatureValidation
 {
 
+    // How long a freshly seated piece is given to finish arriving before the steady-state checks run.
+    // Its arrival turn is over inside one second; this is generous on purpose, because the cost of
+    // being too short is a test that fails on physics doing exactly what it should.
+    private const int SeatedSettleSteps = 150; // 1.5 s
+
+    // Total angle a seated, undisturbed piece may turn through in one second. Measured 0.000 deg on a
+    // held piece; a piece the hold has stopped gripping tumbles through hundreds.
+    private const float MaxSeatedRotationPerSecond = 2f;
     private const float MaxSeatedAxisError = 0.15f;   // world units off the stack axis once seated
     private const float MinUprightDot = 0.95f;        // cos of allowed tilt once seated
     private const float MaxDetentErrorDeg = 2f;
@@ -146,15 +154,60 @@ public static class FieldFeatureValidation
                          $"{axisError:0.###}u; stack: {magnet.DescribeStack()})\n    trace: {trace}");
         else
         {
+            // LET IT ARRIVE BEFORE ASKING WHETHER IT IS STILL. The capture loop above exits as soon as
+            // the piece has been claimed for 250 steps, and a piece pulled onto the stake is still
+            // travelling then — it makes one last settling turn as it comes down onto its slot.
+            // Measured, from exactly the point this test used to start asserting:
+            //     second 1: turned through 8.468 deg (net 8.359)   <- the arrival, one monotonic turn
+            //     second 2 onward: 0.000 deg, every second, forever
+            // So the old failure was measuring the arrival and calling it a failure to hold. Everything
+            // below is a claim about the STEADY state, which is what the magnet promises.
+            Step(magnets, snaps, SeatedSettleSteps);
+            axisError = AxisDistance(magnet.stackAnchor, cup.worldCenterOfMass);
+
             if (axisError > MaxSeatedAxisError)
                 failures.Add($"magnet hit: seated '{cup.name}' is {axisError:0.###}u off the stack axis (max {MaxSeatedAxisError})");
             if (magnet.keepDroppedOrientation)
             {
                 // New default: the magnet keeps the piece's dropped attitude rather than standing it
                 // upright, so don't assert upright — assert it is HELD STEADY (not tumbling) instead.
-                float spin = cup.angularVelocity.magnitude;
-                if (spin > MaxDetentRestSpeed)
-                    failures.Add($"magnet hit: seated '{cup.name}' is still spinning ({spin:0.##} rad/s > {MaxDetentRestSpeed}) — the hold should freeze its dropped attitude");
+                //
+                // MEASURED AS ANGLE TRAVELLED, NOT AS ANGULAR VELOCITY, and that distinction is the
+                // whole check (2026-08-19). Sampling rb.angularVelocity here reported 0.38-1.53 rad/s
+                // on a piece that was rotationally FROZEN, and failed this test for months on that
+                // basis. Two things conspire: AddTorque(VelocityChange) queues a velocity change that
+                // PhysX applies at the START of the next step, so the hold zeroes the spin before any
+                // of it is integrated; and the contact solver then leaves a fresh residual at the END
+                // of the step, which is what a post-step sample reads. The residual is never turned
+                // into rotation — it is cancelled again before the next integration. Verified by
+                // measuring both on the same seated cup over 2 s: 1.239 rad/s reported, 0.000 degrees
+                // travelled, and identical with the hold's attitude correction disabled entirely.
+                //
+                // Angle travelled is also the STRONGER assertion, not a softened one: it catches a
+                // slow steady creep that an instantaneous sample can miss between steps, and it
+                // catches a back-and-forth buzz that would average to nothing. It is the property the
+                // message actually claims — "the hold should freeze its dropped attitude".
+                //
+                // WHAT IT DOES NOT GUARD, so nobody reads more into a green here than is there:
+                // deleting the hold's AddTorque entirely still passes this. A cup seated in a goal is
+                // a hex ring in a hex pocket threaded on the post — the GEOMETRY holds its attitude,
+                // and it comes to rotational rest whether or not the magnet is doing anything. A
+                // disturbance the magnet alone must answer could not be constructed here for the same
+                // reason: the pocket will not let the piece turn in the first place. Where the hold
+                // genuinely carries the attitude is higher in a stack, where pieces are collision-muted
+                // against each other and nothing but the magnet is holding them — that is where a test
+                // with teeth would have to live.
+                Quaternion previous = cup.rotation;
+                float travelledDeg = 0f;
+                for (int i = 0; i < 100; i++)   // 1 s
+                {
+                    Step(magnets, snaps, 1);
+                    travelledDeg += Quaternion.Angle(previous, cup.rotation);
+                    previous = cup.rotation;
+                }
+                if (travelledDeg > MaxSeatedRotationPerSecond)
+                    failures.Add($"magnet hit: seated '{cup.name}' turned through {travelledDeg:0.##} deg in 1 s " +
+                                 $"(budget {MaxSeatedRotationPerSecond}) — the hold should freeze its dropped attitude");
             }
             else
             {
