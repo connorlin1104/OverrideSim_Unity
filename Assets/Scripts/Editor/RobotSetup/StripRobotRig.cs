@@ -140,7 +140,7 @@ public static class StripRobotRig
     {
         List<Transform> wrappers = new List<Transform>();
         foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
-            if (t != null && t.name.StartsWith("WheelLink_")) wrappers.Add(t);
+            if (t != null && t.name.StartsWith(RobotPartClassifier.WheelLinkNamePrefix)) wrappers.Add(t);
 
         int removed = 0;
         foreach (Transform wrapper in wrappers)

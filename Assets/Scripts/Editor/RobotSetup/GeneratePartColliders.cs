@@ -39,6 +39,9 @@ public static class GeneratePartColliders
     // rubber-on-plastic, and PhysX has no per-pair combine override short of contact-modification
     // callbacks — accepted deliberately.
     private const string WheelMaterialPath = "Assets/WheelPhysics.physicMaterial";
+    // See RigDrivetrainArticulation.MinWheelBoundsSize — same number, same reason, and both tools
+    // need it because either can be the one handed a part whose meshes are gone.
+    private const float MinWheelBoundsSize = 0.01f;
     private const float WheelDynamicFriction = 0.8f;
     private const float WheelStaticFriction = 0.9f;
 
@@ -296,7 +299,7 @@ public static class GeneratePartColliders
         // 2) A wheel gets ONE rolling sphere over the whole part (a boxed wheel can't roll); anything else
         //    goes through the structural triage scoped to this subtree.
         if (IsWheelPart(part, wheelNamePrefix))
-            BuildWheelSphere(part, wheelMat, report);
+            BuildWheelSphere(part, wheelMat, report, useUndo: true);
         else
             BuildStructuralColliders(part, root, null, chassisMat, hullConcaveStructural: true, report);
 
@@ -331,18 +334,55 @@ public static class GeneratePartColliders
         return false;
     }
 
+    // Gives ONE part the rolling sphere a drive wheel needs, and nothing else — the wheel half of
+    // Generate, callable for a single part.
+    //
+    // Exists for Rig Drivetrain's add-wheels path. Both tools find wheels with the SAME classifier,
+    // so a wheel auto-detect missed has no collider either: build a link over it and you get a
+    // driven wheel that cannot reach the ground, spinning in the air beside its loaded neighbours
+    // while that corner of the robot rests on nothing. Darwinbot shipped with exactly one of those.
+    //
+    // Returns false and changes nothing when the part already has a collider (so it is safe to call
+    // on a wheel that was rigged properly), has no renderers, or measures too small to be a wheel —
+    // which is what a part whose meshes are missing looks like. useUndo: false for a prefab opened
+    // with LoadPrefabContents, which lives outside the undo system.
+    public static bool EnsureWheelSphere(GameObject part, bool useUndo)
+    {
+        if (part == null) return false;
+        if (part.GetComponentInChildren<Collider>(true) != null) return false;
+
+        PhysicsMaterial wheelMat = GetOrCreateMaterial(WheelMaterialPath, "WheelPhysics",
+            WheelDynamicFriction, WheelStaticFriction, PhysicsMaterialCombine.Maximum);
+        var report = new Report();
+        BuildWheelSphere(part, wheelMat, report, useUndo);
+        return report.sphereCount > 0;
+    }
+
     // One rolling SphereCollider sized to the part's whole renderer bounds, on the part node — the
     // single-part equivalent of the wheel-cluster sphere in Generate (which merges coincident omni halves;
     // here the user's selection already IS the wheel, so its combined bounds are the wheel).
-    private static void BuildWheelSphere(GameObject part, PhysicsMaterial wheelMat, Report report)
+    private static void BuildWheelSphere(GameObject part, PhysicsMaterial wheelMat, Report report,
+        bool useUndo)
     {
         Renderer[] rends = part.GetComponentsInChildren<Renderer>(true);
         if (rends.Length == 0) return;
         Bounds b = rends[0].bounds;
         for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
 
+        // A renderer whose mesh is missing reports a zero-size bounds at its own origin, so a robot
+        // with a deleted FBX would get a rolling sphere of radius zero and fall through the floor.
+        // Cheaper to refuse than to explain later.
+        if (b.size.magnitude < MinWheelBoundsSize)
+        {
+            Debug.LogWarning($"'{part.name}' measures {b.size.magnitude:0.####} across — its meshes are " +
+                             "missing, so no wheel sphere was built. Restore the model first.", part);
+            return;
+        }
+
         Transform node = part.transform;
-        SphereCollider sphere = Undo.AddComponent<SphereCollider>(node.gameObject);
+        SphereCollider sphere = useUndo
+            ? Undo.AddComponent<SphereCollider>(node.gameObject)
+            : node.gameObject.AddComponent<SphereCollider>();
         sphere.center = node.InverseTransformPoint(b.center);
         Vector3 lossy = node.lossyScale;
         float scale = Mathf.Max(Mathf.Max(Mathf.Abs(lossy.x), Mathf.Abs(lossy.y)), Mathf.Abs(lossy.z));

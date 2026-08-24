@@ -41,6 +41,10 @@ public static class RobotPartClassifier
     // omni — not just this project's original omni. Comma-separated tokens matched anywhere in a name.
     public const string DefaultWheelTokens = "Wheel, Omni, Traction, Flex";
 
+    // What Rig Drivetrain names the link it wraps each wheel in. Shared so the tools that CREATE
+    // those links and the ones that go looking for them can't drift apart on the spelling.
+    public const string WheelLinkNamePrefix = "WheelLink_";
+
     // Coincident omni halves sit essentially on top of each other; anything within this world
     // distance is the same physical wheel. Wheels on the same rail are several units apart
     // (world is 10x scale), so there is a wide safe margin on both sides of this value.
@@ -94,6 +98,99 @@ public static class RobotPartClassifier
             }
         }
         return name;
+    }
+
+    // NormalizeName plus Unity's OWN duplicate suffix. The FBX importer writes ":3" and " (2)",
+    // which NormalizeName strips; a node that Unity itself had to disambiguate picks up a ".001",
+    // and the two stack in either order ("…Assembly:3.001"). Loops over both until the name settles,
+    // so every instance of one CAD part collapses to the same string.
+    //
+    // A trailing dot-group counts as a suffix only when it is 3+ digits and at the very END of the
+    // name, which is what keeps the decimals these CAD names are full of intact: "0.375 OD Spacer,
+    // 0.250 (Nylon) v1" ends in "v1" and survives whole. A part whose name genuinely ENDED in a
+    // 3-digit decimal would lose it — a real limit, and the reason nothing safety-critical hangs
+    // off this. FindUnriggedWheels reports what it matched so a wrong match is visible.
+    public static string PartStem(string rawName)
+    {
+        string name = NormalizeName(rawName);
+        bool stripped = true;
+        while (stripped)
+        {
+            stripped = false;
+
+            int dot = name.LastIndexOf('.');
+            if (dot > 0 && name.Length - dot - 1 >= 3 && IsAllDigits(name, dot + 1, name.Length))
+            {
+                name = name.Substring(0, dot).TrimEnd();
+                stripped = true;
+            }
+
+            string renormalized = NormalizeName(name);
+            if (renormalized != name) { name = renormalized; stripped = true; }
+        }
+        return name;
+    }
+
+    // Every part on an already-rigged `robot` that is another instance of one of its OWN drive
+    // wheels but sits outside every wheel link — i.e. a wheel the rig left behind. Topmost node per
+    // wheel (never one nested inside another hit), ordered by name. Empty for an unrigged robot,
+    // because there is then nothing to compare against.
+    //
+    // WHY NOT JUST RE-RUN FindWheelClusters. That answers "what is a wheel" from a token the caller
+    // passes in, and if the token — or the selection it was run on — is what missed the wheel the
+    // first time, asking it again returns the same answer. This asks a different question, and one
+    // only a rigged robot can be asked: here is what IS in a link, so what else in this robot is
+    // another copy of that same CAD part? A wheel the rig missed is by construction a duplicate of
+    // one it didn't.
+    //
+    // Measured: zero hits on all four correctly-rigged shipped robots, and exactly one on Darwinbot
+    // — "2.75 Omni on Shaved 48T Assembly:3", the sixth wheel, which had no link, no collider, and
+    // no fastener colliders around it either, so that whole corner of the robot touched nothing.
+    public static List<Transform> FindUnriggedWheels(GameObject robot)
+    {
+        var found = new List<Transform>();
+        if (robot == null) return found;
+
+        var links = new List<Transform>();
+        foreach (Transform t in robot.GetComponentsInChildren<Transform>(true))
+            if (t.name.StartsWith(WheelLinkNamePrefix)) links.Add(t);
+        if (links.Count == 0) return found;
+
+        // What is already rigged, and what a rigged wheel is CALLED. The stem comes off the link's
+        // direct children — the wheel node the rig swallowed — not the link itself, whose name is
+        // the rig's own invention and says nothing about the part.
+        var rigged = new HashSet<Transform>();
+        var stems = new HashSet<string>();
+        foreach (Transform link in links)
+        {
+            foreach (Transform t in link.GetComponentsInChildren<Transform>(true)) rigged.Add(t);
+            for (int i = 0; i < link.childCount; i++) stems.Add(PartStem(link.GetChild(i).name));
+        }
+        stems.Remove(string.Empty);
+        if (stems.Count == 0) return found;
+
+        var hits = new HashSet<Transform>();
+        foreach (Transform t in robot.GetComponentsInChildren<Transform>(true))
+        {
+            if (rigged.Contains(t)) continue;
+            if (!stems.Contains(PartStem(t.name))) continue;
+            // No renderers means nothing to size a wheel from — a naming coincidence on an empty
+            // CAD folder, not a wheel.
+            if (t.GetComponentsInChildren<Renderer>(true).Length == 0) continue;
+            hits.Add(t);
+        }
+
+        // Only the topmost node of each wheel: these assemblies nest a same-named inner half inside
+        // the outer one, so an unrigged wheel matches twice and rigging the inner half would leave
+        // the outer one behind holding it.
+        foreach (Transform t in hits)
+        {
+            bool nested = false;
+            for (Transform p = t.parent; p != null && !nested; p = p.parent) nested = hits.Contains(p);
+            if (!nested) found.Add(t);
+        }
+        found.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+        return found;
     }
 
     // True when the (normalized) name contains any deny-list token, case-insensitively.

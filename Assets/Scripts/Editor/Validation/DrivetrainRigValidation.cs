@@ -20,8 +20,16 @@ using UnityEngine;
 //   simply inherits its new parent's chain lands at 0.39 world scale instead of 1, and every anchor
 //   coordinate measured in its frame silently means something else.
 //
-// Pure hierarchy arithmetic, so it needs no physics and no robot — which is the point: it stays
-// green and fast, and it is checkable in a way "the robot still drives" is not.
+// Pure hierarchy arithmetic, so it needs no physics — which is the point: it stays green and fast,
+// and it is checkable in a way "the robot still drives" is not.
+//
+// The file has two halves. The first builds synthetic fixtures and checks the PLACEMENT arithmetic
+// above. The second sweeps the robot prefabs that actually shipped and checks the rig is COMPLETE —
+// added after Darwinbot shipped with six wheels and five links (2 on the left rail, 3 on the right).
+// Nothing caught it: the rig logs its link count and moves on, the robot looks right in every editor
+// view, and the missing wheel's only symptoms are "the turning went weird" and a robot that rides at
+// an angle. Both halves are hierarchy arithmetic; only the second needs real robots, and it needs
+// them because the defect is per-robot and lives in serialized data, not in the code.
 //
 // Usage: Tools > RoboSim > Validate > Validate Drivetrain Rig, or headless
 //   Unity -batchmode -quit -projectPath . -executeMethod DrivetrainRigValidation.RunBatchValidate
@@ -43,7 +51,8 @@ public static class DrivetrainRigValidation
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             int checks = WheelLinksLandBesideTheirWheel();
             checks += LinkKeepsTheWrappersScale();
-            return $"Validate Drivetrain Rig: PASSED ({checks} checks).";
+            checks += EveryShippedRobotIsFullyRigged(out string rigReport);
+            return $"Validate Drivetrain Rig: PASSED ({checks} checks).\n{rigReport}";
         }
         finally
         {
@@ -130,6 +139,109 @@ public static class DrivetrainRigValidation
         ValidationUtil.Finite(safe.x, "a zero-scale parent must not give the link an infinite scale");
         return 5;
     }
+
+    // --- The robots that actually shipped -----------------------------------------------------------
+
+    // Four properties, per robot, that a complete drivetrain rig has and a partial one does not.
+    // Every one of them was FALSE on Darwinbot and true on the other four, which is what makes them
+    // worth asserting rather than restating: they discriminate on the real fleet, today.
+    //
+    // Read straight off the prefab assets — no LoadPrefabContents, because nothing here writes and
+    // the arrays and the hierarchy both resolve fine on the asset.
+    private static int EveryShippedRobotIsFullyRigged(out string report)
+    {
+        var lines = new System.Text.StringBuilder();
+        int checks = 0;
+        int robots = 0;
+
+        foreach (GameObject prefab in RoboSimPaths.RobotPrefabs())
+        {
+            RobotMotorController motor = prefab.GetComponent<RobotMotorController>();
+            if (motor == null) continue; // not a drivable robot
+            robots++;
+
+            int left = CountWheels(motor.leftWheels);
+            int right = CountWheels(motor.rightWheels);
+
+            // 1) THE RAILS MATCH. Per-wheel stall torque is the traction budget over the wheel COUNT
+            //    (DrivetrainTuning.Compute), so an uneven rig makes one side permanently weaker: the
+            //    robot pulls to the short side driving straight and turns at two different rates.
+            ValidationUtil.Assert(left == right,
+                $"'{prefab.name}' has {left} left / {right} right wheel links — per-wheel torque is " +
+                "the traction budget divided by the wheel count, so uneven rails make one side " +
+                "weaker than the other at every stick position. Run Rig Missing Drive Wheels.");
+
+            // 2) NO WHEEL LEFT BEHIND. The rails can also match while a PAIR is missing, so this asks
+            //    the robot's own geometry: is there another copy of a rigged wheel sitting outside
+            //    every link?
+            System.Collections.Generic.List<Transform> unrigged =
+                RobotPartClassifier.FindUnriggedWheels(prefab);
+            ValidationUtil.Assert(unrigged.Count == 0,
+                $"'{prefab.name}' has {unrigged.Count} wheel(s) that are another instance of a rigged " +
+                $"drive wheel but sit outside every wheel link{FirstName(unrigged)} — they are drawn, " +
+                "they are in the right place, and they do nothing. Run Rig Missing Drive Wheels.");
+
+            // 3) EVERY LINK IS WIRED. A link the controller does not hold is a wheel with a joint and
+            //    no drive: it free-spins while the rest of the robot pushes it along.
+            int links = 0;
+            foreach (Transform t in prefab.GetComponentsInChildren<Transform>(true))
+                if (t.name.StartsWith(RobotPartClassifier.WheelLinkNamePrefix)) links++;
+            ValidationUtil.Assert(links == left + right,
+                $"'{prefab.name}' has {links} {RobotPartClassifier.WheelLinkNamePrefix}* objects but " +
+                $"{left + right} wired into RobotMotorController — an unwired link is an undriven wheel.");
+
+            // 4) EVERY DRIVEN WHEEL CAN REACH THE FLOOR. This is the one the whole file is here for.
+            //    Generate Part Colliders finds wheels with the same classifier the rig does, so a
+            //    wheel one missed the other missed too: rig it anyway and you get full drive torque
+            //    against no contact at all. Nothing about a mid-air wheel looks wrong in the editor.
+            int uncollided = 0;
+            string firstBald = null;
+            foreach (ArticulationBody wheel in AllWheels(motor))
+            {
+                if (wheel.GetComponentInChildren<Collider>(true) != null) continue;
+                uncollided++;
+                if (firstBald == null) firstBald = wheel.name;
+            }
+            ValidationUtil.Assert(uncollided == 0,
+                $"'{prefab.name}' has {uncollided} driven wheel(s) with no collider (e.g. " +
+                $"'{firstBald}') — a driven wheel that cannot touch the ground spins in mid-air at " +
+                "full torque while the robot rides on the others.");
+
+            checks += 4;
+            lines.AppendLine($"  {prefab.name}: {left} left / {right} right, {links} link(s), " +
+                             "every wheel collided and rigged.");
+        }
+
+        // A sweep that found no robots is not a pass. The Robots folder has moved before.
+        ValidationUtil.Assert(robots > 0,
+            $"no robot prefabs with a RobotMotorController under {RoboSimPaths.RobotsFolder} — this " +
+            "check passed over nothing, which is not the same as passing.");
+        checks++;
+
+        report = $"  Drivetrain rigs, {robots} robot(s):\n{lines.ToString().TrimEnd()}";
+        return checks;
+    }
+
+    private static int CountWheels(ArticulationBody[] wheels)
+    {
+        if (wheels == null) return 0;
+        int n = 0;
+        foreach (ArticulationBody w in wheels) if (w != null) n++;
+        return n;
+    }
+
+    private static System.Collections.Generic.IEnumerable<ArticulationBody> AllWheels(RobotMotorController motor)
+    {
+        if (motor.leftWheels != null)
+            foreach (ArticulationBody w in motor.leftWheels) if (w != null) yield return w;
+        if (motor.rightWheels != null)
+            foreach (ArticulationBody w in motor.rightWheels) if (w != null) yield return w;
+    }
+
+    // Names the first offender, because "1 wheel is unrigged" and "'2.75 Omni on Shaved 48T
+    // Assembly:3' is unrigged" are different amounts of help at 2am.
+    private static string FirstName(System.Collections.Generic.List<Transform> parts)
+        => parts.Count == 0 ? string.Empty : $" (e.g. '{parts[0].name}')";
 
     private static Transform Child(Transform parent, string name)
     {

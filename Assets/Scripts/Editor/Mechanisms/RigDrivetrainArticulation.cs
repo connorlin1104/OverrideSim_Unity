@@ -91,6 +91,12 @@ public class RigDrivetrainArticulation
     private const float WheelSpinDamping = 0.5f;        // velocity-proportional spin loss (bleeds top speed)
     private const float AxleAngleToleranceDeg = 10f;
 
+    // Smallest bounding-box diagonal, in world units, that can still be a drive wheel. The world is
+    // 10x scale (1 unit = 100 mm) and the smallest wheel here is a 2.75" omni at ~0.7 units across,
+    // so 0.01 is two orders of magnitude below anything real and only ever catches a part whose
+    // meshes are gone. See the check in AddWheelsToDrivetrain.
+    private const float MinWheelBoundsSize = 0.01f;
+
     // Rig (or re-rig) the drivetrain. The selection decides how the wheels are found:
     //   • Select the ROBOT root  → wheels are auto-detected by name (RobotPartClassifier).
     //   • Select the DRIVE WHEELS (2+ parts) → each selected part becomes one wheel — the escape
@@ -389,7 +395,7 @@ public class RigDrivetrainArticulation
                                  "Trusting the geometry.", cluster.topmost);
 
             int sideIndex = isLeft ? leftLinks.Count : rightLinks.Count;
-            string linkName = $"WheelLink_{(isLeft ? "LS" : "RS")}{sideIndex}";
+            string linkName = $"{RobotPartClassifier.WheelLinkNamePrefix}{(isLeft ? "LS" : "RS")}{sideIndex}";
 
             // Rotated so its local +X is the detected axle: the revolute joint spins about the
             // ANCHOR's X axis (Unity PhysicsModule: "Revolute joint allows rotational movement
@@ -479,6 +485,23 @@ public class RigDrivetrainArticulation
             ab.ResetCenterOfMass();
             ab.ResetInertiaTensor();
         }
+
+        // 5b) THE RAILS HAVE TO MATCH, and nothing downstream ever checks. Per-wheel stall torque is
+        //     the traction budget divided by the wheel COUNT, so a rail with one wheel fewer makes
+        //     proportionally less force than the other at every stick position: the robot pulls to the
+        //     short side driving straight and turns at two different rates depending on which way you
+        //     ask. Darwinbot shipped 2 left / 3 right and read as "the turning went weird" — nothing
+        //     in the editor, the console or any validator said otherwise.
+        //
+        //     A warning rather than a throw: the rig is also the escape hatch for a robot whose wheels
+        //     really are uneven (a selection-driven rig of two drive wheels and one caster), and
+        //     refusing to build would leave that user with nothing. Add Selected Wheels to Drivetrain,
+        //     or Rig Missing Drive Wheels, is the fix.
+        if (leftLinks.Count != rightLinks.Count)
+            Debug.LogWarning($"{UndoName}: '{robot.name}' came out with {leftLinks.Count} left / " +
+                             $"{rightLinks.Count} right wheel links. Uneven rails make one side stronger " +
+                             "than the other, so the robot pulls and turns unevenly. If a wheel was " +
+                             "missed, run Rig Missing Drive Wheels.", robot);
 
         // 6) Motor controller, wired to the links and the old controller's input actions.
         RobotMotorController motor = Undo.AddComponent<RobotMotorController>(robot);
@@ -614,7 +637,11 @@ public class RigDrivetrainArticulation
     // appended to the RobotMotorController arrays so it spins with the rest. This is the reliable
     // escape hatch when auto-detect missed wheels. Throws if the robot isn't rigged yet. Skips parts
     // already wired or with no renderers. Returns the number of wheels added.
-    public static int AddWheelsToDrivetrain(GameObject robot, IEnumerable<GameObject> wheelParts)
+    //
+    // useUndo: false for a prefab opened with LoadPrefabContents, which lives outside the undo system
+    // and logs errors if you register against it. That is the path RigMissingDriveWheels takes.
+    public static int AddWheelsToDrivetrain(GameObject robot, IEnumerable<GameObject> wheelParts,
+        bool useUndo = true)
     {
         if (robot == null) throw new System.ArgumentNullException(nameof(robot));
         RobotMotorController motor = robot.GetComponent<RobotMotorController>();
@@ -644,9 +671,13 @@ public class RigDrivetrainArticulation
         float leftMeanX = MeanAxleProj(left, axleDir);
         float rightMeanX = MeanAxleProj(right, axleDir);
 
-        Undo.IncrementCurrentGroup();
-        Undo.SetCurrentGroupName(AddWheelsUndo);
-        int undoGroup = Undo.GetCurrentGroup();
+        int undoGroup = 0;
+        if (useUndo)
+        {
+            Undo.IncrementCurrentGroup();
+            Undo.SetCurrentGroupName(AddWheelsUndo);
+            undoGroup = Undo.GetCurrentGroup();
+        }
 
         int added = 0;
         foreach (GameObject part in wheelParts)
@@ -663,23 +694,56 @@ public class RigDrivetrainArticulation
             Bounds bounds = renderers[0].bounds;
             for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
 
+            // A ROBOT WHOSE SOURCE FBX HAS GONE MISSING STILL HAS ALL ITS RENDERERS. They are just
+            // pointing at nothing, so every one reports a zero-size bounds at its own origin — and
+            // Renderer.Length, the guard directly above, cannot tell that apart from a real wheel.
+            // Rig from those bounds and the link lands at the wrong place carrying a rolling sphere
+            // sized to nothing: a robot that still drives, still turns, and is wrong in a way no
+            // console message would ever mention. Darwinbot was in exactly that state while this
+            // was being written — all 1639 of its MeshFilters pointing at a deleted FBX — which is
+            // the only reason this check exists rather than being an imagined edge case.
+            if (bounds.size.magnitude < MinWheelBoundsSize)
+            {
+                Debug.LogWarning($"{AddWheelsUndo}: '{part.name}' measures {bounds.size.magnitude:0.####} " +
+                                 "across, which is not a wheel. Its meshes are almost certainly missing " +
+                                 "(a deleted or unimported FBX leaves the renderers behind pointing at " +
+                                 "nothing). Restore the model and run this again — rigging from these " +
+                                 "bounds would place the link wrong and give it a zero-radius sphere.",
+                                 part);
+                continue;
+            }
+
             float localX = Vector3.Dot(bounds.center, axleDir);
             bool isLeft = DecideSide(localX, leftMeanX, rightMeanX);
             int sideIndex = isLeft ? left.Count : right.Count;
-            string linkName = $"WheelLink_{(isLeft ? "LS" : "RS")}{sideIndex}_added";
+            string linkName = $"{RobotPartClassifier.WheelLinkNamePrefix}{(isLeft ? "LS" : "RS")}{sideIndex}_added";
 
             // In place beside the wheel, rotated to match the existing wheels' axle, with the anchor
             // forced to identity so the revolute twist axis is the link's +X (the axle) — the same setup
             // Rig uses (see the axis note in this file's header, and WheelMount).
             Transform mount = WheelMount(part.transform, wrapper);
             GameObject link = new GameObject(linkName);
-            Undo.RegisterCreatedObjectUndo(link, AddWheelsUndo);
+            if (useUndo) Undo.RegisterCreatedObjectUndo(link, AddWheelsUndo);
             link.transform.SetParent(mount, false);
             link.transform.SetPositionAndRotation(bounds.center, linkRotation);
             link.transform.localScale = InverseScale(mount, wrapper.lossyScale);
-            Undo.SetTransformParent(part.transform, link.transform, AddWheelsUndo); // keeps world placement
+            // Both keep world placement.
+            if (useUndo) Undo.SetTransformParent(part.transform, link.transform, AddWheelsUndo);
+            else part.transform.SetParent(link.transform, true);
 
-            ArticulationBody ab = Undo.AddComponent<ArticulationBody>(link);
+            // A WHEEL WITHOUT A COLLIDER IS NOT A WHEEL. Generate Part Colliders finds wheels with the
+            // same classifier this tool is the escape hatch for, so a part it missed carries no rolling
+            // sphere — and every fastener around it was skipped as a fastener, so that whole corner of
+            // the robot has no collider at all. Wiring a drive to it without this line produces a wheel
+            // that spins in mid-air: full torque, zero traction, and the chassis resting on the other
+            // wheels at an angle. Silent, because the link, the drive and the array entry all look right.
+            if (GeneratePartColliders.EnsureWheelSphere(part, useUndo))
+                Debug.Log($"{AddWheelsUndo}: '{part.name}' had no collider — gave it a rolling sphere, " +
+                          "or it would have driven without ever touching the ground.", part);
+
+            ArticulationBody ab = useUndo
+                ? Undo.AddComponent<ArticulationBody>(link)
+                : link.AddComponent<ArticulationBody>();
             ab.jointType = ArticulationJointType.RevoluteJoint; // BEFORE drive config (type change resets drives)
             ab.matchAnchors = true;
             ab.anchorPosition = Vector3.zero;
@@ -710,17 +774,17 @@ public class RigDrivetrainArticulation
 
         if (added > 0)
         {
-            Undo.RecordObject(motor, AddWheelsUndo);
+            if (useUndo) Undo.RecordObject(motor, AddWheelsUndo);
             motor.leftWheels = left.ToArray();
             motor.rightWheels = right.ToArray();
             EditorUtility.SetDirty(motor);
             // More wheels means more torque for the same traction budget, so every drive is
             // re-derived — not just the new ones — or the robot would get stronger with each
             // wheel added instead of sharing the same grip between more of them.
-            ApplyDriveTuning(robot, useUndo: true);
-            EditorSceneManager.MarkSceneDirty(robot.scene);
+            ApplyDriveTuning(robot, useUndo);
+            if (robot.scene.IsValid()) EditorSceneManager.MarkSceneDirty(robot.scene);
         }
-        Undo.CollapseUndoOperations(undoGroup);
+        if (useUndo) Undo.CollapseUndoOperations(undoGroup);
         return added;
     }
 
