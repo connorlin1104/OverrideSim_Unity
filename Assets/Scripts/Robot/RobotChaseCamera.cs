@@ -73,6 +73,10 @@ public class RobotChaseCamera : MonoBehaviour
     // of mass, which needs all of them and must not re-walk a ~2700-object hierarchy every frame.
     private ArticulationBody[] robotBodies;
 
+    // The robot's drivetrain, cached at acquisition. It owns the only trustworthy answer to which
+    // way this particular robot drives — see RobotHeading.
+    private RobotMotorController motor;
+
     // Fallback aim, as an offset in the ROBOT'S local space, for the frames before PhysX has
     // populated worldCenterOfMass and for a hypothetical robot with no articulation at all.
     private Vector3 focusLocal;
@@ -80,11 +84,11 @@ public class RobotChaseCamera : MonoBehaviour
     // The robot's own height, measured once at acquisition, that focusHeightFraction scales.
     private float robotHeight;
 
-    [Tooltip("Where the camera sits around the robot before you drag it, in degrees. The robot's +Z " +
-             "is its side rather than its nose on these CAD imports, so this is a quarter turn round " +
-             "to put the claw end in frame — and the far quarter, so the camera looks AT the claw " +
-             "from behind the bot rather than standing in front of it.")]
-    [SerializeField] private float startYawOffset = -90f;
+    [Tooltip("Where the camera sits around the robot before you drag it, in degrees, measured from " +
+             "directly behind the way the robot DRIVES. Zero is the chase view — behind the bot, " +
+             "looking where it is going. This was -90 for as long as the heading below was a guess " +
+             "at the driving axis; the guess is gone, and so is the compensation for it.")]
+    [SerializeField] private float startYawOffset = 0f;
 
     private float yawOffset;      // the player's orbit, on top of the robot's heading
     private float heading;        // damped robot heading the camera trails
@@ -111,6 +115,7 @@ public class RobotChaseCamera : MonoBehaviour
         // wrong until the scene was reloaded.
         robot = null;
         robotBodies = null;
+        motor = null;
         anchored = false;
         nextSearchTime = 0f;
     }
@@ -216,9 +221,21 @@ public class RobotChaseCamera : MonoBehaviour
     // ramp — or tipped over — never rolls or pitches the camera.
     private float RobotHeading()
     {
-        // The rig aligns every wheel link's local +X with the robot root's +X (robot right), so the
-        // root's +Z is the driving-forward axis — see RobotMotorController's sign convention.
-        Vector3 forward = Vector3.ProjectOnPlane(robot.forward, Vector3.up);
+        // ASK THE DRIVETRAIN WHICH WAY IS FORWARD, because no convention survives player CAD. Root
+        // +Z is the driving axis on 360RpmDrivetrain, 654V_v1 and Darwinbot, and a quarter turn out
+        // on 654V_v2 and 654V_v3 — measured off the mean wheel axle, which is the only part of an
+        // imported robot that knows. RobotMotorController does that measurement (forward = axle x
+        // up) and publishes the result, so read it rather than re-deriving a worse one here.
+        //
+        // The -90 that startYawOffset used to carry WAS this correction, hard-coded: it is exactly
+        // v2 and v3's offset, which is why those two framed correctly and the other three sat
+        // looking at the robot's flank. Reading the measured axis is a no-op on v2 and v3 and
+        // squares up the rest, so the offset goes back to a plain "behind the robot".
+        //
+        // The fallback is the old assumption rather than nothing: a robot with no drivetrain at all
+        // still has to be followed, and +Z is as good a guess as exists for one.
+        Vector3 driving = motor != null ? motor.DriveForwardWorld : robot.forward;
+        Vector3 forward = Vector3.ProjectOnPlane(driving, Vector3.up);
         if (forward.sqrMagnitude < 0.0001f) return heading; // nose-up: keep the heading we had
 
         float value = Mathf.Atan2(forward.x, forward.z) * Mathf.Rad2Deg;
@@ -254,6 +271,10 @@ public class RobotChaseCamera : MonoBehaviour
 
         robot = ResolveRoot(tagged.transform);
         robotBodies = robot.GetComponentsInChildren<ArticulationBody>(true);
+
+        // On all five shipped robots this sits on the articulation root itself. GetComponentInParent
+        // starts there and still finds it if a wrapper above ever carries the drivetrain instead.
+        motor = robot.GetComponentInParent<RobotMotorController>();
         MeasureFallback(robot, out focusLocal, out robotHeight);
         anchored = false; // snap onto the robot on the next Follow()
     }

@@ -49,7 +49,7 @@ public static class BuildDriveControls
     // The trade: hand-tuning these in the Inspector is overwritten by a re-run. Tune them here
     // instead. The knobs the tool doesn't author (pitch, zoom range) are left alone.
     private const float ChaseCameraDistance = 10f;   // ~1 m back, about three robot-widths
-    private const float ChaseCameraStartYaw = -90f;  // quarter turn round, looking at the claw end
+    private const float ChaseCameraStartYaw = 0f;    // straight behind the robot's measured drive-forward
 
     // Smoothing, and why it is small. Mathf.SmoothDampAngle needs roughly 2.5x its smoothTime to
     // settle, so the old 0.25 s heading damp kept the WORLD rotating for ~0.63 s after the robot

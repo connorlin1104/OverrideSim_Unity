@@ -5058,7 +5058,7 @@ MonoBehaviour:
   scrollZoomSpeed: 0.12
   groundY: 0.72
   floorClearance: 1.5
-  startYawOffset: -90
+  startYawOffset: 0
 --- !u!20 &1232780385
 Camera:
   m_ObjectHideFlags: 0
