@@ -79523,8 +79523,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 0.052395634
-    forceLimit: 113.17457
+    damping: 0.07053372
+    forceLimit: 101.568565
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -101838,13 +101838,14 @@ MonoBehaviour:
   leftWheels:
   - {fileID: 817661770514173901}
   - {fileID: 5543777365030797251}
+  - {fileID: 3852507477135576391}
   rightWheels:
   - {fileID: 622975059575128625}
   - {fileID: 4094000437074147017}
   - {fileID: 3555712261395541379}
   leftJoystickAction: {fileID: -2567127469079716927, guid: 5d9b02529a3094fb9a16246c7d651a9f, type: 3}
   rightJoystickAction: {fileID: -4138797506576420852, guid: 5d9b02529a3094fb9a16246c7d651a9f, type: 3}
-  maxWheelRpm: 360
+  maxWheelRpm: 240
   wheelStallTorque: 700
   velocityDriveDamping: 1000
   wheelRollingResistance: 0.3
@@ -159558,6 +159559,105 @@ Transform:
   - {fileID: 6167498429851512201}
   m_Father: {fileID: 6556901058267732976}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &5454191560969948479
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 3372838794519093304}
+  - component: {fileID: 3852507477135576391}
+  m_Layer: 0
+  m_Name: WheelLink_LS2_added
+  m_TagString: Player
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &3372838794519093304
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5454191560969948479}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -2.1684043e-19, z: -1.2924748e-26, w: 1}
+  m_LocalPosition: {x: -0.048072755, y: 0.112446025, z: -0.014486685}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 5391558992695099787}
+  m_Father: {fileID: 3263076534461654436}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!171741748 &3852507477135576391
+ArticulationBody:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5454191560969948479}
+  m_Enabled: 1
+  serializedVersion: 6
+  m_Mass: 0.5
+  m_ParentAnchorPosition: {x: -0.047532756, y: 0.012446029, z: -0.014501083}
+  m_ParentAnchorRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_AnchorPosition: {x: 0, y: 0, z: 0}
+  m_AnchorRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_MatchAnchors: 1
+  m_ArticulationJointType: 2
+  m_LinearX: 2
+  m_LinearY: 2
+  m_LinearZ: 2
+  m_SwingY: 2
+  m_SwingZ: 2
+  m_Twist: 2
+  m_XDrive:
+    lowerLimit: 0
+    upperLimit: 0
+    stiffness: 0
+    damping: 0.07053372
+    forceLimit: 101.568565
+    target: 0
+    targetVelocity: 0
+    driveType: 3
+  m_YDrive:
+    lowerLimit: 0
+    upperLimit: 0
+    stiffness: 0
+    damping: 0
+    forceLimit: 3.4028235e+38
+    target: 0
+    targetVelocity: 0
+    driveType: 0
+  m_ZDrive:
+    lowerLimit: 0
+    upperLimit: 0
+    stiffness: 0
+    damping: 0
+    forceLimit: 3.4028235e+38
+    target: 0
+    targetVelocity: 0
+    driveType: 0
+  m_LinearDamping: 0.05
+  m_AngularDamping: 0.5
+  m_JointFriction: 0.3
+  m_CenterOfMass: {x: 0, y: 0, z: 0}
+  m_InertiaTensor: {x: 1, y: 1, z: 1}
+  m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ImplicitCom: 1
+  m_ImplicitTensor: 1
+  m_Immovable: 0
+  m_UseGravity: 1
+  m_CollisionDetectionMode: 3
 --- !u!1 &5455356502661108848
 GameObject:
   m_ObjectHideFlags: 0
@@ -161814,8 +161914,8 @@ Transform:
   - {fileID: 6840685789623116743}
   - {fileID: 4160292596126519866}
   - {fileID: 6316138645278651959}
-  - {fileID: 5391558992695099787}
   - {fileID: 6368448879492816718}
+  - {fileID: 3372838794519093304}
   m_Father: {fileID: 6286981443587972031}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &5508155805445450515
@@ -196008,8 +196108,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 0.052395634
-    forceLimit: 113.17457
+    damping: 0.07053372
+    forceLimit: 101.568565
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -208407,8 +208507,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 0.052395634
-    forceLimit: 113.17457
+    damping: 0.07053372
+    forceLimit: 101.568565
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -253070,6 +253170,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 5391558992695099787}
+  - component: {fileID: 5692103808675673542}
   m_Layer: 0
   m_Name: 2.75 Omni on Shaved 48T Assembly:3
   m_TagString: Untagged
@@ -253085,14 +253186,35 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 8401808865663130587}
   serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -8.565197e-18, z: 1.6653345e-16, w: 1}
-  m_LocalPosition: {x: 0.0035899996, y: 0.09250001, z: -0.002485603}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalRotation: {x: -0, y: -8.348357e-18, z: 1.6653345e-16, w: 1}
+  m_LocalPosition: {x: 0.051662758, y: -0.019946024, z: 0.012001082}
+  m_LocalScale: {x: 1, y: 0.9999999, z: 0.9999999}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 6881431828754413684}
-  m_Father: {fileID: 3263076534461654436}
+  m_Father: {fileID: 3372838794519093304}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!135 &5692103808675673542
+SphereCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8401808865663130587}
+  m_Material: {fileID: 13400000, guid: c53bc171c2a0f4cefa823426ebfd57cc, type: 2}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Radius: 0.014559067
+  m_Center: {x: -0.051662754, y: 0.019946026, z: -0.012001075}
 --- !u!1 &8402191894710385055
 GameObject:
   m_ObjectHideFlags: 0
@@ -256022,8 +256144,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 0.052395634
-    forceLimit: 113.17457
+    damping: 0.07053372
+    forceLimit: 101.568565
     target: 0
     targetVelocity: 0
     driveType: 3
@@ -273340,8 +273462,8 @@ ArticulationBody:
     lowerLimit: 0
     upperLimit: 0
     stiffness: 0
-    damping: 0.052395634
-    forceLimit: 113.17457
+    damping: 0.07053372
+    forceLimit: 101.568565
     target: 0
     targetVelocity: 0
     driveType: 3

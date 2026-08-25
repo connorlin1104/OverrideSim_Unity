@@ -7,9 +7,11 @@ Background for each part lives elsewhere — [Robot-Submissions.md](Robot-Submis
 arrives and why, [Robot-Delivery.md](Robot-Delivery.md) for bundles, and
 [Model-Storage.md](Model-Storage.md) for the store. This is the checklist.
 
-**Nothing here has ever been run end to end.** `Assets/StreamingAssets/` and `~/RoboSimModelStore`
-do not exist yet. Steps 9 and 12 are the two that prove the pipeline; everything else is setup
-that has been done before.
+**Status 2026-08-24: run once for real, most of the way.** Darwinbot has been through steps 4–9 —
+built as a bundle, spawned and driven from StreamingAssets — and step 11's stow ran 2026-08-18 with
+the fetch round-tripping byte-identical. `Assets/StreamingAssets/` and `~/RoboSimModelStore` both
+exist now. Still unproven: step 12 (spawn with the FBX stowed) and the Serve From Storage download
+route.
 
 ## A — the model arrives
 
