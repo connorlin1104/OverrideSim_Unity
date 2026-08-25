@@ -192,9 +192,10 @@ public class BuildHomeScene
         // banner it used to be — a scene built before that has neither of these objects.
         if (FindDescendantRect(scene, "InboxMessageViewport") == null) return false;
         if (FindDescendantRect(scene, "InboxPanel") == null) return false;
-        // The submit screen now asks for CAD (.step/.f3d) ahead of a mesh export. That advice is a
-        // plain label with no serialized ref, so without this check a scene built before it would
-        // still validate and the one line that changes what people send would never ship.
+        // The submit screen tells a player what to export. That advice is a plain label with no
+        // serialized ref, so without this check a scene built before it would still validate and the
+        // one line that changes what people send would never ship. Note the check only asks whether
+        // the object EXISTS — rewording FormatAdvice still needs Rebuild Home Screen (Force).
         if (FindDescendantRect(scene, "SubmitFormatHint") == null) return false;
 
         // Inverted checks: catalog authoring moved out of the game and into
@@ -1240,16 +1241,16 @@ public class BuildHomeScene
         SetLayoutHeight(parts.sharing.gameObject, 72f);
 
         // Which format to send, said immediately above the button that picks one — the only moment
-        // the advice can still change what someone exports. It reads as a preference rather than a
-        // rule because all seven extensions are genuinely accepted; a player who only has an FBX
-        // should send the FBX rather than give up.
+        // the advice can still change what someone exports. The refinement is the part worth saying:
+        // the extension is now something almost every exporter offers, and the mesh density is what
+        // decides whether the file is 40 MB or 200.
         TextMeshProUGUI formatHint = CreateText("SubmitFormatHint", content.transform,
             RobotFilePicker.FormatAdvice, 24f);
         formatHint.fontStyle = FontStyles.Italic;
-        // Four lines at 24pt across this panel. The advice wrapped to three until '.f3z' was named
-        // alongside '.f3d'; a fixed height does not grow with the text, so the last line would have
-        // been clipped rather than the panel getting taller.
-        SetLayoutHeight(formatHint.gameObject, 120f);
+        // Three lines at 24pt across this panel. A fixed height does not grow with the text, so
+        // check the character count against this before editing FormatAdvice: 112 characters wrapped
+        // to three lines here and 120 wrapped to four. The current advice is 104.
+        SetLayoutHeight(formatHint.gameObject, 90f);
 
         parts.chooseFile = CreateButton("ChooseFileButton", content.transform, "Choose File", 36f, NeutralColor);
         SetLayoutHeight(parts.chooseFile.gameObject, 72f);

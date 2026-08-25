@@ -18,45 +18,36 @@ public static class RobotFilePicker
 {
     // What a robot can arrive as, best first.
     //
-    // The CAD formats lead because they are the only ones that still hold the exact surfaces. An FBX
-    // is already tessellated — whatever refinement the sender's export happened to use is baked in,
-    // and the only thing anyone can do to it afterwards is decimate, which is a lossy guess at
-    // geometry that was exact one step earlier. From a .step or .f3d the mesh is generated at
-    // whatever density the simulator wants, and small features like screw holes come out right by
-    // construction rather than by being preserved. It is also about 100x smaller: the same robot is
-    // ~100 MB of triangles or a couple of MB of surfaces.
+    // CAD (.step/.stp/.f3d/.f3z) used to lead this list and is now not on it at all. The argument for
+    // it was sound on paper: a CAD file still holds the exact surfaces, so the mesh can be generated
+    // at whatever density the simulator wants instead of at whatever the sender's exporter happened
+    // to use, and it crosses the wire at roughly a hundredth of the size. What that left out is who
+    // pays for it. Nothing in this project can read any of those formats — Unity imports none of
+    // them — so every CAD submission meant a manual round-trip through Fusion, on one machine,
+    // before a single triangle reached the editor, and getting a whole assembly down to a usable
+    // refinement there is slow and fiddly work. Decimating the FBX afterwards is neither: measured on
+    // the first robot through it, Blender took the file down by more than half in minutes.
     //
-    // .f3d is Fusion's own archive; .step is what every other CAD package exports. Both keep the
-    // component names the setup tools read, which is the only structure this project needs.
+    // So the ask is the mesh, and the size lever moves to this side of the pipeline — which is
+    // where the person who knows what the simulator needs was always the one holding it.
     //
-    // '.f3z' is that same archive holding a DISTRIBUTED design: a zip of one or more .f3d files that
-    // carries the externally referenced components along with the parent. Fusion chooses between the
-    // two on the sender's behalf — a design with any linked component offers no .f3d at all — and a
-    // robot assembly is usually exactly that design, so refusing .f3z would refuse the format most
-    // assemblies actually export as. It is also the better one to receive: the .f3d of such a design
-    // would arrive without the parts it links to.
-    //
-    // '.stp' is the same format as '.step' — exporters are split roughly evenly between the two
-    // spellings, and a player whose file is silently refused has no way to work out why.
-    //
-    // FBX/URDF/ZIP stay accepted because they are what people already have. URDF needs its meshes
-    // alongside it, hence the archive format.
-    public static readonly string[] AcceptedExtensions =
-        { "step", "stp", "f3d", "f3z", "fbx", "urdf", "zip" };
+    // URDF and ZIP stay because they are a different route in rather than a CAD one: the URDF
+    // importer reads them directly. A URDF needs its meshes alongside it, hence the archive.
+    public static readonly string[] AcceptedExtensions = { "fbx", "urdf", "zip" };
 
     // The preference, said in full where a player is choosing a file. Lives here rather than in the
     // screen so the advice and the list it describes cannot drift apart.
     //
-    // Both Fusion extensions are named because the sender does not get to pick which one they have,
-    // and being told to export a format their File menu never offers reads as "you can't send this".
+    // It asks for a refinement setting rather than a file size because refinement is the control the
+    // sender actually has in front of them. "Keep it under 100 MB" is a number nobody can act on
+    // without knowing which slider moves it.
     public const string FormatAdvice =
-        "Send your CAD. Made in Fusion 360 — export a .f3d or .f3z. " +
-        "Any other CAD — export a .step. FBX, URDF and ZIP also works.";
+        "Send your robot as an FBX — export it from your CAD at Low or Medium refinement. " +
+        "URDF and ZIP also work.";
 
-    // The short form, for one-line status messages. '.stp' and '.f3z' are left out on purpose: both
-    // are accepted, so nobody is ever shown this list because they sent one. Its job is to tell
-    // someone whose file was refused what to send instead, and for that '.f3d' names Fusion once.
-    public const string AcceptedList = ".step, .f3d, .fbx, .urdf or .zip";
+    // The short form, for one-line status messages. Every accepted extension is named: the list is
+    // three long now, so there is nothing to leave out for brevity's sake.
+    public const string AcceptedList = ".fbx, .urdf or .zip";
 
     // True when the platform can open a real file dialog; false means the player uses the inbox.
     public static bool CanBrowse

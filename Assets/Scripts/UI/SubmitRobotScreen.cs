@@ -6,7 +6,8 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // The "Submit a Robot" screen: a player picks their robot file, says who they are, and sends it in.
-// CAD (.step/.f3d) is what the screen asks for and a mesh export (.fbx/.urdf/.zip) is the fallback —
+// An FBX is what the screen asks for, at a low mesh refinement; .urdf/.zip are the other way in.
+// CAD (.step/.f3d/.f3z) was accepted until it wasn't worth the Fusion round-trip it cost —
 // RobotFilePicker.AcceptedExtensions carries both the list and the reason.
 //
 // It is honest about what happens next — the robot is set up by hand in the Unity editor (collider
