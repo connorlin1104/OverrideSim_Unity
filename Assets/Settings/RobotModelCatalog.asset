@@ -202,7 +202,7 @@ MonoBehaviour:
       id: darwinbot
       version: a4d37a4f
       scriptVersion: 1
-      remote: 0
+      remote: 1
       sourceGuid: 31076c858b32141ee85877012bc97ff5
     mechanisms: []
     visibility: 1

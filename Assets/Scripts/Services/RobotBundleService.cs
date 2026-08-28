@@ -139,7 +139,12 @@ public static class RobotBundleService
         // given (robot, build) pair is downloaded exactly once per device and read from disk every
         // time after. Passing a version of 1 alongside a versioned URL is deliberate: the URL is
         // what changes when the content changes, so the cache never has to be invalidated by hand.
-        using (UnityWebRequest request = UnityWebRequestAssetBundle.GetAssetBundle(url, 1))
+        //
+        // Three arguments, not two. The two-argument overload is (uri, crc), and until 2026-08-27
+        // this call was GetAssetBundle(url, 1): a CRC of 1, which no bundle has, so the first real
+        // download ever attempted was refused with "CRC Mismatch. Provided 1". A crc of 0 skips the
+        // check — the same trust LoadFromFile extends to the StreamingAssets copy.
+        using (UnityWebRequest request = UnityWebRequestAssetBundle.GetAssetBundle(url, 1, 0))
         {
             yield return request.SendWebRequest();
 

@@ -129,8 +129,13 @@ robots/c<32 hex>/iOS/v1/654v-claw-a1b2c3d4.bundle
 ```
 
 ```
-gsutil -m rsync -r Build/RobotBundles gs://<bucket>/
+gcloud storage rsync --recursive Build/RobotBundles/robots gs://<bucket>/robots
 ```
+
+- `robots/` only. `.build/` beside it is Unity's scratch output, ~100 MB, and never goes up.
+- The `robots/` read rule has to be live: `firebase deploy --only storage` from the repo root. A
+  download that answers `403 Permission denied` where the file exists means it is not (a missing
+  file under a live rule is a 404). Found not live on 2026-08-27, three weeks after the rule was written.
 
 **Publishing is never done from the app.** `/robots` is `allow write: if false` in `storage.rules`
 and has to stay that way: this repo is public and the web API key with it, so anything the app is

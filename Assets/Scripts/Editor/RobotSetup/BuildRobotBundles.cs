@@ -483,9 +483,10 @@ public static class BuildRobotBundles
     private static string UploadInstructions(RobotModelCatalog.Entry entry)
     {
         return
-            "To publish, copy the tree under " + StagingFolder + " into the bucket, keeping the " +
-            "paths:\n" +
-            $"    gsutil -m rsync -r {StagingFolder} gs://<bucket>/\n\n" +
+            "To publish, copy the robots/ tree under " + StagingFolder + " into the bucket, keeping " +
+            "the paths. robots/ only: .build/ beside it is Unity's scratch output (~100 MB) and must " +
+            "not go up.\n" +
+            $"    gcloud storage rsync --recursive {StagingFolder}/robots gs://<bucket>/robots\n\n" +
             "Uploading is NOT done from the app. /robots is read-only in storage.rules and has to " +
             "stay that way: this repo is public and the web API key with it, so anything the app is " +
             "allowed to write, anyone is allowed to write.\n" +

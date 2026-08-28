@@ -7,11 +7,12 @@ Background for each part lives elsewhere — [Robot-Submissions.md](Robot-Submis
 arrives and why, [Robot-Delivery.md](Robot-Delivery.md) for bundles, and
 [Model-Storage.md](Model-Storage.md) for the store. This is the checklist.
 
-**Status 2026-08-24: run once for real, most of the way.** Darwinbot has been through steps 4–9 —
-built as a bundle, spawned and driven from StreamingAssets — and step 11's stow ran 2026-08-18 with
-the fetch round-tripping byte-identical. `Assets/StreamingAssets/` and `~/RoboSimModelStore` both
-exist now. Still unproven: step 12 (spawn with the FBX stowed) and the Serve From Storage download
-route.
+**Status 2026-08-27: run end to end, once.** Darwinbot has been through every step — built as a
+bundle, spawned from StreamingAssets, stowed, spawned with the FBX gone (step 12), fetched,
+published with Serve From Storage ON, and downloaded onto a machine holding no local copy. The
+download half found two faults on its first run, both fixed that day: the `robots/` read rule in
+`storage.rules` had never been deployed (403 on everything), and `RobotBundleService` passed a CRC
+of 1 where it meant a version (every download refused). Nothing in batch could have caught either.
 
 ## A — the model arrives
 
@@ -76,11 +77,17 @@ round-trip it needed cost more than the smaller upload saved. See *Why a submiss
     prefab reference."
   - **Record the size.** That is the per-download number the Firebase cost question is waiting on.
   - Unsupported platforms are greyed out, so a missing iOS build module shows up here.
-- **9. Play, spawn it, drive it.** ⚠️ First time the bundle route has ever run in this project. A
-  failure here has nothing to do with the Model Store — it means the delivery half is broken.
+- **9. Play, spawn it, drive it.** A failure here has nothing to do with the Model Store — it means
+  the delivery half is broken.
   - With Serve From Storage **OFF** this only exercises StreamingAssets. **Downloading is a
     different route and a separate test** — run it once with the toggle ON, and delete the
     StreamingAssets copy first or that route answers before the download is ever tried.
+  - Check **which robot the Build window has selected** before clicking Build. It opens on the
+    first catalog entry, the 360 RPM Drivetrain — and Remove From Binary on that one takes the free
+    robot and the spawner's fallback out of the app.
+  - The upload itself is Step 3 of [Robot-Delivery.md](Robot-Delivery.md): `gcloud storage rsync`,
+    or the Cloud console's **Upload folder** from *inside* the bucket's `robots/` folder. Probe the
+    result with the download URL before spawning — a 403 is the rules, not the upload.
   - The download route starts at the field scene's **Upload Config**, which was null in both field
     scenes until 2026-08-19. Unset, a downloaded robot spawns as *a different robot* and says so
     only in the console. `Build Robot Prefabs & Spawner` now re-wires both field scenes on every
