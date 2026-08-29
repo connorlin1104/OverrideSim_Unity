@@ -17,8 +17,8 @@ Mesh:
     firstVertex: 0
     vertexCount: 24
     localAABB:
-      m_Center: {x: 0.1276198, y: -0.0024813015, z: -0.014054984}
-      m_Extent: {x: 0.01009848, y: 0.0018763829, z: 0.0013175793}
+      m_Center: {x: -0.055147626, y: -0.002478908, z: -0.0140533745}
+      m_Extent: {x: 0.010098478, y: 0.0018763829, z: 0.0013175793}
   m_Shapes:
     vertices: []
     shapes: []
@@ -97,7 +97,7 @@ Mesh:
       format: 0
       dimension: 0
     m_DataSize: 576
-    _typelessdata: 1efbf63d8a5185bb04e357bc14dc35bc1bc09fbe1034733ff2920c3e66931eba92165fbc87ef093daccc7f3f622daa3c9a720c3ee9db24ba9c967bbc219bc53d3f71eb3e3dfb61bf06aff03d66931eba04e357bc1302e7bdf2186d3fe53fb83e06aff03d23d5c0ba34dd7bbc89111ebef82bf3bd36197bbf06060d3e8a5185bb34dd7bbca92c0c3e5df661bed23777bff2920c3ee8ca8ebb04e357bc0a45bb3c69f16cbfe07dc13e3696f13de8ca8ebbbcaa74bcab83cbbd8b7e38bfc5a42fbf45e1f73d23d5c0ba8cb050bc0aa2993c4a37ca3d2cb47e3f06aff03d66931eba34dd7bbc1a3e7fbce65f2c3f473a3dbfccac0b3e66931eba04e357bc6a74853c5f820b3f289b563f3696f13de8ca8ebb92165fbca467aebd7b8f78bfb107653e06aff03d35042cbb04e357bcfc5e32bf100d08beb173343f06060d3ef2f63ebb04e357bcab28323ee7769f3ce00b7c3ff2920c3ee8ca8ebbe04666bcd3904a3cdeb97ebf817ccabdf814f63d49aee6ba8cb050bcd87fd9bcad230fbe3b657d3f06060d3e23d5c0ba92165fbc89a37b3ff247293e4c84a4bd8462f33d80b677bb04e357bcac00e1bd9d976fbebf4c773f1061fc3de8ca8ebbbcaa74bcf3621d3c90357abf085858be06060d3e8a5185bb04e357bce08c183e238739bda9e07c3fdf1f0c3e8a5185bb34dd7bbcb092a1bc450c1dbec4eb7cbf92530a3ee8ca8ebb04e357bca49eb3bb9ef1a1be5dda723f06aff03d35042cbbe04666bcd89c7bbf5c1c27bed193afbddf1f0c3efefb9aba04e357bc94a9563d2adef43c9d887f3f
+    _typelessdata: 4fa77ebd763d85bb44dc57bc14dc35bc1bc09fbe1034733fc2513abdc6f21dbad20f5fbc87ef093daccc7f3f622daa3c24d33abd493b24badc8f7bbc219bc53d3f71eb3e3dfb61bfc09f85bdc6f21dba44dc57bc1302e7bdf2186d3fe53fb83ec09f85bdd384c0ba74d67bbc89111ebef82bf3bd36197bbf758538bd763d85bb74d67bbca92c0c3e5df661bed23777bfc2513abdd4b68ebb44dc57bc0a45bb3c69f16cbfe07dc13e90b884bdd4b68ebbfca374bcab83cbbd8b7e38bfc5a42fbf02db7cbdd384c0bacca950bc0aa2993c4a37ca3d2cb47e3fc09f85bdc6f21dba74d67bbc1a3e7fbce65f2c3f473a3dbf5dea3dbdc6f21dba44dc57bc6a74853c5f820b3f289b563f90b884bdd4b68ebbd20f5fbca467aebd7b8f78bfb107653ec09f85bd0ddc2bbb44dc57bcfc5e32bf100d08beb173343f758538bdcace3ebb44dc57bcab28323ee7769f3ce00b7c3fc2513abdd4b68ebb204066bcd3904a3cdeb97ebf817ccabdce3980bdf95de6bacca950bcd87fd9bcad230fbe3b657d3f758538bdd384c0bad20f5fbc89a37b3ff247293e4c84a4bd42ec82bd588e77bb44dc57bcac00e1bd9d976fbebf4c773f6cdb73bdd4b68ebbfca374bcf3621d3c90357abf085858be758538bd763d85bb44dc57bce08c183e238739bda9e07c3f0f1e3cbd763d85bb74d67bbcb092a1bc450c1dbec4eb7cbf454f43bdd4b68ebb44dc57bca49eb3bb9ef1a1be5dda723fc09f85bd0ddc2bbb204066bcd89c7bbf5c1c27bed193afbd0f1e3cbdaeab9aba44dc57bc94a9563d2adef43c9d887f3f
   m_CompressedMesh:
     m_Vertices:
       m_NumItems: 0
@@ -151,8 +151,8 @@ Mesh:
       m_BitSize: 0
     m_UVInfo: 0
   m_LocalAABB:
-    m_Center: {x: 0.1276198, y: -0.0024813015, z: -0.014054984}
-    m_Extent: {x: 0.01009848, y: 0.0018763829, z: 0.0013175793}
+    m_Center: {x: -0.055147626, y: -0.002478908, z: -0.0140533745}
+    m_Extent: {x: 0.010098478, y: 0.0018763829, z: 0.0013175793}
   m_MeshUsageFlags: 0
   m_CookingOptions: 30
   m_BakedConvexCollisionMesh: 
