@@ -105,8 +105,13 @@ public static class PassiveArmValidation
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             string window = TheWindowRecognisesIt();
 
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            string pose = TheDrawnPoseSurvivesPlay();
+
+            string reanchor = MovingItThenReanchoringMatchesPlay();
+
             return "Validate Passive Arm: PASSED\n\n" + built + "\n" + unit + "\n" + returns + "\n" +
-                   pushed + "\n" + window;
+                   pushed + "\n" + window + "\n" + pose + "\n" + reanchor;
         }
         finally
         {
@@ -590,6 +595,126 @@ public static class PassiveArmValidation
     private static void Simulate(int steps)
     {
         for (int i = 0; i < steps; i++) Physics.Simulate(ValidationUtil.StepSeconds);
+    }
+
+    // Builds an arm off a rotated, offset spacer, then MOVES the link's transform the way a user does
+    // when they reposition the flap after building. Returns how far Play carried the link from where it
+    // was left, and — via `reanchor` — whether the joint anchors were re-derived from the moved pose
+    // first. Its own fresh scene, so the caller can run it both ways cleanly.
+    private static float PlayDriftAfterMove(bool reanchor)
+    {
+        EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        Physics.gravity = Vector3.zero;
+        GameObject root = MakeChassis(out _);
+        var spacer = new GameObject("Spacer");
+        spacer.transform.SetParent(root.transform, false);
+        spacer.transform.localPosition = new Vector3(0.6f, 1.2f, -0.3f);
+        spacer.transform.localRotation = Quaternion.Euler(0f, 25f, 12f);
+        GameObject flap = MakeLink(spacer.transform, "Flap", new Vector3(0.4f, 0.5f, 0f), ArmMeshOffset, ArmMeshSize);
+        flap.transform.localRotation = Quaternion.Euler(0f, 0f, 12.5f);
+        Physics.SyncTransforms();
+
+        ArticulationBody body = AddMechanismJoint.ApplyPassiveArm(flap, ArmAxis, Vector3.zero, 0f, 90f,
+            new AddMechanismJoint.PassiveArmOptions { returnToRest = true, bandStrength = 3f }, useUndo: false).body;
+
+        // The user drags the flap somewhere else AFTER building. The transform moves; the joint anchors,
+        // with matchAnchors off, do not — this is the desync.
+        flap.transform.localPosition += new Vector3(0.9f, 0.7f, 0.4f);
+        flap.transform.localRotation *= Quaternion.Euler(0f, 0f, 22f);
+        Physics.SyncTransforms();
+
+        if (reanchor)
+        {
+            // What "Set Starting Pose" and the window's re-anchor button do: make the pose it now sits
+            // in the joint's rest pose, then re-bake so the band pulls to THIS pose.
+            MechanismBuildUtil.RederiveParentAnchors(body);
+            flap.GetComponent<PassiveArm>().BakeDrive();
+            Physics.SyncTransforms();
+        }
+
+        Vector3 drawnPos = flap.transform.position;
+        Quaternion drawnRot = flap.transform.rotation;
+        Physics.Simulate(0.02f);
+        Simulate(25);
+        Physics.SyncTransforms();
+        return (flap.transform.position - drawnPos).magnitude
+             + Quaternion.Angle(flap.transform.rotation, drawnRot) * 0.02f;   // 1° ~ 0.02 u, one scalar
+    }
+
+    // --- 7. Move it, re-anchor, and Play matches -------------------------------------------------
+
+    // The fix for Connor's report, both halves. Move a built arm and DON'T re-anchor: Play snaps it a
+    // long way (the bug). Move it and re-anchor first: Play leaves it exactly where it was dragged (the
+    // cure — the window's "Re-anchor here" button, and Set Starting Pose, both do this).
+    private static string MovingItThenReanchoringMatchesPlay()
+    {
+        float without = PlayDriftAfterMove(reanchor: false);
+        float with = PlayDriftAfterMove(reanchor: true);
+
+        ValidationUtil.Assert(without > 0.3f,
+            $"fixture: moving a built arm without re-anchoring must visibly desync (it drifted {without:0.###}) " +
+            "— if it does not, this test no longer proves the re-anchor is what fixes it");
+        ValidationUtil.Assert(with < 0.05f,
+            $"after re-anchoring a moved arm, its Play pose must match where it was dragged — it drifted {with:0.###}. " +
+            "Re-deriving the parent anchor from the moved transform is what makes the drawn pose the joint's rest " +
+            "pose; this is the button the window offers and what Set Starting Pose does.");
+
+        return $"move + re-anchor: without re-anchor Play snaps {without:0.##}, with re-anchor {with * 1000f:0.#} mm.";
+    }
+
+    // --- 6. The drawn pose survives Play ---------------------------------------------------------
+
+    // Connor's report on 654V_v3: "I'm moving the part around but it doesn't correspond to the bot
+    // when I press play." That is the ArticulationBody law — PhysX places a link so its joint anchor
+    // meets its parent's anchor, and IGNORES the link's transform — biting a passive arm, because a
+    // passive arm is the one mechanism you position by hand. If the parent anchor is left inconsistent
+    // with where the link is drawn, the link snaps somewhere else the instant physics runs.
+    //
+    // The other cases all build a link straight under the root at identity rotation, where the anchor
+    // frame happens to be forgiving. This one reproduces the v3 shape: the arm hangs off an
+    // intermediate, non-body node that is itself offset AND rotated, and the arm link carries its own
+    // rotation. Then it steps the REAL physics and asserts the link has not moved from the pose it was
+    // drawn at — the whole of "it corresponds when I press play".
+    private static string TheDrawnPoseSurvivesPlay()
+    {
+        Physics.gravity = Vector3.zero;   // the band's target is the drawn pose; with no load, a
+                                          // consistent joint leaves the link exactly where it is.
+        GameObject root = MakeChassis(out RobotMechanisms registry);
+
+        var mid = new GameObject("Spacer");
+        mid.transform.SetParent(root.transform, false);
+        mid.transform.localPosition = new Vector3(0.6f, 1.2f, -0.3f);
+        mid.transform.localRotation = Quaternion.Euler(0f, 25f, 12f);
+
+        GameObject flap = MakeLink(mid.transform, "Flap", new Vector3(0.4f, 0.5f, 0f), ArmMeshOffset, ArmMeshSize);
+        flap.transform.localRotation = Quaternion.Euler(0f, 0f, 12.5f);
+        Physics.SyncTransforms();
+
+        AddMechanismJoint.ApplyPassiveArm(flap, ArmAxis, Vector3.zero, 0f, 90f,
+            new AddMechanismJoint.PassiveArmOptions { returnToRest = true, bandStrength = 3f }, useUndo: false);
+        ArticulationBody body = flap.GetComponent<ArticulationBody>();
+
+        // Captured AFTER the build (the build must not move it either) and BEFORE any step.
+        Physics.SyncTransforms();
+        Vector3 drawnPos = flap.transform.position;
+        Quaternion drawnRot = flap.transform.rotation;
+
+        Physics.Simulate(0.02f);
+        Simulate(25);
+        Physics.SyncTransforms();
+        float movedPos = (flap.transform.position - drawnPos).magnitude;
+        float movedRot = Quaternion.Angle(flap.transform.rotation, drawnRot);
+
+        // The world footprint of the arm mesh is ~4 u, so 0.05 u is ~1 % of the part — visibly still
+        // in place. A snap from an inconsistent anchor is a whole part-length, not a rounding wobble.
+        ValidationUtil.Assert(movedPos < 0.05f && movedRot < 1.5f,
+            $"the arm's Play pose must match where it was drawn — it moved {movedPos:0.###} u / {movedRot:0.#}° " +
+            "on the first physics steps under a rotated, offset parent. PhysX places a link by its joint " +
+            "anchors and ignores its transform, so a parent anchor left inconsistent with the drawn pose snaps " +
+            "the link elsewhere the instant Play starts. The builder must re-derive the parent anchor from the " +
+            "final transform (RederiveParentAnchors), and re-positioning the part afterwards needs Set Starting Pose.");
+
+        return $"drawn pose survives Play: moved {movedPos * 1000f:0.#} mm / {movedRot:0.##}° under a rotated, offset parent.";
     }
 
     // jointPosition is radians and NaN before the first step; Near() treats NaN as a failure.

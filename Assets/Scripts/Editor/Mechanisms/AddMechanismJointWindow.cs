@@ -237,6 +237,34 @@ public class AddMechanismJointWindow : EditorWindow
                 "(the Console lists them on Apply). Drop the spacer or shaft it turns on below, and check " +
                 "the blue line.", MessageType.Info);
 
+        // "I move the part but it doesn't correspond when I press play." A built joint is placed by its
+        // ANCHORS, not its transform: drag the link in the Scene after building and PhysX snaps it back
+        // the instant Play starts. Detect that the selected link's transform has drifted from its anchor
+        // frame and offer the one-click re-anchor (the same thing Set Starting Pose does).
+        if (childLink != null)
+        {
+            ArticulationBody selBody = childLink.GetComponent<ArticulationBody>();
+            if (AnchorDriftedFromTransform(selBody, out float driftMm))
+            {
+                EditorGUILayout.HelpBox(
+                    $"'{childLink.name}' has been MOVED since its joint was set (its pivot is {driftMm:0.##} u off " +
+                    "where the transform now is). Play places a link by its joint anchors, not its transform, so it " +
+                    "will snap back the instant you press Play. Re-anchor it here, or re-Apply below, or use Set " +
+                    "Starting Pose — all three make where it sits now the joint's rest pose.", MessageType.Warning);
+                if (GUILayout.Button("Re-anchor to where it is now"))
+                {
+                    Undo.RecordObject(selBody, "Re-anchor Joint");
+                    MechanismBuildUtil.RederiveParentAnchors(selBody);
+                    PassiveArm reArm = childLink.GetComponent<PassiveArm>();
+                    if (reArm != null) { Undo.RecordObject(reArm, "Re-anchor Joint"); reArm.BakeDrive(); }
+                    EditorUtility.SetDirty(selBody);
+                    if (childLink.scene.IsValid()) EditorSceneManager.MarkSceneDirty(childLink.scene);
+                    Debug.Log($"Re-anchored '{childLink.name}': where it sits now is its joint rest pose, so it " +
+                              "stays put in Play.", childLink);
+                }
+            }
+        }
+
         bool showAxis = !isFixed;
         bool showLimits = jointType == AddMechanismJoint.JointType.Revolute ||
                           jointType == AddMechanismJoint.JointType.Prismatic;
@@ -587,6 +615,29 @@ public class AddMechanismJointWindow : EditorWindow
     // between its limits — resolved through the SAME ResolveAxisAnchor the Apply uses, so what you see is
     // what you'll get. "Diagnose by looking": a hinge about the wrong line is obvious here in a way a
     // link-local vector in a field never is.
+    // Has the selected link been dragged away from where its joint anchors put it? PhysX places a link
+    // so its anchor point meets its parent's anchor point in the world and IGNORES the transform, so a
+    // link moved after its joint was set snaps back the instant Play runs. `driftWorld` is how far the
+    // two anchor points now sit apart, in world units. Fixed joints and the root have no such frame.
+    private static bool AnchorDriftedFromTransform(ArticulationBody body, out float driftWorld)
+    {
+        driftWorld = 0f;
+        if (body == null || body.jointType == ArticulationJointType.FixedJoint) return false;
+        ArticulationBody parent = null;
+        for (Transform p = body.transform.parent; p != null && parent == null; p = p.parent)
+            parent = p.GetComponent<ArticulationBody>();
+        if (parent == null) return false;
+
+        Vector3 childWorld = body.transform.TransformPoint(body.anchorPosition);
+        Vector3 parentWorld = parent.transform.TransformPoint(body.parentAnchorPosition);
+        driftWorld = (childWorld - parentWorld).magnitude;
+
+        Quaternion childRot = body.transform.rotation * body.anchorRotation;
+        Quaternion parentRot = parent.transform.rotation * body.parentAnchorRotation;
+        float angle = Quaternion.Angle(childRot, parentRot);
+        return driftWorld > 0.005f || angle > 0.5f;
+    }
+
     private void OnSceneGUI(SceneView view)
     {
         if (!showAxisPreview || childLink == null) return;
