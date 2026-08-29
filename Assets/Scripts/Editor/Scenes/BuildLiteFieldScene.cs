@@ -434,6 +434,16 @@ public class BuildLiteFieldScene
         Expect(problems, triggers.Count == 1, $"expected 1 MatchLoadTrigger, found {triggers.Count}");
         Expect(problems, magnets.Count == 1, $"expected 1 GoalStackMagnet, found {magnets.Count}");
         Expect(problems, detents.Count == 1, $"expected 1 RollerSnap, found {detents.Count}");
+        if (detents.Count == 1)
+        {
+            // LiteScene is built from SampleScene, so a roller tuned in code but not baked into
+            // SampleScene arrives here stale too — and FieldFeatureValidation only ever opens
+            // SampleScene, so this is the only check the Lite copy gets.
+            bool detentMatches = AttachRollerDetents.MatchesCodeDefaults(detents[0], out string detentDiff);
+            Expect(problems, detentMatches,
+                $"the kept RollerSnap disagrees with RollerSnap.cs ({detentDiff}) — run Attach or Tune " +
+                "Roller Detents on SampleScene, then rebuild");
+        }
         Expect(problems, pieceMagnets.Count == 1, $"expected 1 cup (PieceStackMagnet), found {pieceMagnets.Count}");
         Expect(problems, pins.Count == 1, $"expected 1 pin Rigidbody, found {pins.Count}");
         Expect(problems, spawners.Count == 1, $"expected 1 RobotSpawner, found {spawners.Count}");

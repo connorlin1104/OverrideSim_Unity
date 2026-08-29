@@ -8,7 +8,7 @@ using System.Collections.Generic;
 //   • RebuildFieldBounds          — Rebuild Floor and Wall Bounds
 //   • RebuildGoalCollidersWindow  — Rebuild Goal Colliders
 //   • RigRollersWindow            — Rig Rollers (Hinge Joints)
-//   • AttachRollerDetents         — Attach Roller Detents (Scene Fix)
+//   • AttachRollerDetents         — Attach or Tune Roller Detents (Scene Fix)
 // These one-shot tools build the field's physics from the imported meshes; they don't depend on
 // each other and were merged into one file purely to tidy the Editor folder.
 
@@ -531,23 +531,32 @@ public class RebuildGoalCollidersWindow : EditorWindow
     }
 }
 
-// Attaches the RollerSnap detent to the 4 field rollers' hinge bodies. The saved scene was rigged by
-// RigRollersWindow at some point but WITHOUT the RollerSnap component (its guid appears nowhere in the scene),
-// so the rollers spin freely today. Re-running the full Rig Rollers tool would work too, but it
-// regenerates bodies/joints/colliders from a selection and can't run headless — this targeted fix only
-// ensures the detent component and its damping. Idempotent: re-running syncs the existing components.
-// Batch: -executeMethod AttachRollerDetents.RunBatch (opens and saves SampleScene).
+// Attaches the RollerSnap detent to the 4 field rollers' hinge bodies and makes each scene copy MATCH
+// THE CODE. The saved scene was rigged by RigRollersWindow at some point but WITHOUT the RollerSnap
+// component, so the rollers spun freely; re-running the full Rig Rollers tool regenerates bodies,
+// joints and colliders from a selection and can't run headless, so this targeted fix owns the
+// component instead.
+//
+// Every serialized field is copied from a fresh RollerSnap (the C# defaults), not just ensured: a
+// serialized value in the scene wins over the C# default, and the scene sat at maxCorrectionPerStep
+// 0.2 while the code said 0.35 with nothing anywhere saying why — so a retune in RollerSnap.cs changed
+// nothing the game ran. Now this tool is the only way values reach the scene, and MatchesCodeDefaults
+// is asserted by FieldFeatureValidation (SampleScene) and BuildLiteFieldScene's verify (LiteScene),
+// so that class of drift fails a build instead of being found in Play. Idempotent.
+// Batch: -executeMethod AttachRollerDetents.RunBatch (opens and saves SampleScene); then run
+// BuildLiteFieldScene.RunBatch so LiteScene picks the values up.
 public static class AttachRollerDetents
 {
     private static readonly string[] RollerNames = { "RollerNorth", "RollerSouth", "RollerEast", "RollerWest" };
 
-    [MenuItem("Tools/RoboSim/Field & Pieces/Attach Roller Detents (Scene Fix)", false, 40)]
+    [MenuItem("Tools/RoboSim/Field & Pieces/Attach or Tune Roller Detents (Scene Fix)", false, 40)]
     private static void AttachInteractive()
     {
         int touched = Apply(useUndo: true);
-        EditorUtility.DisplayDialog("Attach Roller Detents",
+        EditorUtility.DisplayDialog("Attach or Tune Roller Detents",
             touched > 0
-                ? $"RollerSnap detents ensured on {touched} roller(s). Save the scene to keep them."
+                ? $"RollerSnap detents ensured and set to the code defaults on {touched} roller(s). Save the " +
+                  "scene to keep them, then run Build Lite Field Scene so LiteScene matches."
                 : "No rigged rollers found — open SampleScene and run Rig Rollers (Hinge Joints) first.",
             "OK");
     }
@@ -559,10 +568,10 @@ public static class AttachRollerDetents
         int touched = Apply(useUndo: false);
         if (touched == 0)
             throw new System.InvalidOperationException(
-                $"Attach Roller Detents: no rigged rollers found in {RoboSimPaths.MainScene}.");
+                $"Attach or Tune Roller Detents: no rigged rollers found in {RoboSimPaths.MainScene}.");
         if (!EditorSceneManager.SaveScene(scene))
-            throw new System.InvalidOperationException($"Attach Roller Detents: failed to save {RoboSimPaths.MainScene}.");
-        Debug.Log($"Attach Roller Detents: RollerSnap ensured on {touched} roller(s); scene saved.");
+            throw new System.InvalidOperationException($"Attach or Tune Roller Detents: failed to save {RoboSimPaths.MainScene}.");
+        Debug.Log($"Attach or Tune Roller Detents: RollerSnap ensured and set to the code defaults on {touched} roller(s); scene saved.");
     }
 
     private static int Apply(bool useUndo)
@@ -573,7 +582,7 @@ public static class AttachRollerDetents
             GameObject roller = GameObject.Find(name);
             if (roller == null)
             {
-                Debug.LogWarning($"Attach Roller Detents: no '{name}' in the open scene — skipped.");
+                Debug.LogWarning($"Attach or Tune Roller Detents: no '{name}' in the open scene — skipped.");
                 continue;
             }
 
@@ -581,7 +590,7 @@ public static class AttachRollerDetents
             HingeJoint hinge = roller.GetComponentInChildren<HingeJoint>(true);
             if (hinge == null)
             {
-                Debug.LogWarning($"Attach Roller Detents: '{name}' has no HingeJoint — run Rig Rollers first; skipped.");
+                Debug.LogWarning($"Attach or Tune Roller Detents: '{name}' has no HingeJoint — run Rig Rollers first; skipped.");
                 continue;
             }
 
@@ -590,10 +599,15 @@ public static class AttachRollerDetents
             if (snap == null)
                 snap = useUndo ? Undo.AddComponent<RollerSnap>(face) : face.AddComponent<RollerSnap>();
 
+            CopyCodeDefaults(snap, useUndo);
+            Debug.Log(DescribeDrum(hinge));
+
+            // The damping lives on the Rigidbody, and Start (which writes it at play time) never runs
+            // in edit-mode simulation — so bake it here, from the value just copied.
             Rigidbody rb = face.GetComponent<Rigidbody>();
             if (rb != null)
             {
-                if (useUndo) Undo.RecordObject(rb, "Attach Roller Detents");
+                if (useUndo) Undo.RecordObject(rb, "Attach or Tune Roller Detents");
                 rb.angularDamping = snap.FreeSpinDamping;
             }
 
@@ -602,6 +616,152 @@ public static class AttachRollerDetents
             touched++;
         }
         return touched;
+    }
+
+    // Does this scene roller carry exactly what RollerSnap.cs says, damping bake included? Empty diff
+    // on a match; otherwise one "field: scene=x code=y" per disagreement, so the failure names the
+    // drift instead of just declaring it.
+    public static bool MatchesCodeDefaults(RollerSnap snap, out string diff)
+    {
+        var lines = new List<string>();
+        if (snap == null)
+        {
+            diff = "no RollerSnap";
+            return false;
+        }
+
+        GameObject temp = null;
+        try
+        {
+            RollerSnap code = FreshCodeDefault(out temp);
+            var codeSo = new SerializedObject(code);
+            var sceneSo = new SerializedObject(snap);
+            foreach (SerializedProperty codeProp in UserProperties(codeSo))
+            {
+                SerializedProperty sceneProp = sceneSo.FindProperty(codeProp.propertyPath);
+                if (sceneProp == null)
+                    lines.Add($"{codeProp.propertyPath}: missing in the scene copy");
+                else if (!SerializedProperty.DataEquals(sceneProp, codeProp))
+                    lines.Add($"{codeProp.propertyPath}: scene={Describe(sceneProp)} code={Describe(codeProp)}");
+            }
+            sceneSo.Dispose();
+            codeSo.Dispose();
+        }
+        finally
+        {
+            if (temp != null) Object.DestroyImmediate(temp);
+        }
+
+        Rigidbody rb = snap.GetComponent<Rigidbody>();
+        if (rb == null)
+            lines.Add("Rigidbody: missing");
+        else if (Mathf.Abs(rb.angularDamping - snap.FreeSpinDamping) > 1e-4f)
+            lines.Add($"Rigidbody.angularDamping: scene={rb.angularDamping} code={snap.FreeSpinDamping} (damping not baked)");
+
+        diff = string.Join(", ", lines);
+        return lines.Count == 0;
+    }
+
+    // Overwrite every user-visible serialized field on the scene roller with the C# default. Goes
+    // through SerializedObject rather than reflection so private [SerializeField]s are reached, and so
+    // Undo/dirtying happen the way an Inspector edit's would.
+    // What the roller LOOKS like, measured off its renderers, next to what it collides as (three flat
+    // panels 0.15 off the axle, RigRollersWindow). Logged on every bake because the two disagreeing
+    // decides whether a wheel can friction-drive it at all: pressing a flat face from a fixed
+    // direction pins a 3-sided prism about 14 deg past its face whatever the load (the off-centre
+    // normal force restores the face faster than friction turns it — measured in FieldFeatureValidation),
+    // while a round drum has no such equilibrium. Per mesh: its own bounds scaled to world, sorted,
+    // so a flat face shows one thin dimension and a drum sector does not; and the farthest corner
+    // from the axle, which is the drum radius.
+    private static string DescribeDrum(HingeJoint hinge)
+    {
+        Vector3 axleW = hinge.transform.TransformPoint(hinge.anchor);
+        Vector3 axisW = (hinge.transform.rotation * hinge.axis).normalized;
+        string owner = hinge.transform.parent != null ? hinge.transform.parent.name + "/" : "";
+        string text = $"Roller drum '{owner}{hinge.name}':";
+        foreach (MeshFilter mf in hinge.GetComponentsInChildren<MeshFilter>())
+        {
+            if (mf.sharedMesh == null) continue;
+            Bounds local = mf.sharedMesh.bounds;
+            Vector3 size = Vector3.Scale(local.size, mf.transform.lossyScale);
+            size = new Vector3(Mathf.Abs(size.x), Mathf.Abs(size.y), Mathf.Abs(size.z));
+            float[] sorted = { size.x, size.y, size.z };
+            System.Array.Sort(sorted);
+            float farthest = 0f, nearest = float.PositiveInfinity;
+            for (int i = 0; i < 8; i++)
+            {
+                Vector3 corner = local.center + new Vector3(
+                    (i & 1) == 0 ? -local.extents.x : local.extents.x,
+                    (i & 2) == 0 ? -local.extents.y : local.extents.y,
+                    (i & 4) == 0 ? -local.extents.z : local.extents.z);
+                Vector3 w = mf.transform.TransformPoint(corner);
+                float radial = Vector3.ProjectOnPlane(w - axleW, axisW).magnitude;
+                farthest = Mathf.Max(farthest, radial);
+                nearest = Mathf.Min(nearest, radial);
+            }
+            text += $"\n  {mf.name}: bounds {sorted[0]:0.000} x {sorted[1]:0.00} x {sorted[2]:0.00} (thin->long), " +
+                    $"corners {nearest:0.00}..{farthest:0.00} from the axle";
+        }
+        return text;
+    }
+
+    private static void CopyCodeDefaults(RollerSnap snap, bool useUndo)
+    {
+        GameObject temp = null;
+        try
+        {
+            RollerSnap code = FreshCodeDefault(out temp);
+            var codeSo = new SerializedObject(code);
+            var sceneSo = new SerializedObject(snap);
+            foreach (SerializedProperty codeProp in UserProperties(codeSo))
+                sceneSo.CopyFromSerializedProperty(codeProp);
+            if (useUndo) sceneSo.ApplyModifiedProperties();
+            else sceneSo.ApplyModifiedPropertiesWithoutUndo();
+            sceneSo.Dispose();
+            codeSo.Dispose();
+        }
+        finally
+        {
+            if (temp != null) Object.DestroyImmediate(temp);
+        }
+    }
+
+    // A RollerSnap that has never been serialized, i.e. the C# defaults. Its RequireComponents add a
+    // Rigidbody and HingeJoint to the temp object too; HideAndDontSave keeps the whole thing out of
+    // the hierarchy and out of any save, and the caller destroys it in a finally.
+    private static RollerSnap FreshCodeDefault(out GameObject temp)
+    {
+        temp = new GameObject("RollerSnap code defaults") { hideFlags = HideFlags.HideAndDontSave };
+        return temp.AddComponent<RollerSnap>();
+    }
+
+    // Top-level user fields only: Unity's own bookkeeping (m_Script, m_Enabled …) is not part of
+    // what the tool owns (the RobotBundleValidation.Shape rule). Top level is enough — DataEquals
+    // and CopyFromSerializedProperty are deep.
+    private static IEnumerable<SerializedProperty> UserProperties(SerializedObject so)
+    {
+        SerializedProperty it = so.GetIterator();
+        bool enterChildren = true;
+        while (it.NextVisible(enterChildren))
+        {
+            enterChildren = false;
+            if (it.propertyPath.StartsWith("m_")) continue;
+            yield return it;
+        }
+    }
+
+    private static string Describe(SerializedProperty p)
+    {
+        switch (p.propertyType)
+        {
+            case SerializedPropertyType.Float: return p.floatValue.ToString("0.###");
+            case SerializedPropertyType.Integer: return p.intValue.ToString();
+            case SerializedPropertyType.Boolean: return p.boolValue.ToString();
+            case SerializedPropertyType.String: return p.stringValue;
+            case SerializedPropertyType.ObjectReference:
+                return p.objectReferenceValue != null ? p.objectReferenceValue.name : "null";
+            default: return "(differs)";
+        }
     }
 }
 
