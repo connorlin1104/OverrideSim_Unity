@@ -57,29 +57,44 @@ public class AddMechanismJointWindow : EditorWindow
     };
 
     // User-facing mechanism intent — pick what the part DOES, and the tool maps it to a joint DOF +
-    // actuation. Replaces the raw "Joint Type" + "Piston Toggle" jargon.
-    private enum MechanismKind
+    // actuation. Replaces the raw "Joint Type" + "Piston Toggle" jargon. PassiveArm is APPENDED
+    // (the field is serialized, so an open window's stored integer must keep meaning what it did);
+    // KindOrder below puts it where it reads right in the dropdown.
+    internal enum MechanismKind
     {
         SpinningMotor,  // Continuous + motor   — roller / flywheel / intake shaft (free-spins both ways)
         ArmMotor,       // Revolute   + motor   — limited arm / lift hinge (hold-to-run within its range)
         RotatingPiston, // Revolute   + toggle  — doinker / flipper (piston snaps a hinge between 2 angles)
         LinearPiston,   // Prismatic  + toggle  — cylinder that slides a part in/out
         Fixed,          // welded — removes any mechanism
+        PassiveArm,     // Revolute   + nothing — turns only when hit, rubber-bands back (no button)
     }
 
+    // Dropdown order, decoupled from the enum's serialization order the way AxisOrder is: the
+    // passive arm sits under the arm motor because that is the choice it is the alternative to.
+    private static readonly MechanismKind[] KindOrder =
+    {
+        MechanismKind.SpinningMotor, MechanismKind.ArmMotor, MechanismKind.PassiveArm,
+        MechanismKind.RotatingPiston, MechanismKind.LinearPiston, MechanismKind.Fixed,
+    };
     private static readonly string[] KindLabels =
     {
         "Spinning motor (roller / flywheel / intake)",
         "Arm / lift motor (limited hinge)",
+        "Passive arm (pushed, not powered — rubber band)",
         "Rotating piston (doinker / flipper)",
         "Linear piston (slides in / out)",
         "Fixed (weld — no mechanism)",
     };
+    private static string KindLabel(MechanismKind k) => KindLabels[Mathf.Max(0, Array.IndexOf(KindOrder, k))];
 
+    // PassiveArm is listed explicitly: the `_ => Fixed` default would hide the limits, resolve a
+    // Fixed axis and draw no preview for it.
     private static AddMechanismJoint.JointType JointTypeOf(MechanismKind k) => k switch
     {
         MechanismKind.SpinningMotor => AddMechanismJoint.JointType.Continuous,
         MechanismKind.ArmMotor => AddMechanismJoint.JointType.Revolute,
+        MechanismKind.PassiveArm => AddMechanismJoint.JointType.Revolute,
         MechanismKind.RotatingPiston => AddMechanismJoint.JointType.Revolute,
         MechanismKind.LinearPiston => AddMechanismJoint.JointType.Prismatic,
         _ => AddMechanismJoint.JointType.Fixed,
@@ -103,6 +118,9 @@ public class AddMechanismJointWindow : EditorWindow
     [SerializeField] private bool showAxisPreview = true;
     // The shaft/rod the part turns on, when the axis is defined by pointing at a part (FromAxle).
     [SerializeField] private GameObject axlePart;
+    // Passive arm only: the rubber band, and how hard it pulls in multiples of the arm's weight.
+    [SerializeField] private bool returnToRest = true;
+    [SerializeField] private float bandStrength = 3f;
     [SerializeField] private Vector2 scroll;
 
     [MenuItem("Tools/RoboSim/Robot/Mechanisms/Add or Fix Mechanism Joint", false, 1)]
@@ -185,14 +203,39 @@ public class AddMechanismJointWindow : EditorWindow
                 "unit, and set the Anchor to the hinge/slide axis location.", MessageType.Info);
         }
 
-        mechKind = (MechanismKind)EditorGUILayout.Popup(new GUIContent("Mechanism Type",
-            "What this part does. Spinning / Arm = motor (hold a button to run). Rotating / Linear piston = " +
+        int kindIndex = Mathf.Max(0, Array.IndexOf(KindOrder, mechKind));
+        int pickedKind = EditorGUILayout.Popup(new GUIContent("Mechanism Type",
+            "What this part does. Spinning / Arm = motor (hold a button to run). Passive arm = no button; " +
+            "it turns when something hits it and a rubber band returns it. Rotating / Linear piston = " +
             "pneumatic (press to snap between two ends). Fixed = weld it still."),
-            (int)mechKind, KindLabels);
+            kindIndex, KindLabels);
+        MechanismKind newKind = KindOrder[Mathf.Clamp(pickedKind, 0, KindOrder.Length - 1)];
+        if (newKind != mechKind)
+        {
+            // A passive arm is nearly always a flap on a spacer or shaft with a stop at one end, so
+            // the first switch to it seeds the form for that: read the axis off the shaft you drop
+            // in, and sweep 0..90 away from the drawn pose.
+            if (newKind == MechanismKind.PassiveArm)
+            {
+                axisPreset = AxisPreset.FromAxle;
+                lowerLimit = 0f;
+                upperLimit = 90f;
+            }
+            mechKind = newKind;
+        }
 
         AddMechanismJoint.JointType jointType = JointTypeOf(mechKind);
         bool asToggle = mechKind == MechanismKind.RotatingPiston;
         bool isFixed = mechKind == MechanismKind.Fixed;
+        bool isPassive = mechKind == MechanismKind.PassiveArm;
+
+        if (isPassive)
+            EditorGUILayout.HelpBox(
+                "A passive arm has no motor and no button: it turns only when something hits it — usually " +
+                "the toggle — and the rubber band pulls it back to the pose it is drawn in. It collides " +
+                "with everything it touches, on the robot too; parts drawn bolted through it stay muted " +
+                "(the Console lists them on Apply). Drop the spacer or shaft it turns on below, and check " +
+                "the blue line.", MessageType.Info);
 
         bool showAxis = !isFixed;
         bool showLimits = jointType == AddMechanismJoint.JointType.Revolute ||
@@ -267,16 +310,31 @@ public class AddMechanismJointWindow : EditorWindow
             }
             if (GUILayout.Button("Add Part", GUILayout.Width(100))) alsoMove.Add(null);
 
-            reverseDirection = EditorGUILayout.Toggle(new GUIContent("Reverse Direction",
-                "Flip the drive sense if the mechanism runs backward for 'forward' input (motor) or starts " +
-                "at the wrong end (piston)."), reverseDirection);
+            // Nothing drives a passive arm, so there is no sense to reverse.
+            if (!isPassive)
+                reverseDirection = EditorGUILayout.Toggle(new GUIContent("Reverse Direction",
+                    "Flip the drive sense if the mechanism runs backward for 'forward' input (motor) or starts " +
+                    "at the wrong end (piston)."), reverseDirection);
         }
 
-        if (!isFixed)
+        if (!isFixed && !isPassive)
             autoAssignButton = EditorGUILayout.Toggle(new GUIContent("Auto-Assign Button",
                 "After applying, map this mechanism to the next free controller button (motor = " +
                 "forward/reverse pair, piston = toggle) so it's drivable without opening Configure Controller."),
                 autoAssignButton);
+
+        if (isPassive)
+        {
+            EditorGUILayout.Space();
+            returnToRest = EditorGUILayout.Toggle(new GUIContent("Return to rest (rubber band)",
+                "Pull the arm back to its drawn pose after it has been knocked. Off = a free hinge with a " +
+                "little friction that stays wherever it was left."), returnToRest);
+            if (returnToRest)
+                bandStrength = EditorGUILayout.Slider(new GUIContent("Band strength (× arm weight)",
+                    "How hard the band pulls, in multiples of the arm's own weight held out at its centre. " +
+                    "1 = just enough to lift it, 3 = returns briskly, 10 = nearly rigid."),
+                    bandStrength, 1f, 10f);
+        }
 
         if (showLimits)
         {
@@ -327,19 +385,34 @@ public class AddMechanismJointWindow : EditorWindow
             Undo.SetCurrentGroupName(Title);
             int group = Undo.GetCurrentGroup();
 
-            var options = new AddMechanismJoint.Options
+            GameObject[] extras = alsoMove.Count > 0 ? alsoMove.ToArray() : null;
+            if (isPassive)
             {
-                alsoMove = alsoMove.Count > 0 ? alsoMove.ToArray() : null,
-                reverseDirection = reverseDirection,
-                actuation = asToggle ? AddMechanismJoint.Actuation.Toggle : AddMechanismJoint.Actuation.Auto,
-            };
-            AddMechanismJoint.Apply(childLink, jointType, axis, effectiveAnchor, lowerLimit, upperLimit, options, useUndo: true);
+                AddMechanismJoint.ApplyPassiveArm(childLink, axis, effectiveAnchor, lowerLimit, upperLimit,
+                    new AddMechanismJoint.PassiveArmOptions
+                    {
+                        alsoMove = extras,
+                        returnToRest = returnToRest,
+                        bandStrength = bandStrength,
+                    }, useUndo: true);
+            }
+            else
+            {
+                var options = new AddMechanismJoint.Options
+                {
+                    alsoMove = extras,
+                    reverseDirection = reverseDirection,
+                    actuation = asToggle ? AddMechanismJoint.Actuation.Toggle : AddMechanismJoint.Actuation.Auto,
+                };
+                AddMechanismJoint.Apply(childLink, jointType, axis, effectiveAnchor, lowerLimit, upperLimit, options, useUndo: true);
+            }
 
             // Map it to a free button so it's drivable immediately (skipped for Fixed, which removed
-            // the mechanism). A rotating piston maps like a pneumatic (one toggle button), so pass
-            // Prismatic for the button style. Non-fatal: a full map just means the user maps it later.
+            // the mechanism, and for a passive arm, which nothing drives). A rotating piston maps like
+            // a pneumatic (one toggle button), so pass Prismatic for the button style. Non-fatal: a
+            // full map just means the user maps it later.
             string buttonNote = "";
-            if (autoAssignButton && !isFixed)
+            if (autoAssignButton && !isFixed && !isPassive)
             {
                 RobotMechanisms reg = childLink.GetComponentInParent<RobotMechanisms>();
                 AddMechanismJoint.JointType buttonType = asToggle ? AddMechanismJoint.JointType.Prismatic : jointType;
@@ -354,8 +427,8 @@ public class AddMechanismJointWindow : EditorWindow
             if (!isFixed) LoadFrom(childLink);
 
             EditorUtility.DisplayDialog(Title,
-                $"'{childLink.name}' is now set up as: {KindLabels[(int)mechKind]}" +
-                (isFixed ? " (mechanism removed)." : ".") +
+                $"'{childLink.name}' is now set up as: {KindLabel(mechKind)}" +
+                (isFixed ? " (mechanism removed)." : isPassive ? " (no button — it turns when hit)." : ".") +
                 buttonNote +
                 "\n\nSave the scene, then Validation > Validate Robot Physics to test it.", "OK");
         }
@@ -384,19 +457,12 @@ public class AddMechanismJointWindow : EditorWindow
         if (body == null) return;
 
         ArticulationDrive d = body.xDrive;
-        bool toggle = link.GetComponent<PneumaticActuator>() != null;
-        switch (body.jointType)
+        mechKind = KindOf(link);
+        PassiveArm passive = link.GetComponent<PassiveArm>();
+        if (passive != null)
         {
-            case ArticulationJointType.PrismaticJoint:
-                mechKind = MechanismKind.LinearPiston;
-                break;
-            case ArticulationJointType.RevoluteJoint:
-                mechKind = body.twistLock == ArticulationDofLock.FreeMotion ? MechanismKind.SpinningMotor
-                    : toggle ? MechanismKind.RotatingPiston : MechanismKind.ArmMotor;
-                break;
-            default:
-                mechKind = MechanismKind.Fixed;
-                break;
+            returnToRest = passive.returnToRest;
+            bandStrength = passive.bandStrength;
         }
 
         lowerLimit = d.lowerLimit;
@@ -410,6 +476,32 @@ public class AddMechanismJointWindow : EditorWindow
 
         MotorActuator motor = link.GetComponent<MotorActuator>();
         reverseDirection = motor != null && motor.invert;
+    }
+
+    // Which kind an existing link IS, read off what is on it. Static and internal so the validator
+    // can ask the real question the window asks. A link with no body is nothing that moves.
+    //
+    // The PassiveArm check comes BEFORE the joint-type switch, and the order is load-bearing: a
+    // passive arm is a limited revolute with no pneumatic, which the switch would call an arm MOTOR
+    // — and Apply would then wire a motor onto it, silently promoting the flap to a powered arm the
+    // first time anyone opened it to nudge a limit.
+    internal static MechanismKind KindOf(GameObject link)
+    {
+        ArticulationBody body = link != null ? link.GetComponent<ArticulationBody>() : null;
+        if (body == null) return MechanismKind.Fixed;
+        if (link.GetComponent<PassiveArm>() != null) return MechanismKind.PassiveArm;
+
+        bool toggle = link.GetComponent<PneumaticActuator>() != null;
+        switch (body.jointType)
+        {
+            case ArticulationJointType.PrismaticJoint:
+                return MechanismKind.LinearPiston;
+            case ArticulationJointType.RevoluteJoint:
+                return body.twistLock == ArticulationDofLock.FreeMotion ? MechanismKind.SpinningMotor
+                    : toggle ? MechanismKind.RotatingPiston : MechanismKind.ArmMotor;
+            default:
+                return MechanismKind.Fixed;
+        }
     }
 
     // The user-facing axis a configured joint was built from — the exact inverse of the
@@ -508,11 +600,28 @@ public class AddMechanismJointWindow : EditorWindow
         axisW.Normalize();
         Vector3 pivotW = childLink.transform.TransformPoint(anchorLocal);
 
+        // Drag the pivot straight from the Scene view — drop a spacer in to get the line, then
+        // slide the hinge along it (or off it) by eye. The drag pins the axis it started from as
+        // Custom: a preset would be RE-RESOLVED on Apply, and an Auto/FromAxle pivot would snap
+        // back to the inferred one, undoing the drag the moment it mattered.
+        EditorGUI.BeginChangeCheck();
+        Vector3 movedPivot = Handles.PositionHandle(pivotW, Quaternion.identity);
+        if (EditorGUI.EndChangeCheck())
+        {
+            customAxis = axisLocal;
+            axisPreset = AxisPreset.Custom;
+            autoPivot = false;
+            anchor = childLink.transform.InverseTransformPoint(movedPivot);
+            pivotW = movedPivot;
+            Repaint();
+        }
+
         float h = HandleUtility.GetHandleSize(pivotW);
         Vector3 center = MechanismBuildUtil.BoundsCenterOrOrigin(childLink);
         Vector3 arm = Vector3.ProjectOnPlane(center - pivotW, axisW);
         float reach = Mathf.Max(arm.magnitude, h * 2.5f);
         var color = new Color(0.35f, 0.7f, 1f);
+        string kindTag = mechKind == MechanismKind.PassiveArm ? " (passive)" : "";
 
         Handles.color = color;
         Handles.DrawAAPolyLine(4f, pivotW - axisW * reach, pivotW + axisW * reach);
@@ -563,7 +672,7 @@ public class AddMechanismJointWindow : EditorWindow
         // looking, which is the question Set Starting Pose then acts on.
         Handles.Label(pivotW + lowArm * 1.06f, $"{lowerLimit:0}° (lower)");
         Handles.Label(pivotW + highArm * 1.06f, $"{upperLimit:0}° (upper)");
-        Handles.Label(pivotW + arm * 1.12f, $"{childLink.name}: swings {lowerLimit:0}°..{upperLimit:0}°");
+        Handles.Label(pivotW + arm * 1.12f, $"{childLink.name}{kindTag}: swings {lowerLimit:0}°..{upperLimit:0}°");
     }
 }
 
@@ -585,6 +694,15 @@ public static class AddMechanismJoint
         public GameObject[] alsoMove;   // plain parts to fold into the one driven link
         public bool reverseDirection;   // flip motor sense / swap pneumatic endpoints
         public Actuation actuation;
+    }
+
+    // Authoring extras for ApplyPassiveArm. No direction to reverse and no actuation to choose:
+    // nothing drives a passive arm.
+    public struct PassiveArmOptions
+    {
+        public GameObject[] alsoMove;   // plain parts to fold into the one hinged link
+        public bool returnToRest;       // the rubber band
+        public float bandStrength;      // x the arm's own weight; <= 0 takes the component default
     }
 
     private const float WorldScaleFactor = 10f;  // this project's world: 1 scaled unit = 0.1 m
@@ -621,6 +739,9 @@ public static class AddMechanismJoint
         if (type == JointType.Fixed)
         {
             UrdfPostProcessor.RemoveMechanism(registry, id, useUndo);
+            // A weld has nothing to spring back to. WireMechanism strips a band on the powered
+            // paths; this is the one path that never reaches it.
+            MechanismBuildUtil.RemoveComponents<PassiveArm>(link, useUndo);
         }
         else
         {
@@ -634,6 +755,89 @@ public static class AddMechanismJoint
         EditorUtility.SetDirty(body);
         EditorUtility.SetDirty(registry);
         if (root.scene.IsValid()) EditorSceneManager.MarkSceneDirty(root.scene);
+    }
+
+    // The passive-arm counterpart of Apply: the same joint core, and then — instead of the actuator
+    // and registry record that make a link a button mechanism — a PassiveArm with its band sized
+    // and baked. Public, and useUndo=false capable, so PassiveArmValidation drives the path the
+    // window drives. Returns the arm. Throws on any precondition failure.
+    public static PassiveArm ApplyPassiveArm(GameObject link, Vector3 axis, Vector3 anchor,
+        float lowerLimit, float upperLimit, PassiveArmOptions options, bool useUndo)
+    {
+        if (link == null) throw new ArgumentNullException(nameof(link));
+
+        RobotMechanisms registry = link.GetComponentInParent<RobotMechanisms>();
+        if (registry == null)
+            throw new InvalidOperationException(
+                $"'{link.name}' is not under a set-up robot (no RobotMechanisms). Run " +
+                "Set Up Imported Robot first.");
+        GameObject root = registry.gameObject;
+
+        ArticulationBody body = ConfigureJointLink(link, JointType.Revolute, axis, anchor, lowerLimit, upperLimit,
+            new Options { alsoMove = options.alsoMove }, registry, useUndo);
+
+        // Whatever powered this link before goes, record first: a passive arm is not on the button
+        // router's list, and a stale record would keep offering the config screen a button whose
+        // actuator is about to be destroyed. Swept by WHERE the actuator lives, not by slugged
+        // name, for the reason Build Chain gives — duplicate CAD names would let a name-keyed
+        // removal destroy some other mechanism's motor.
+        if (registry.mechanisms != null)
+        {
+            foreach (RobotMechanisms.Mechanism stale in registry.mechanisms.ToArray())
+            {
+                if (stale == null || MechanismBuildUtil.MechanismLink(stale) != link) continue;
+                UrdfPostProcessor.RemoveMechanism(registry, stale.id, useUndo);
+                MechanismBuildUtil.ClearMechanismBindings(registry.robotId, stale.id);
+                // The player's style choice for a mechanism that no longer exists — the cleanup
+                // Delete Mechanism does, so entries cannot accumulate under a dead id. Saved only
+                // when something was actually dropped, so a build never writes an empty map.
+                ButtonMap map = ControllerMapSettings.Load(registry.robotId);
+                int stylesBefore = map.styles != null ? map.styles.Count : 0;
+                ControllerMapSettings.RemoveStyle(map, stale.id);
+                if ((map.styles != null ? map.styles.Count : 0) != stylesBefore)
+                    ControllerMapSettings.Save(registry.robotId, map);
+            }
+        }
+        // An actuator with no record (hand-added), and the blanket: an arm that ignores its whole
+        // robot cannot be pushed by the toggle, and PassiveArm re-decides those pairs itself.
+        MechanismBuildUtil.RemoveComponents<MotorActuator>(link, useUndo);
+        MechanismBuildUtil.RemoveComponents<PneumaticActuator>(link, useUndo);
+        MechanismBuildUtil.RemoveComponents<IgnoreRobotSelfCollision>(link, useUndo);
+
+        PassiveArm arm = MechanismBuildUtil.AddOrGet<PassiveArm>(link, useUndo);
+        if (useUndo) Undo.RecordObject(arm, "Add or Fix Mechanism Joint");
+        arm.body = body;
+        arm.returnToRest = options.returnToRest;
+        arm.bandStrength = options.bandStrength > 0f ? options.bandStrength : PassiveArm.DefaultBandStrength;
+
+        // The band is sized against gravity's torque on the arm held out: mass x g x the
+        // PERPENDICULAR distance from the hinge line to the centre of what it moves. The hinge is
+        // read back off the body's anchor frame — the frame Set Starting Pose reads, and the joint
+        // itself — rather than off the axis this was handed, which the core normalises and
+        // re-anchors on the way in.
+        if (!StartingPose.TryJointFrame(body, out Vector3 axisW, out Vector3 pivotW))
+            throw new InvalidOperationException($"'{link.name}' did not come out of the joint core as a hinge.");
+        Vector3 centreW = MechanismBuildUtil.BoundsCenterOrOrigin(link);
+        float leverArm = Vector3.ProjectOnPlane(centreW - pivotW, axisW).magnitude;
+        arm.SizeBand(leverArm, Mathf.Abs(Physics.gravity.y));
+        arm.BakeDrive();
+
+        // Say now which robot parts are drawn through the arm: those pairs stay muted in play, and
+        // "why doesn't the flap hit the bracket" is a question best answered at build time.
+        List<string> bolted = arm.RestOverlaps();
+        Debug.Log($"Passive arm '{link.name}': {arm.DescribeBand()}, cap {arm.bandForceLimit:0.#} " +
+                  $"(mass {body.mass:0.###} kg, {leverArm:0.##} u lever arm)" +
+                  (bolted.Count == 0
+                      ? "; nothing on the robot overlaps it at rest, so it collides with every other link."
+                      : $"; bolted through (these stay muted): {string.Join(", ", bolted)}"), link);
+
+        UrdfPostProcessor.RefreshCatalogMechanisms(registry.robotId, root.name, registry);
+
+        EditorUtility.SetDirty(body);
+        EditorUtility.SetDirty(registry);
+        EditorUtility.SetDirty(arm);
+        if (root.scene.IsValid()) EditorSceneManager.MarkSceneDirty(root.scene);
+        return arm;
     }
 
     // Turns `link` into a configured ArticulationBody joint of `type` (DOF locks, axis anchorRotation,

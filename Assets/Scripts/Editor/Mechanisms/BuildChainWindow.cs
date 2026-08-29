@@ -446,6 +446,7 @@ public static class ChainBuilder
             }
             MechanismBuildUtil.RemoveComponents<MotorActuator>(s.spins, useUndo);
             MechanismBuildUtil.RemoveComponents<PneumaticActuator>(s.spins, useUndo);
+            MechanismBuildUtil.RemoveComponents<PassiveArm>(s.spins, useUndo);   // a band would fight the coupler
             // JointCoupler is DisallowMultipleComponent — an old one must go before a new one lands.
             MechanismBuildUtil.RemoveComponents<JointCoupler>(s.spins, useUndo);
 

@@ -138,6 +138,7 @@ public class RobotSetupOverviewWindow : EditorWindow
         {
             EditorGUILayout.LabelField("None. Use Add or Fix Mechanism Joint / Auto-Detect Mechanisms.",
                 EditorStyles.miniLabel);
+            DrawPassiveArms(registry);
             return;
         }
 
@@ -193,6 +194,30 @@ public class RobotSetupOverviewWindow : EditorWindow
                 }
 
                 DrawMechanismBindings(registry, m, map);
+            }
+        }
+        DrawPassiveArms(registry);
+    }
+
+    // Passive arms are listed and nothing more — no bindings row, because no button reaches them.
+    // They are not registry records (the registry is the router's list), so the loop above never
+    // sees them, and a robot whose only mechanism is a flap would otherwise read "None".
+    private static void DrawPassiveArms(RobotMechanisms registry)
+    {
+        PassiveArm[] arms = registry.GetComponentsInChildren<PassiveArm>(true);
+        if (arms.Length == 0) return;
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField($"Passive arms ({arms.Length})", EditorStyles.boldLabel);
+        foreach (PassiveArm arm in arms)
+        {
+            if (arm == null) continue;
+            using (new EditorGUILayout.HorizontalScope(EditorStyles.helpBox))
+            {
+                EditorGUILayout.LabelField(arm.gameObject.name, GUILayout.MinWidth(80f));
+                GUILayout.Label(
+                    $"{MechanismBuildUtil.DescribeJointTravel(arm.GetComponent<ArticulationBody>())} · {arm.DescribeBand()}",
+                    EditorStyles.miniLabel);
+                if (GUILayout.Button("Select", GUILayout.Width(56))) Selection.activeGameObject = arm.gameObject;
             }
         }
     }

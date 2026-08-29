@@ -103,6 +103,7 @@ internal static class MechanismBuildUtil
         RemoveComponents<PivotRotateFollower>(go, useUndo);
         RemoveComponents<PneumaticCylinderFollower>(go, useUndo);
         RemoveComponents<PneumaticSlideFollower>(go, useUndo);
+        RemoveComponents<PassiveArm>(go, useUndo);   // its band drives the body being removed below
         ArticulationBody body = go.GetComponent<ArticulationBody>();
         if (body != null)
         {
@@ -383,11 +384,15 @@ internal static class MechanismBuildUtil
         if (registry == null) return null;
 
         int count = registry.mechanisms != null ? registry.mechanisms.Count : 0;
-        EditorGUILayout.LabelField(new GUIContent($"On '{registry.gameObject.name}' ({count})",
+        // Passive arms are not registry records: the registry exists to hand mechanisms to the
+        // button router, and a passive arm has no button. It is still a mechanism someone opened
+        // this window to adjust — and the only way Set Starting Pose can pick one is this list.
+        PassiveArm[] passiveArms = registry.GetComponentsInChildren<PassiveArm>(true);
+        EditorGUILayout.LabelField(new GUIContent($"On '{registry.gameObject.name}' ({count + passiveArms.Length})",
             "Everything already set up as a mechanism on this robot. Pick one to work on it instead " +
             "of hunting for the part in the hierarchy."), EditorStyles.miniBoldLabel);
 
-        if (count == 0)
+        if (count == 0 && passiveArms.Length == 0)
         {
             EditorGUILayout.HelpBox("This robot has no mechanisms yet.", MessageType.None);
             return null;
@@ -396,24 +401,43 @@ internal static class MechanismBuildUtil
         GameObject picked = null;
         using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
         {
-            foreach (RobotMechanisms.Mechanism m in registry.mechanisms)
+            if (registry.mechanisms != null)
             {
-                GameObject link = MechanismLink(m);
-                if (m == null) continue;
+                foreach (RobotMechanisms.Mechanism m in registry.mechanisms)
+                {
+                    GameObject link = MechanismLink(m);
+                    if (m == null) continue;
 
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        // A record whose actuator went missing is worth SHOWING rather than hiding —
+                        // that is a broken mechanism, and the config UI will still offer it a button.
+                        if (link == null)
+                        {
+                            EditorGUILayout.LabelField($"{m.displayName} — actuator missing", EditorStyles.miniLabel);
+                            continue;
+                        }
+                        if (GUILayout.Button(pickLabel, GUILayout.Width(52))) picked = link;
+
+                        bool isCurrent = link == current;
+                        string label = $"{m.displayName}  ·  {DescribeJointTravel(link.GetComponent<ArticulationBody>())}";
+                        EditorGUILayout.LabelField(isCurrent ? $"▸ {label}" : label,
+                            isCurrent ? EditorStyles.boldLabel : EditorStyles.miniLabel);
+                    }
+                }
+            }
+
+            foreach (PassiveArm arm in passiveArms)
+            {
+                if (arm == null) continue;
+                GameObject link = arm.gameObject;
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    // A record whose actuator went missing is worth SHOWING rather than hiding —
-                    // that is a broken mechanism, and the config UI will still offer it a button.
-                    if (link == null)
-                    {
-                        EditorGUILayout.LabelField($"{m.displayName} — actuator missing", EditorStyles.miniLabel);
-                        continue;
-                    }
                     if (GUILayout.Button(pickLabel, GUILayout.Width(52))) picked = link;
 
                     bool isCurrent = link == current;
-                    string label = $"{m.displayName}  ·  {DescribeJointTravel(link.GetComponent<ArticulationBody>())}";
+                    string label = $"{link.name}  ·  passive " +
+                                   $"{DescribeJointTravel(link.GetComponent<ArticulationBody>())} · {arm.DescribeBand()}";
                     EditorGUILayout.LabelField(isCurrent ? $"▸ {label}" : label,
                         isCurrent ? EditorStyles.boldLabel : EditorStyles.miniLabel);
                 }
@@ -427,6 +451,9 @@ internal static class MechanismBuildUtil
     public static bool IsProtected(ArticulationBody body, RobotMechanisms registry)
     {
         if (body == null || registry == null) return false;
+        // A passive arm is a mechanism with no registry record, so the record scan below would
+        // never see it — and a builder cleaning up would strip the hinge out from under its band.
+        if (body.GetComponent<PassiveArm>() != null) return true;
         RobotMotorController mc = registry.GetComponent<RobotMotorController>();
         if (mc != null)
         {

@@ -358,15 +358,7 @@ public class RobotMotorController : MonoBehaviour
                 if (a == null || b == null || a == b) continue;
                 // Parent and child of the same joint are never collided by PhysX anyway.
                 if (a.transform.IsChildOf(b.transform) || b.transform.IsChildOf(a.transform)) continue;
-                // Cheap reject first: ComputePenetration is a real geometry query and there are
-                // tens of thousands of pairs.
-                if (!colliders[i].bounds.Intersects(colliders[j].bounds)) continue;
-
-                if (!Physics.ComputePenetration(
-                        colliders[i], colliders[i].transform.position, colliders[i].transform.rotation,
-                        colliders[j], colliders[j].transform.position, colliders[j].transform.rotation,
-                        out _, out float depth)) continue;
-                if (depth <= RestPoseOverlapEpsilon) continue;
+                if (!OverlapsAtRest(colliders[i], colliders[j], out float depth)) continue;
 
                 Physics.IgnoreCollision(colliders[i], colliders[j], true);
                 ignored++;
@@ -380,6 +372,23 @@ public class RobotMotorController : MonoBehaviour
     // Below this, an "overlap" is two boxes touching at a shared face, not one part inside another.
     // 0.001 units is 0.1 mm at this project's scale.
     public const float RestPoseOverlapEpsilon = 0.001f;
+
+    // The one test both self-collision rules share: do these two colliders interpenetrate where the
+    // robot stands right now, by more than a touching face? The AABB reject comes first because
+    // ComputePenetration is a real geometry query and the pass above asks it of tens of thousands
+    // of pairs. PassiveArm.ApplyCollisionRules asks the same question of the arm's own pairs, and
+    // "the same question" has to be the same code — an arm judging overlap by its own epsilon would
+    // mute a pair the robot-wide pass kept, or the reverse, and the two would fight over it.
+    public static bool OverlapsAtRest(Collider a, Collider b, out float depth)
+    {
+        depth = 0f;
+        if (a == null || b == null || !a.bounds.Intersects(b.bounds)) return false;
+        if (!Physics.ComputePenetration(a, a.transform.position, a.transform.rotation,
+                b, b.transform.position, b.transform.rotation, out _, out depth)) return false;
+        return depth > RestPoseOverlapEpsilon;
+    }
+
+    public static bool OverlapsAtRest(Collider a, Collider b) => OverlapsAtRest(a, b, out _);
 
     // Everything Awake does, minus the input actions — public for the same reason
     // Dr4bBallast.BakeDrive and JointCoupler.BakeDrive are: edit-mode Physics.Simulate never runs

@@ -355,6 +355,13 @@ internal static class StartingPose
             EditorUtility.SetDirty(piston);
         }
 
+        // 5. A passive arm's rubber band pulls to joint zero, and step 2 just shifted the drive
+        // target to -offset — the OLD rest, expressed in the new frame. Re-baking puts the target
+        // back at 0 = the new rest, which is the whole point of the re-pose. Left alone, edit-mode
+        // physics and the saved prefab carry that stale target until Awake happens to rewrite it.
+        PassiveArm passive = link.GetComponent<PassiveArm>();
+        if (passive != null) passive.BakeDrive();
+
         EditorUtility.SetDirty(body);
         EditorUtility.SetDirty(link.transform);
         if (link.scene.IsValid()) EditorSceneManager.MarkSceneDirty(link.scene);

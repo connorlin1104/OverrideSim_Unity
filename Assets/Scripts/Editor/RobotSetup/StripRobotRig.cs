@@ -60,6 +60,7 @@ public static class StripRobotRig
         int couplers = DestroyAll<JointCoupler>(robot, useUndo);
         int motors = DestroyAll<MotorActuator>(robot, useUndo);
         int pistons = DestroyAll<PneumaticActuator>(robot, useUndo);
+        int passiveArms = DestroyAll<PassiveArm>(robot, useUndo);
 
         // 2) Controllers.
         int controllers = DestroyAll<RobotMotorController>(robot, useUndo) + DestroyAll<ButtonRouter>(robot, useUndo);
@@ -111,6 +112,7 @@ public static class StripRobotRig
         sb.AppendLine($"  couplers removed: {couplers}");
         sb.AppendLine($"  motors removed: {motors}");
         sb.AppendLine($"  pistons removed: {pistons}");
+        sb.AppendLine($"  passive arms removed: {passiveArms}");
         sb.AppendLine($"  controllers removed: {controllers}");
         sb.AppendLine($"  joints (ArticulationBody) removed: {joints}");
         sb.AppendLine($"  wheel-link wrappers flattened: {flattened}");

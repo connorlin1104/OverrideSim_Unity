@@ -595,6 +595,9 @@ public static class Dr4bLiftSetup
     {
         ArticulationBody ab = go.GetComponent<ArticulationBody>();
         if (ab != null && ab.isRoot) return true;
+        // A passive arm has no registry record for the scan below to find; its hinge is still a
+        // mechanism's hinge.
+        if (go.GetComponent<PassiveArm>() != null) return true;
         if (ab != null && mc != null)
         {
             if (mc.leftWheels != null && System.Array.IndexOf(mc.leftWheels, ab) >= 0) return true;

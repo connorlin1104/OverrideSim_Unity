@@ -514,6 +514,9 @@ public class UrdfPostProcessor : EditorWindow
 
         foreach (MotorActuator stale in go.GetComponents<MotorActuator>()) DestroyComponent(stale, useUndo);
         foreach (PneumaticActuator stale in go.GetComponents<PneumaticActuator>()) DestroyComponent(stale, useUndo);
+        // A link re-kinded from a passive arm must not keep its rubber band: the band's Awake would
+        // rewrite the drive this method is about to bake, and the motor would fight a spring.
+        foreach (PassiveArm stale in go.GetComponents<PassiveArm>()) DestroyComponent(stale, useUndo);
 
         if (kind == MechKind.Motor)
         {

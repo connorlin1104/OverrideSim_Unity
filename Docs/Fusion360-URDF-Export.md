@@ -48,11 +48,11 @@ joints-on-bodies, and half-built assemblies all import fine.
    - It builds colliders, rigs the wheels to the joysticks, sizes masses, and registers the robot
      (mechanisms registry + button router + home-screen catalog entry). The drivetrain drives
      immediately.
-2. **Mark each moving part** (arm, intake, flywheel, piston) with **Advanced ▸ Add or Fix Mechanism
-   Joint** (see §5.1). On a mesh robot this **splits the part off the chassis** into a new moving
-   link: pick the part's group node, choose Revolute / Continuous / Prismatic, set the axis and the
-   **Anchor** at the hinge/slide line, then **Apply**. It's wired to a controller button
-   automatically — no axle needs to exist in the CAD, the joint replaces it.
+2. **Mark each moving part** (arm, intake, flywheel, piston, flap) with **Tools ▸ RoboSim ▸ Robot ▸
+   Mechanisms ▸ Add or Fix Mechanism Joint** (see §5.1). On a mesh robot this **splits the part off
+   the chassis** into a new moving link: pick the part's group node, choose the **Mechanism Type**,
+   set the axis and the **Anchor** at the hinge/slide line, then **Apply**. Powered kinds are wired
+   to a controller button automatically — no axle needs to exist in the CAD, the joint replaces it.
 3. **Save As Robot Prefab** (§6) to put it in the home-screen picker.
 
 That's the whole no-restructuring flow: drop the FBX, set it up, mark the DOFs, save. The rest of
@@ -67,7 +67,7 @@ this doc (§1 onward) is the optional URDF path.
 2. Run **ACDC4Robot** → export **URDF**. Drag the whole exported folder into `Assets/`.
 3. **GameObject ▸ 3D Object ▸ URDF Model (import)** → pick the `.urdf`, keep axis **Y**.
 4. Select the imported root → **Tools ▸ RoboSim ▸ Robot ▸ Set Up Imported Robot** → **Set Up Robot**.
-5. Any joint that came in wrong or welded? **Tools ▸ RoboSim ▸ Robot ▸ Advanced ▸ Add or Fix
+5. Any joint that came in wrong or welded? **Tools ▸ RoboSim ▸ Robot ▸ Mechanisms ▸ Add or Fix
    Mechanism Joint**.
 6. Put it in the home-screen picker: **Tools ▸ RoboSim ▸ Robot ▸ Save As Robot Prefab** (see §6).
 7. Press Play and drive.
@@ -158,15 +158,35 @@ map to a button (per robot). To tune one, select its joint link and adjust the *
 If a part came in welded (a **fixed** joint) or with the wrong axis/limits — common when you didn't
 finish jointing it in Fusion — fix it in Unity, no re-export needed:
 
-1. **Tools ▸ RoboSim ▸ Robot ▸ Advanced ▸ Add or Fix Mechanism Joint**.
-2. Pick the **Child Link** (the part that should move), the **Joint Type** (Revolute / Continuous /
-   Prismatic / Fixed), and the **Axis** in the link's local frame.
-3. Set the limits — **degrees** for a revolute, **scaled units** for a prismatic (the window shows
-   the metric equivalent; 1 unit = 0.1 m). Press **Apply**.
+1. **Tools ▸ RoboSim ▸ Robot ▸ Mechanisms ▸ Add or Fix Mechanism Joint**.
+2. Pick the **Moving Part** (the child link that should move) and the **Mechanism Type** — what the
+   part *does*, which the tool maps to a joint and an actuator:
+   - **Spinning motor** — roller / flywheel / intake shaft; free-spins both ways.
+   - **Arm / lift motor** — limited hinge, hold a button to run it.
+   - **Passive arm** — a flap or deflector that is *pushed*, not powered (below).
+   - **Rotating piston** — doinker / flipper; snaps a hinge between two angles.
+   - **Linear piston** — a cylinder that slides a part in / out.
+   - **Fixed** — weld it still and remove any mechanism.
+3. Set the axis (**Which way it turns**) and, for a hinge or slide, the limits — **degrees** for a
+   revolute, **scaled units** for a prismatic (the window shows the metric equivalent; 1 unit =
+   0.1 m). Press **Apply**.
+
+**Passive arm** — an unpowered hinge that turns only when something hits it (usually the toggle)
+and comes back on its own. No button.
+- Pick the part, choose **Passive arm**. The axis preset switches to **Axle / shaft part**: drop the
+  spacer or shaft it turns on and the blue line reads the hinge off it.
+- Not quite on the hinge? Drag the pivot handle in the Scene view; the axis stays put and the anchor
+  follows the handle (works for every kind).
+- **Return to rest (rubber band)** is on by default; **Band strength** is in multiples of the arm's
+  own weight (1 = just lifts it, 3 = returns briskly, 10 = nearly rigid). Off = a free hinge with a
+  little friction.
+- It collides with everything it touches, on the robot too — except parts drawn bolted through it,
+  which stay muted; the Console lists them on Apply.
+- **Set Starting Pose** re-zeroes it like any hinge; the band always pulls to the pose it is drawn in.
 
 It configures the joint and wires the actuator + button mapping exactly like an imported joint, so
-the mechanism shows up in the controller-config screen immediately. Re-applying to the same link
-replaces its mechanism, and **Fixed** removes it. On a **URDF** robot it retypes an existing link
+the mechanism shows up in the controller-config screen immediately (a passive arm gets neither — it
+is listed, not mapped). Re-applying to the same link replaces its mechanism, and **Fixed** removes it. On a **URDF** robot it retypes an existing link
 (including one that imported as fixed). On a **mesh/FBX** robot the part has no joint yet, so it
 **splits a new moving link off the chassis** — the part's meshes and colliders leave the chassis
 body and become their own link, jointed where you set the anchor. Either way you never leave Unity;
