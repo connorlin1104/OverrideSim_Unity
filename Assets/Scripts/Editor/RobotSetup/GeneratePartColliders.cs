@@ -52,14 +52,18 @@ public static class GeneratePartColliders
 
     // Meshes whose largest world-space extent is below this are stickers/decals painted onto a
     // part that already has its own collider — skip them. (0.005 world units = 0.5 mm real size
-    // in this 10x-scale world.)
-    private const float DecalMaxWorldExtent = 0.005f;
+    // in this 10x-scale world.) Internal for the same reason as the holder names below: Realign
+    // Visuals To Colliders has to skip exactly what this skipped to know which leaves a group box
+    // was unioned from.
+    internal const float DecalMaxWorldExtent = 0.005f;
 
     // An oriented box replaces the axis-aligned one only when it is meaningfully tighter AND
     // meaningfully rotated; otherwise the plain AABB on the mesh's own GameObject is simpler.
     private const float ObbMaxVolumeRatio = 0.9f;
     private const float ObbMinAngleDegrees = 2f;
-    private const string ObbChildName = "_OBBCollider";
+    // internal, not private: Realign Visuals To Colliders reads these holders back to recover where a
+    // part WAS when its colliders were generated, and a second copy of the names is how they drift.
+    internal const string ObbChildName = "_OBBCollider";
 
     // --- Fill-ratio triage: tighter colliders for parts a single box grossly over-covers ---
     // fill = meshVolume / referenceBoxVolume (the AABB box). A PLASTIC part is convex-decomposed (VHACD)
@@ -80,11 +84,11 @@ public static class GeneratePartColliders
     // Slab decomposition is kept only when its boxes' total volume beats the single box by at
     // least this margin; a FLAT panel fails this and falls back to its (already tight) box.
     private const float SlabAcceptRatio = 0.7f;
-    private const string SlabChildName = "_SlabCollider";
+    internal const string SlabChildName = "_SlabCollider";
     // Minimum emitted slab-box thickness (world units) so a thin sheet's slab isn't a near-zero-thickness
     // sliver that tunnels or reads as "not around the visual". ~2 mm at the 10x world scale.
     private const float MinSlabThickness = 0.02f;
-    private const string GroupColliderChildName = "_GroupCollider";
+    internal const string GroupColliderChildName = "_GroupCollider";
     // Max convex hulls per PLASTIC part (VHACD is gated to plastic — see the structural loop). Polycarb is
     // usually router/water-jet cut into a specific 2D profile — moon slivers, hole-riddled web panels,
     // scalloped funnel lips — and only a hull cloud that follows that outline collides right; too few and a
@@ -615,8 +619,10 @@ public static class GeneratePartColliders
     }
 
     // "Body", "Body1", "Body23" (+ importer ":N"/" (N)" suffixes NormalizeName strips) — the generic
-    // per-body leaf names Fusion exports, which carry no part identity.
-    private static bool IsGenericBodyName(string name)
+    // per-body leaf names Fusion exports, which carry no part identity. Internal because the group-box
+    // membership rule (PartGroupOf) is built on it, and Realign Visuals To Colliders has to reproduce
+    // that membership exactly to know which leaves a group box was unioned from.
+    internal static bool IsGenericBodyName(string name)
     {
         string n = RobotPartClassifier.NormalizeName(name);
         if (n.Length < 4 || !n.StartsWith("Body", System.StringComparison.OrdinalIgnoreCase)) return false;
