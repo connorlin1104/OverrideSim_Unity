@@ -530,20 +530,43 @@ public static class TileSeamTool
     private static readonly Vector3[] FaceRights =
         { Vector3.forward, Vector3.forward, Vector3.right, Vector3.right, Vector3.right, Vector3.right };
 
-    // A box exactly filling `local` (the FBX mesh's own bounds, in the tile's mesh space): 24
-    // vertices, four per face, per-face normals. The top face is whichever face's world normal is
+    // A box filling the tile's GRID CELL (`worldPitch` across), NOT the FBX mesh's own footprint:
+    // 24 vertices, four per face, per-face normals. The top face is whichever face's world normal is
     // most +Y — decided from the tile's transform, not assumed, because the field root is rotated
     // -90° about X and mesh-local +Z is what points up here. Its UVs are each vertex's place in the
-    // tile's own world XZ footprint (u along +X, v along +Z), so every tile's pattern faces the same
-    // way whatever its local frame does. The other five faces get (0.5, 0.5): the centre of the
-    // texture is flat foam, so they are plain grey with an unperturbed normal.
+    // tile's own world footprint (u, v across the two horizontal axes), so every tile's pattern faces
+    // the same way whatever its local frame does. The other five faces get (0.5, 0.5): the centre of
+    // the texture is flat foam, so they are plain grey with an unperturbed normal.
+    //
+    // WHY THE CELL, NOT THE FBX BOUNDS. The interlocking-tab seam is drawn in a thin band at the very
+    // edge of each tile's UV square and is designed to meet its neighbour's band across the shared
+    // edge. The FBX tile meshes OVERLAP their neighbours (real foam tiles interlock, so the CAD does
+    // too): measured, they are 6.181 u across on a 5.98 u pitch, a 0.2 u overlap on every seam. Built
+    // at the FBX size, those overlaps are perfectly coplanar (all 36 tops sit at Y 0.7126, 0.00 mm
+    // apart) and each carries a DIFFERENT half of the seam pattern, so they Z-fight — the reported
+    // flicker, and "only half of it shows". Shrunk to the pitch the tiles meet edge to edge, the two
+    // halves of every seam line up exactly, and nothing overlaps. `bounds` is still the ORIGINAL FBX
+    // bounds (below), so renderer.bounds — the floor top RebuildFieldBounds/PaintedTape read, and the
+    // field extent — is byte-identical; only the drawn geometry insets.
     //
     // Winding: with u = Cross(r, n), the quad (c-r-u, c-r+u, c+r+u, c+r-u) is front-facing along
     // n in Unity's clockwise convention. TileSeamValidation checks this against RecalculateNormals
     // rather than trusting the derivation.
-    internal static SlabData BuildSlab(Bounds local, Transform tile)
+    internal static SlabData BuildSlab(Bounds local, Transform tile, float worldPitch)
     {
-        Vector3 min = local.min, max = local.max;
+        // Shrink the two HORIZONTAL axes (the large ones — the small extent is the tile's thickness,
+        // whichever axis it lives on) to the grid pitch, in the tile's own mesh space. Keep the thin
+        // axis full so the floor top does not move. worldPitch <= 0 (a lone tile, or pitch unknown)
+        // leaves the FBX footprint untouched.
+        Vector3 e = local.extents;
+        int thin = e.x <= e.y && e.x <= e.z ? 0 : (e.y <= e.z ? 1 : 2);
+        Vector3 ls = new Vector3(Mathf.Abs(tile.lossyScale.x), Mathf.Abs(tile.lossyScale.y), Mathf.Abs(tile.lossyScale.z));
+        Vector3 half = e;
+        if (worldPitch > 1e-4f)
+            for (int a = 0; a < 3; a++)
+                if (a != thin && ls[a] > 1e-6f)
+                    half[a] = Mathf.Min(e[a], worldPitch * 0.5f / ls[a]);   // never GROW a tile (would re-overlap)
+        Vector3 min = local.center - half, max = local.center + half;
         Matrix4x4 toWorld = tile.localToWorldMatrix;
 
         Vector3 Corner(Vector3 sign) =>
@@ -633,8 +656,9 @@ public static class TileSeamTool
     // any tile that differs, so a re-modelled tile still gets a correct slab instead of a wrong one.
     private static Mesh[] EnsureSlabAssets(List<MeshRenderer> tiles, Mesh[] originals, out int shared)
     {
+        float pitch = GridPitch(tiles, originals);
         var data = new SlabData[tiles.Count];
-        for (int i = 0; i < tiles.Count; i++) data[i] = BuildSlab(originals[i].bounds, tiles[i].transform);
+        for (int i = 0; i < tiles.Count; i++) data[i] = BuildSlab(originals[i].bounds, tiles[i].transform, pitch);
 
         Mesh sharedMesh = EnsureMeshAsset(SlabPath, Path.GetFileNameWithoutExtension(SlabPath), data[0]);
         var meshes = new Mesh[tiles.Count];
@@ -653,6 +677,37 @@ public static class TileSeamTool
                              $"or orientation); it got its own {name}.asset.", tiles[i]);
         }
         return meshes;
+    }
+
+    // The grid pitch: the smallest positive centre-to-centre distance between tiles in the floor
+    // plane, which for a regular grid IS the spacing. Tiles are built to exactly this footprint so
+    // they meet edge to edge without the FBX meshes' interlock overlap. Centres come from the tile's
+    // world transform of its own mesh-bounds centre, and the vertical axis is dropped so a hair of
+    // floor-top spread cannot masquerade as horizontal distance.
+    private static float GridPitch(List<MeshRenderer> tiles, Mesh[] originals)
+    {
+        var centres = new Vector3[tiles.Count];
+        for (int i = 0; i < tiles.Count; i++)
+            centres[i] = tiles[i].transform.localToWorldMatrix.MultiplyPoint3x4(originals[i].bounds.center);
+
+        // The up axis is the one the tiles vary in LEAST (they are coplanar), so project it out.
+        Vector3 spread = Vector3.zero, mean = Vector3.zero;
+        foreach (Vector3 c in centres) mean += c;
+        mean /= Mathf.Max(1, centres.Length);
+        foreach (Vector3 c in centres)
+        { Vector3 d = c - mean; spread += new Vector3(d.x * d.x, d.y * d.y, d.z * d.z); }
+        int up = spread.x <= spread.y && spread.x <= spread.z ? 0 : (spread.y <= spread.z ? 1 : 2);
+
+        float best = float.MaxValue;
+        for (int i = 0; i < centres.Length; i++)
+        for (int j = i + 1; j < centres.Length; j++)
+        {
+            Vector3 d = centres[i] - centres[j];
+            d[up] = 0f;
+            float dist = d.magnitude;
+            if (dist > 1e-3f && dist < best) best = dist;
+        }
+        return best == float.MaxValue ? 0f : best;
     }
 
     private static Mesh EnsureMeshAsset(string path, string name, SlabData data)

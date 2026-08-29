@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -268,6 +269,47 @@ public static class TileSeamValidation
             $"{tag}: {notStatic.Count} tile(s) without Batching Static: {string.Join(", ", notStatic)}. Only the tile " +
             "PARENTS carry static flags from the import; static batching reads the renderer's own object, so " +
             "without this the 36 identical slabs are 36 draw calls.");
+
+        // NO TWO TILES OVERLAP. This is the regression that shipped: the slab was built at the FBX
+        // mesh's own footprint, which is wider than the grid pitch (the CAD tiles interlock), so every
+        // tile overlapped its neighbours by ~0.2 u. Coplanar overlap of two DIFFERENT halves of the
+        // seam pattern Z-fights — the flicker, and "only half of it shows". Measured from the actual
+        // top-face GEOMETRY (not renderer.bounds, which is deliberately still the full FBX bounds so
+        // the floor top does not move), in the floor plane. A hair of shared edge is fine; a
+        // centimetre of face is the bug.
+        const float overlapTol = 0.01f;
+        var footprints = new List<(string name, float minA, float maxA, float minB, float maxB)>();
+        foreach (MeshRenderer tile in tiles)
+        {
+            Mesh mesh = tile.GetComponent<MeshFilter>().sharedMesh;
+            if (mesh == null || !mesh.isReadable) continue;
+            Matrix4x4 toWorld = tile.transform.localToWorldMatrix;
+            Vector3[] vertices = mesh.vertices;
+            Vector3[] normals = mesh.normals;
+            float minA = float.MaxValue, maxA = float.MinValue, minB = float.MaxValue, maxB = float.MinValue;
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                if (Vector3.Dot(toWorld.MultiplyVector(normals[i]).normalized, Vector3.up) < 0.9f) continue;
+                Vector3 w = toWorld.MultiplyPoint3x4(vertices[i]);   // up is world Y; horizontal is X,Z
+                minA = Mathf.Min(minA, w.x); maxA = Mathf.Max(maxA, w.x);
+                minB = Mathf.Min(minB, w.z); maxB = Mathf.Max(maxB, w.z);
+            }
+            if (minA <= maxA) footprints.Add((tile.name, minA, maxA, minB, maxB));
+        }
+        var overlaps = new List<string>();
+        for (int i = 0; i < footprints.Count; i++)
+        for (int j = i + 1; j < footprints.Count; j++)
+        {
+            var p = footprints[i]; var q = footprints[j];
+            float oa = Mathf.Min(p.maxA, q.maxA) - Mathf.Max(p.minA, q.minA);
+            float ob = Mathf.Min(p.maxB, q.maxB) - Mathf.Max(p.minB, q.minB);
+            if (oa > overlapTol && ob > overlapTol)
+                overlaps.Add($"{p.name}∩{q.name} ({Mathf.Min(oa, ob) * 100f:0.0} mm)");
+        }
+        checks.That(overlaps.Count == 0,
+            $"{tag}: {overlaps.Count} pair(s) of tiles overlap in the floor plane by >{overlapTol * 100f:0} cm: " +
+            $"{string.Join(", ", overlaps.Take(8))}{(overlaps.Count > 8 ? ", …" : "")}. Coplanar overlap of the seam " +
+            "pattern Z-fights and flickers — the slab must be built to the grid pitch, not the FBX footprint.");
 
         // The floor top: renderer bounds vs the ground box, and vs the meshes the slabs replaced.
         BoxCollider ground = null;
