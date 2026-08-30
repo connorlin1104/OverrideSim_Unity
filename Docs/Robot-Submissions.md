@@ -190,21 +190,15 @@ For that folder to be visible in the iOS Files app the build needs `UIFileSharin
 `LSSupportsOpeningDocumentsInPlace` set to `YES` in Info.plist (Xcode, or a post-build script).
 If a native picker is added later, `ROBOSIM_NATIVE_FILE_PICKER` is the seam in `RobotFilePicker`.
 
-Accepted, best first: `.step` / `.stp`, `.f3d` / `.f3z`, then `.fbx`, `.urdf`, `.zip` (a URDF needs
-its meshes, hence the archive). The screen says which to prefer in as many words — *Fusion 360 →
-export a `.f3d` or `.f3z`; any other CAD → export a `.step`* — because the choice is made in the
-exporter, before the app ever sees a file. The mesh formats stay accepted: a player who only has an
-FBX should send the FBX rather than give up. If CAD becomes the norm they can be dropped later.
+Accepted: `.fbx`, `.urdf`, `.zip` (a URDF needs its meshes, hence the archive). The screen asks for
+an FBX exported at **Low or Medium refinement**, because refinement is set in the exporter before the
+app ever sees a file, and on this geometry it is the only control that moves the size much.
 
-`.stp` and `.step` are the same format. Both are listed because exporters are split between the two
-spellings, and a file silently refused for a spelling tells the sender nothing.
-
-`.f3z` is the Fusion archive of a **distributed design** — a zip of one or more `.f3d` files that
-carries the externally referenced components along with the parent. Fusion decides which one the
-sender gets: a design with any linked component offers no `.f3d` at all, and a robot assembly is
-usually that design. So `.f3z` is the one to expect, and it is the better one to receive — the
-`.f3d` of such a design would arrive without the parts it links to. It opens exactly like an `.f3d`:
-upload it to Fusion and open it. Nothing downstream of the Fusion step changes.
+**CAD is no longer accepted.** `.step`, `.stp`, `.f3d` and `.f3z` were all on the list until
+2026-08-17 and are now refused. *Why a submission is 100 MB* below has the whole trade; the short
+version is that nothing in this project can read those formats, so every CAD file bought its size
+saving with a manual Fusion round-trip, and decimating the FBX turned out to buy the same reduction
+in minutes.
 
 **Size is the real constraint.** The robot FBX files in this project run 100–205 MB. A phone upload
 that size takes a while, so the screen shows progress and checks for a connection first.
@@ -251,42 +245,46 @@ simple bracket, which is why a handful of bodies carry half the file.
    already fine and touching them buys nothing.
 3. **Turn off UV export** if the exporter offers it. 24% off, and it costs nothing here.
 
-**Better still, send the CAD.** A `.f3d` or `.step` is a fraction of the size *and* still holds the
-exact surfaces, so refinement stays a decision that can be made later instead of one baked in by the
-sender. Once it is an FBX the surfaces are gone: re-exporting a tessellated mesh cannot recover them,
-and reducing it afterwards means decimating, which is a strictly worse tool for the job (see the
-decimation note in [Robot-Delivery.md](Robot-Delivery.md) — the failure mode is exactly the holes in
-VEX metal). **Both formats are accepted by the picker, and the screen asks for them first.**
+### Asking for CAD instead, and why that stopped
 
-`.step` is the one to ask for. It is what every CAD package exports — Onshape, SolidWorks, Inventor,
-Creo, FreeCAD — where `.f3d`/`.f3z` exists only if the sender happens to be on Fusion. It also asks
-for less: a Fusion archive carries the whole parametric design, sketches and timeline included,
-while a `.step` carries the shape. For a robot someone may have marked private, the smaller ask is
-the right default.
+For about six weeks the pipeline asked for the CAD rather than the mesh, and the argument was a good
+one: a `.step` or `.f3d` is a fraction of the size *and* still holds the exact surfaces, so
+refinement stays a decision that can be made later instead of one baked in by the sender. Everything
+STEP drops, this pipeline discards anyway — joints are rebuilt as ArticulationBodies regardless, and
+the plastic-vs-metal gate is name-based (`IsUnderPlastic` in `GeneratePartColliders.cs`), so
+component names and hierarchy are all the setup tools read.
 
-What `.step` drops, this pipeline discards anyway. Joints are rebuilt as ArticulationBodies in Unity
-regardless; appearances don't matter because the plastic-vs-metal gate is name-based
-(`IsUnderPlastic` in `GeneratePartColliders.cs`). What the setup tools actually read is the component
-names and hierarchy — and STEP keeps both. Take the Fusion archive when a Fusion team's STEP export
-comes out mangled, which occasionally happens on thin walls and patterns.
+**It was dropped on 2026-08-17.** The argument was never wrong; what it left out is who pays. Nothing
+here can *read* those formats — Unity imports none of them — so the saving was collected by hand, in
+Fusion, on one machine, and driving a whole assembly down to a usable refinement there is slow,
+fiddly work. It became the step the pipeline stalled on.
 
-**Which means the practical answer is usually: do it yourself.** Open the `.step`, `.f3d` or `.f3z`
-in Fusion and export the FBX at the refinement you want. That is the one path where the person choosing the
-tessellation is the person who knows what the simulator needs, and it makes every number above
-someone else's problem.
+### Decimating instead
 
-**An FBX will not do for this.** Fusion does import FBX, so it is tempting — but it arrives as a
-*mesh body*. Refinement is not a property of a mesh; it is what happens when a surface is
-tessellated, and that already happened on the sender's machine. The only size control Fusion offers
-on a mesh body is **Reduce**, which is quadric decimation: the same class of tool, on the same
-geometry, that put the holes wrong in the metal. Treat the guidance in this section as what to tell a
-sender who can only give you an FBX.
+Two places to do it, and they are not exclusive:
+
+- **Blender, before the file reaches Unity.** Import, Decimate modifier, export. On the first robot
+  through this path it took the file down by more than half in minutes — the same reduction the CAD
+  round-trip existed to buy. It also shrinks what `Assets/Models/Submitted/` and the model store have
+  to carry.
+- **`Tools ▸ RoboSim ▸ Robot ▸ Reduce Robot Meshes`, after import.** Quadric decimation with a
+  Hausdorff error reported per mesh, and it lifts the meshes out of the FBX into standalone assets
+  as a second win — see [Robot-Delivery.md](Robot-Delivery.md).
+
+Neither recovers a surface, so both are worse *in principle* than tessellating from CAD at the right
+density; the failure mode is the one in Robot-Delivery.md's decimation note, holes in VEX metal going
+polygonal. What settled it is that the error is measured at the ratio actually used, and it is small,
+where the Fusion round-trip's cost was real every single time.
+
+**So what to tell a sender is one line: export at Low or Medium.** It is one dropdown in every CAD
+package, and everything past it is handled on this side.
 
 ## Setting up a submission when it arrives
 
 1. Download the file and its `.json` sidecar from the Storage bucket.
-2. Drop the model in `Assets/Models/` and follow `Docs/Fusion360-URDF-Export.md` — §A is the FBX
-   path, which is the recommended one because it imposes no structure on the sender's CAD.
+2. Decimate it if it is large (Blender, or `Reduce Robot Meshes` after import), then drop it in
+   `Assets/Models/Submitted/`. [Pipeline-Dry-Run.md](Pipeline-Dry-Run.md) is the ordered checklist;
+   `Fusion360-URDF-Export.md` §A covers the FBX export settings themselves.
 3. `Tools ▸ RoboSim ▸ Robot ▸ Set Up Imported Robot` (colliders, drivetrain, catalog entry, prefab,
    physics smoke test — one click).
 4. Add the mechanisms by hand: `Tools ▸ RoboSim ▸ Robot ▸ Mechanisms ▸ …`.

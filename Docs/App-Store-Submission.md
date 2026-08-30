@@ -293,9 +293,9 @@ profiles, no way for one user to contact another, and no user-visible content st
 Abuse or takedown requests reach us at the support address in the listing.
 
 TESTING "SUBMIT A ROBOT" (optional)
-The form asks for a team name, an optional robot name, an email address and a CAD or mesh file. The
+The form asks for a team name, an optional robot name, an email address and a 3D model file. The
 app has no native file picker: it lists files in its own Documents folder, which is exposed to the
-iOS Files app. To exercise it you would first need to copy a .step, .f3d or .fbx file into the app's
+iOS Files app. To exercise it you would first need to copy a .fbx, .urdf or .zip file into the app's
 folder in Files. This flow is not required for any other part of the app and skipping it affects
 nothing.
 
