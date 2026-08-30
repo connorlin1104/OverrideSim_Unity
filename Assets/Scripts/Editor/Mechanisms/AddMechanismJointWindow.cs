@@ -143,12 +143,27 @@ public class AddMechanismJointWindow : EditorWindow
     {
         // Scrolled because the roster plus the form is now taller than the window on a robot with a
         // handful of mechanisms, and IMGUI silently clips instead of scrolling on its own.
-        scroll = EditorGUILayout.BeginScrollView(scroll);
-        DrawBody();
+        scroll = EditorGUILayout.BeginScrollView(scroll, GUILayout.ExpandHeight(true));
+        bool ready = DrawBody();
         EditorGUILayout.EndScrollView();
+
+        // The Apply button is PINNED here, OUTSIDE the scroll view, so it is always on screen no
+        // matter how long the roster or the form grows. It used to live at the bottom of the
+        // scrolled body — below the roster and every help box — and on a normal-height window it sat
+        // under the fold, so "the window has no Apply button" was really "you have to scroll past
+        // everything to reach it." A footer that isn't scrolled can't hide. DrawBody returns false
+        // for the states that have nothing to apply (no part picked, not under a robot), and then no
+        // button shows.
+        if (!ready) return;
+        bool isFixedFooter = mechKind == MechanismKind.Fixed;
+        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            if (GUILayout.Button(isFixedFooter ? "Apply (make fixed)" : "Apply Mechanism", GUILayout.Height(34)))
+                PerformApply();
     }
 
-    private void DrawBody()
+    // Draws the roster and the form. Returns true when the form is complete enough to offer Apply
+    // (the pinned footer in OnGUI shows the button only then); false for the early-out states.
+    private bool DrawBody()
     {
         // Everything already on this robot, first — "which of these am I fixing?" is the question
         // this window opens with, and until now the only way to answer it was to know the part's
@@ -175,7 +190,7 @@ public class AddMechanismJointWindow : EditorWindow
         if (childLink == null)
         {
             EditorGUILayout.HelpBox("Select the link (URDF) or part (mesh/FBX) that should move.", MessageType.Warning);
-            return;
+            return false;
         }
         RobotMechanisms registry = childLink.GetComponentInParent<RobotMechanisms>();
         if (registry == null)
@@ -183,7 +198,7 @@ public class AddMechanismJointWindow : EditorWindow
             EditorGUILayout.HelpBox(
                 "This is not under a set-up robot (no RobotMechanisms on the root). Run " +
                 "Tools > RoboSim > Robot > Set Up Imported Robot first.", MessageType.Error);
-            return;
+            return false;
         }
         // A mesh/FBX part has no ArticulationBody yet — Apply splits it off the chassis into a new
         // moving link. That needs a rigged chassis (ArticulationBody) above it.
@@ -195,7 +210,7 @@ public class AddMechanismJointWindow : EditorWindow
                 EditorGUILayout.HelpBox(
                     $"'{childLink.name}' has no ArticulationBody and no rigged chassis above it. Run " +
                     "Set Up Imported Robot first, then pick the part that should move.", MessageType.Error);
-                return;
+                return false;
             }
             EditorGUILayout.HelpBox(
                 $"'{childLink.name}' isn't a moving link yet — Apply will split it off the chassis as a new " +
@@ -231,11 +246,10 @@ public class AddMechanismJointWindow : EditorWindow
 
         if (isPassive)
             EditorGUILayout.HelpBox(
-                "A passive arm has no motor and no button: it turns only when something hits it — usually " +
-                "the toggle — and the rubber band pulls it back to the pose it is drawn in. It collides " +
-                "with everything it touches, on the robot too; parts drawn bolted through it stay muted " +
-                "(the Console lists them on Apply). Drop the spacer or shaft it turns on below, and check " +
-                "the blue line.", MessageType.Info);
+                "A passive arm has no motor and no button: it turns only when a game piece, a wall or the " +
+                "field pushes it, and the rubber band pulls it back to the pose it is drawn in — moving only " +
+                "this one part, never the rest of the robot (it does not collide with its own frame). Drop " +
+                "the spacer or shaft it turns on below, and check the blue line.", MessageType.Info);
 
         // "I move the part but it doesn't correspond when I press play." A built joint is placed by its
         // ANCHORS, not its transform: drag the link in the Scene after building and PhysX snaps it back
@@ -399,8 +413,21 @@ public class AddMechanismJointWindow : EditorWindow
         // Any edit above can move the previewed axis/arc, so keep the Scene view in step.
         if (GUI.changed && showAxisPreview) SceneView.RepaintAll();
 
-        EditorGUILayout.Space();
-        if (!GUILayout.Button(isFixed ? "Apply (make fixed)" : "Apply Mechanism", GUILayout.Height(30))) return;
+        return true;
+    }
+
+    // Builds (or removes) the joint the form describes. Split out of DrawBody so the Apply button can
+    // live in a footer OUTSIDE the scroll view; everything it needs is an instance field or is
+    // re-derived from mechKind here, so it never depends on a local from the drawing pass.
+    private void PerformApply()
+    {
+        if (childLink == null) return;
+        RobotMechanisms registry = childLink.GetComponentInParent<RobotMechanisms>();
+        if (registry == null) return;
+        AddMechanismJoint.JointType jointType = JointTypeOf(mechKind);
+        bool asToggle = mechKind == MechanismKind.RotatingPiston;
+        bool isFixed = mechKind == MechanismKind.Fixed;
+        bool isPassive = mechKind == MechanismKind.PassiveArm;
 
         try
         {
@@ -849,11 +876,14 @@ public static class AddMechanismJoint
                     ControllerMapSettings.Save(registry.robotId, map);
             }
         }
-        // An actuator with no record (hand-added), and the blanket: an arm that ignores its whole
-        // robot cannot be pushed by the toggle, and PassiveArm re-decides those pairs itself.
+        // Any actuator on the link goes — a passive arm is not powered.
         MechanismBuildUtil.RemoveComponents<MotorActuator>(link, useUndo);
         MechanismBuildUtil.RemoveComponents<PneumaticActuator>(link, useUndo);
-        MechanismBuildUtil.RemoveComponents<IgnoreRobotSelfCollision>(link, useUndo);
+        // The blanket STAYS (added if it was not there): the arm must not collide with the rest of
+        // its own robot, so the band only ever moves this one part and a returning arm can never
+        // shove the chassis or another mechanism. It still collides with everything OUTSIDE the
+        // robot — pieces, walls, the floor — which is the whole point of a deflector.
+        MechanismBuildUtil.AddOrGet<IgnoreRobotSelfCollision>(link, useUndo);
 
         PassiveArm arm = MechanismBuildUtil.AddOrGet<PassiveArm>(link, useUndo);
         if (useUndo) Undo.RecordObject(arm, "Add or Fix Mechanism Joint");
@@ -873,14 +903,9 @@ public static class AddMechanismJoint
         arm.SizeBand(leverArm, Mathf.Abs(Physics.gravity.y));
         arm.BakeDrive();
 
-        // Say now which robot parts are drawn through the arm: those pairs stay muted in play, and
-        // "why doesn't the flap hit the bracket" is a question best answered at build time.
-        List<string> bolted = arm.RestOverlaps();
         Debug.Log($"Passive arm '{link.name}': {arm.DescribeBand()}, cap {arm.bandForceLimit:0.#} " +
-                  $"(mass {body.mass:0.###} kg, {leverArm:0.##} u lever arm)" +
-                  (bolted.Count == 0
-                      ? "; nothing on the robot overlaps it at rest, so it collides with every other link."
-                      : $"; bolted through (these stay muted): {string.Join(", ", bolted)}"), link);
+                  $"(mass {body.mass:0.###} kg, {leverArm:0.##} u lever arm). It is muted against its own " +
+                  "robot and collides only with game pieces, walls and the floor.", link);
 
         UrdfPostProcessor.RefreshCatalogMechanisms(registry.robotId, root.name, registry);
 

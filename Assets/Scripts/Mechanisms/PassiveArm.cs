@@ -1,40 +1,39 @@
-using System.Collections.Generic;
 using UnityEngine;
 
-// An UNPOWERED hinge: a flap, a deflector, a wiper that only turns because something hits it —
-// usually the robot's own toggle — and comes back on its own. Nothing here reads a button.
+// An UNPOWERED hinge: a flap, a deflector, a wiper that only turns because something OUTSIDE the
+// robot hits it — a game piece, a wall, the field — and comes back on its own. Nothing here reads
+// a button.
 //
-// WHY A COMPONENT AT ALL. A revolute with no actuator is already unpowered, but the two things a
-// bare joint cannot do are the whole feature:
+// WHY A COMPONENT AT ALL. A revolute with no actuator is already unpowered, but the one thing a
+// bare joint cannot do is the whole feature:
 //
 //   THE RUBBER BAND. The real part is held against its drawn pose by an elastic, so it returns
 //   after being knocked. That is a position-target drive at target 0 — joint zero IS the drawn
 //   pose, and Set Starting Pose re-zeroes the joint whenever the drawn pose changes, so the target
-//   never has to move. The band is PRE-TENSIONED: it pulls with everything it has within a few
-//   degrees of rest (BandSaturationDegrees) and then saturates, which is exactly what a stiff
-//   spring under a force cap gives. The cap is sized in multiples of the arm's own weight
-//   (bandStrength) by the builder, and the three baked numbers are serialized so edit-mode
-//   physics and play mode run one drive.
+//   never has to move: the band always pulls the arm back to exactly where the prefab draws it, and
+//   nowhere else. The band is PRE-TENSIONED: it pulls with everything it has within a few degrees
+//   of rest (BandSaturationDegrees) and then saturates, which is exactly what a stiff spring under a
+//   force cap gives. The cap is sized in multiples of the arm's own weight (bandStrength) by the
+//   builder, and the three baked numbers are serialized so edit-mode physics and play mode run one
+//   drive.
 //
-//   COLLIDING WITH ITS OWN ROBOT. IgnoreRobotSelfCollision blanks EVERY pair between a mechanism
-//   link and the rest of its robot, and that blanket is the reason nothing on a robot could push
-//   anything else. A passive arm exists to be pushed, so it re-decides every pair itself, after
-//   the blanket has run (execution order 60; IgnoreRobotSelfCollision is 50, and the drivetrain's
-//   Awake pass is earlier still): a pair that already overlaps in the rest pose is a part drawn
-//   bolted through another and stays muted; every other pair collides. That is the same rule
-//   RobotMotorController.IgnoreBuiltInSelfOverlaps applies to the whole robot at Awake, decided by
-//   the same OverlapsAtRest test. The only pairs left alone are direct joint parent<->child,
-//   which PhysX never collides anyway — so an arm split off the chassis never touches the chassis
-//   (its joint limit is the hard stop), and an arm mounted on the toggle does hit the chassis,
-//   which is what "it collides with everything it hits" means.
+//   IT MOVES ONLY ITS OWN PART. The band is a drive on THIS link's own joint — it moves this one
+//   arm and nothing else. The arm is also kept from colliding with the rest of its OWN robot: the
+//   builder puts an IgnoreRobotSelfCollision on it, exactly like every other mechanism link, so a
+//   returning arm can never shove the chassis, a wheel, or another mechanism around (that cross-talk
+//   is what makes a robot lurch or lose its drive after a hit). The arm still collides with
+//   everything OUTSIDE the robot — game pieces, walls, the floor — which is the whole point: a
+//   spring-loaded flap that deflects pieces and springs straight back to its drawn pose, entirely
+//   self-contained. An earlier version re-enabled collision with the robot's own toggle so the
+//   toggle could bat it; that also let the arm bang into its own frame, so it is gone. Drive the arm
+//   with an arm motor if you want the robot itself to move it.
 //
-// Awake bakes the drive and Start applies the collision rules; both are public because edit-mode
-// Physics.Simulate runs neither (the Dr4bBallast.BakeDrive convention), and the builder calls
-// BakeDrive so the serialized drive is the play-mode drive.
+// Awake bakes the drive; it is public because edit-mode Physics.Simulate never runs Awake (the
+// Dr4bBallast.BakeDrive convention), and the builder calls BakeDrive so the serialized drive is the
+// play-mode drive.
 //
 // Built by Tools > RoboSim > Robot > Mechanisms > Add or Fix Mechanism Joint (Passive arm).
 [DisallowMultipleComponent]
-[DefaultExecutionOrder(60)]
 public class PassiveArm : MonoBehaviour
 {
     [Tooltip("The hinge this arm turns on. Defaults to the ArticulationBody on this GameObject.")]
@@ -80,7 +79,7 @@ public class PassiveArm : MonoBehaviour
     public const float MinLeverArm = 0.25f;
 
     // A pushed arm turns as fast as the thing hitting it. A cap left behind by a motor that used to
-    // live on this link (~10 rad/s at 100 RPM) would make a fast toggle hit look like a drag.
+    // live on this link (~10 rad/s at 100 RPM) would make a fast piece hit look like a drag.
     private const float PushedJointVelocityCap = 100f;
 
     void Awake()
@@ -88,8 +87,6 @@ public class PassiveArm : MonoBehaviour
         if (body == null) body = GetComponent<ArticulationBody>();
         BakeDrive();
     }
-
-    void Start() => ApplyCollisionRules();
 
     // Sizes the three baked band numbers from the arm's mass, its lever arm (pivot line to the
     // centre of what it moves, in world units) and gravity. Called by the builder with the
@@ -141,84 +138,5 @@ public class PassiveArm : MonoBehaviour
         body.maxJointVelocity = PushedJointVelocityCap;
     }
 
-    // Decides every collider pair between this arm and the rest of its robot: muted if the two
-    // already interpenetrate where the robot stands now (drawn bolted through), colliding
-    // otherwise — including pairs a blanket IgnoreRobotSelfCollision on the OTHER link switched
-    // off a moment earlier, which is why this runs at execution order 60. Returns how many pairs
-    // were muted; `report` (optional) gets one line per muted pair so the builder can say which.
-    public int ApplyCollisionRules(List<string> report = null)
-    {
-        int muted = 0;
-        ForEachRobotPair((mine, other, owner) =>
-        {
-            bool bolted = RobotMotorController.OverlapsAtRest(mine, other, out float depth);
-            Physics.IgnoreCollision(mine, other, bolted);
-            if (!bolted) return;
-            muted++;
-            report?.Add($"{owner.name}/{other.name} ({depth * 100f:0.0} mm)");
-        });
-        return muted;
-    }
-
-    // The pairs ApplyCollisionRules WOULD mute, without touching anything — the builder logs these
-    // at edit time so a part drawn through the arm is a known fact rather than a surprise in play.
-    public List<string> RestOverlaps()
-    {
-        var overlaps = new List<string>();
-        ForEachRobotPair((mine, other, owner) =>
-        {
-            if (RobotMotorController.OverlapsAtRest(mine, other, out float depth))
-                overlaps.Add($"{owner.name}/{other.name} ({depth * 100f:0.0} mm)");
-        });
-        return overlaps;
-    }
-
     public string DescribeBand() => returnToRest ? $"rubber band ×{bandStrength:0.#}" : "free hinge";
-
-    // Every (arm collider, other robot collider) pair the rules apply to. Colliders on this link's
-    // own subtree stop at a nested body (that geometry belongs to a link hinged on this arm), and
-    // the other side skips this link's direct joint parent and direct joint children — PhysX
-    // filters those itself, so deciding them here would be noise. Nothing outside the robot root
-    // is ever touched: pieces, walls and the floor are the whole point of the arm.
-    private void ForEachRobotPair(System.Action<Collider, Collider, ArticulationBody> visit)
-    {
-        if (body == null) body = GetComponent<ArticulationBody>();
-        if (body == null) return;
-        RobotMechanisms robot = GetComponentInParent<RobotMechanisms>();
-        if (robot == null) return;
-        Physics.SyncTransforms();
-
-        ArticulationBody parentLink = NearestBodyAbove(body.transform);
-
-        var mine = new List<Collider>();
-        foreach (Collider c in body.GetComponentsInChildren<Collider>(true))
-            if (Usable(c) && c.GetComponentInParent<ArticulationBody>(true) == body) mine.Add(c);
-        if (mine.Count == 0) return;
-
-        foreach (Collider other in robot.GetComponentsInChildren<Collider>(true))
-        {
-            if (!Usable(other)) continue;
-            ArticulationBody owner = other.GetComponentInParent<ArticulationBody>(true);
-            if (owner == null || owner == body || owner == parentLink) continue;
-            if (NearestBodyAbove(owner.transform) == body) continue;   // hinged ON this arm
-            foreach (Collider m in mine) visit(m, other, owner);
-        }
-    }
-
-    // Active, enabled, solid. IgnoreCollision on a disabled collider warns and does not stick, and
-    // a trigger never pushes anything.
-    private static bool Usable(Collider c) =>
-        c != null && c.enabled && !c.isTrigger && c.gameObject.activeInHierarchy;
-
-    // The joint parent, found by walking the hierarchy — never ArticulationBody.isRoot, which reads
-    // true for every body on a prefab that has not been instantiated.
-    private static ArticulationBody NearestBodyAbove(Transform t)
-    {
-        for (Transform p = t.parent; p != null; p = p.parent)
-        {
-            ArticulationBody b = p.GetComponent<ArticulationBody>();
-            if (b != null) return b;
-        }
-        return null;
-    }
 }

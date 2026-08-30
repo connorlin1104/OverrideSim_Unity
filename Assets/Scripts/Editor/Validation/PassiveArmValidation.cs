@@ -19,11 +19,12 @@ using UnityEngine;
 //   at the TOP of its travel with its weight outboard, and the in-test guard switches the band off
 //   and watches the same arm sag.
 //
-//   THE PUSH. The arm exists to be hit by its own robot's toggle, and every other mechanism link
-//   carries a blanket IgnoreRobotSelfCollision that stops exactly that. The rules re-deciding
-//   those pairs run in Start, which edit-mode physics never calls — so the fixture lays the
-//   blanket by hand, proves the toggle passes straight through, then applies the rules and proves
-//   it no longer does.
+//   THE ISOLATION. The band must move ONLY its own part: a passive arm must not collide with the
+//   rest of its own robot, or a returning arm shoves the chassis and the drive lurches after every
+//   hit. It must still collide with the field. The builder wires the same IgnoreRobotSelfCollision
+//   every mechanism link uses; the fixture runs the real thing and reads both sides back off PhysX
+//   — arm vs robot muted, arm vs piece live — then proves a sibling link sweeps straight through it
+//   while a dropped piece turns it.
 //
 //   THE WINDOW. A passive arm is a limited revolute with no pneumatic, which is what an ARM MOTOR
 //   looks like to a joint-type switch. If the window's kind detection ever consults the joint
@@ -43,16 +44,14 @@ public static class PassiveArmValidation
     // down MINUS the axis it is handed, and a positive joint angle is right-handed about that X —
     // so with this axis a positive angle swings the bar UP (+X toward +Y) and gravity pulls it
     // NEGATIVE. StartingPoseValidation pins that convention against simulation; the sag guard in
-    // the return case and the swing in the push case both fail loudly if it ever flips.
+    // the return case and the toggle sweep in the isolation case both fail loudly if it ever flips.
     private static readonly Vector3 ArmAxis = Vector3.back;
 
     // The arm's bar, hung off its origin: 4 u long along +X, so the hinge sits 2 u from the bar's
     // centre, and thin, so it weighs about what a flap weighs (~0.2 kg from geometry) rather than
-    // what a lift arm does — the push case pits the stock toggle motor against the band plus the
-    // arm's weight plus friction at the sliding contact, and a heavy bar turns that into a
-    // wrestling match the motor can lose. The skewed offset also slides the bar 1 u ALONG the
-    // hinge line, which changes the straight-line distance from hinge to centre (2.24 u) but not
-    // the perpendicular one (2 u) — the builder has to size the band from the latter.
+    // what a lift arm does. The skewed offset (case 1) also slides the bar 1 u ALONG the hinge
+    // line, which changes the straight-line distance from hinge to centre (2.24 u) but not the
+    // perpendicular one (2 u) — the builder has to size the band from the latter.
     private static readonly Vector3 ArmMeshSize = new Vector3(4f, 0.2f, 0.2f);
     private static readonly Vector3 ArmMeshOffset = new Vector3(2f, 0f, 0f);
     private static readonly Vector3 SkewedMeshOffset = new Vector3(2f, 0f, 1f);
@@ -100,7 +99,7 @@ public static class PassiveArmValidation
             string returns = TheBandReturnsTheArm();
 
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            string pushed = TheToggleCanPushIt();
+            string isolated = TheArmIsIsolatedFromItsRobot();
 
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             string window = TheWindowRecognisesIt();
@@ -111,7 +110,7 @@ public static class PassiveArmValidation
             string reanchor = MovingItThenReanchoringMatchesPlay();
 
             return "Validate Passive Arm: PASSED\n\n" + built + "\n" + unit + "\n" + returns + "\n" +
-                   pushed + "\n" + window + "\n" + pose + "\n" + reanchor;
+                   isolated + "\n" + window + "\n" + pose + "\n" + reanchor;
         }
         finally
         {
@@ -126,9 +125,10 @@ public static class PassiveArmValidation
 
     // --- 1. Built through the real path ----------------------------------------------------------
 
-    // The flap is first built as a POWERED arm with a button, a style, a stray piston and the
-    // blanket — the state a link is in when someone picked the wrong kind and came back to fix it —
-    // so that "nothing powers it afterwards" is a sweep being tested rather than an empty link.
+    // The flap is first built as a POWERED arm with a button, a style and a stray piston — the state
+    // a link is in when someone picked the wrong kind and came back to fix it — so that "nothing
+    // powers it afterwards" is a sweep being tested rather than an empty link. It must also come out
+    // carrying the blanket the builder adds, which the arm keeps to stay isolated from its own robot.
     private static string BuiltThroughTheRealPath()
     {
         Physics.gravity = new Vector3(0f, -Gravity, 0f);
@@ -150,7 +150,6 @@ public static class PassiveArmValidation
         ControllerMapSettings.SetStyle(map, id, RobotMechanisms.TypeMotor, ControllerMapSettings.StyleOneButton);
         ControllerMapSettings.Save(TestRobotId, map);
         flap.AddComponent<PneumaticActuator>();
-        flap.AddComponent<IgnoreRobotSelfCollision>();
 
         // The state to be swept has to exist, or every "gone" below is vacuous.
         map = ControllerMapSettings.Load(TestRobotId);
@@ -173,8 +172,9 @@ public static class PassiveArmValidation
             "the motor must be gone — a passive arm with a motor still on it is an arm motor with extra steps");
         ValidationUtil.Assert(flap.GetComponent<PneumaticActuator>() == null,
             "a stray piston with no registry record must be stripped too, not just the recorded actuator");
-        ValidationUtil.Assert(flap.GetComponent<IgnoreRobotSelfCollision>() == null,
-            "the blanket must go: an arm that ignores its whole robot can never be pushed by the toggle");
+        ValidationUtil.Assert(flap.GetComponent<IgnoreRobotSelfCollision>() != null,
+            "the builder must leave an IgnoreRobotSelfCollision on the arm — it is what keeps the band " +
+            "moving only its own part, so a returning arm never shoves the rest of the robot");
         ValidationUtil.Assert(registry.mechanisms.Count == 1 && registry.Find(id) == null,
             "the sweep must remove the arm's own registry record — a stale one keeps offering the " +
             "config screen a button for an actuator that no longer exists");
@@ -379,127 +379,100 @@ public static class PassiveArmValidation
                $"with {reversals} reversal(s); band off, the same arm sags to {sagged:0.#} deg.";
     }
 
-    // --- 4. The push -----------------------------------------------------------------------------
+    // --- 4. Isolated from its own robot, not from the field --------------------------------------
 
-    // A sibling toggle link, driven by the standard motor drive, sweeps a bar up through where the
-    // arm lies. The blanket IgnoreRobotSelfCollision lays on the toggle's pairs at play time is laid
-    // by hand here (Start never runs), first WITHOUT the rules to prove it stops the push, then with
-    // them. The second fixture also carries a bracket drawn through the arm, which the rules must
-    // leave muted — the other half of "mute what overlaps at rest, collide with everything else".
-    private static string TheToggleCanPushIt()
-    {
-        float untouched = SwingToggleIntoArm(applyRules: false, withBracket: false,
-            out _, out _, out float toggleAloneDeg);
-        ValidationUtil.Assert(toggleAloneDeg > 45f,
-            $"fixture: the toggle must swing up on its own (it reached {toggleAloneDeg:0.#} deg)");
-        ValidationUtil.Assert(untouched < 5f,
-            $"fixture guard: with every arm/toggle pair ignored and the rules NOT applied, the toggle must " +
-            $"pass straight through the arm, but the arm turned {untouched:0.#} deg — so the >= 30 deg " +
-            "below would pass on a robot where the blanket never ran, and prove nothing about the rules");
-
-        // CONTROL: no blanket ever laid, no rules — do two links of one articulation collide at all
-        // here? If this reads ~0 too, the fixture (not the rules) is what is broken.
-        EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-        float plain = SwingToggleIntoArm(applyRules: false, withBracket: false, out _, out _, out _, layBlanket: false);
-        Debug.Log($"PassiveArmValidation push CONTROL (never ignored, no rules): arm peak {plain:0.#} deg.");
-
-        EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-        float pushed = SwingToggleIntoArm(applyRules: true, withBracket: true,
-            out int muted, out List<string> report, out float toggleDeg);
-        ValidationUtil.Assert(muted == 1 && report.Count == 1 && report[0].StartsWith("Bracket"),
-            $"the bracket drawn through the arm is the ONE pair that must stay muted (got {muted}: " +
-            $"{string.Join(", ", report)}) — parts bolted through each other in CAD do not push each other apart");
-        ValidationUtil.Assert(toggleDeg > 30f,
-            $"fixture: the toggle must still swing up into the arm (it reached {toggleDeg:0.#} deg)");
-        ValidationUtil.Assert(pushed >= 30f,
-            $"the toggle must push the arm up at least 30 deg, but it turned {pushed:0.#} deg — " +
-            "ApplyCollisionRules has to switch the arm/toggle pairs back ON after the blanket " +
-            "switched them off (order 50 vs 60), or nothing on the robot can ever hit the arm");
-
-        return $"pushed: rules off, the toggle passes through ({untouched:0.##} deg); rules on, the bracket " +
-               $"through the arm stays muted and the toggle turns it {pushed:0.#} deg.";
-    }
-
-    // Builds arm + toggle (+ bracket), lays the blanket over the arm/toggle pairs, optionally
-    // applies the arm's rules, sweeps the toggle up for 2 s and returns the arm's peak angle.
-    private static float SwingToggleIntoArm(bool applyRules, bool withBracket,
-        out int muted, out List<string> report, out float toggleDeg, bool layBlanket = true)
+    // The band moves only its own part: a passive arm must NOT collide with the rest of its robot,
+    // so a returning arm never shoves the chassis or another mechanism (that cross-talk is what made
+    // the drive lurch after a hit). It must STILL collide with everything outside the robot, or it
+    // is not a deflector. The builder wires the same IgnoreRobotSelfCollision every mechanism link
+    // uses; this runs the real thing (Start never fires in edit mode), reads both sides back off
+    // PhysX, then proves a sibling toggle sweeps straight through the arm while a dropped piece
+    // turns it.
+    private static string TheArmIsIsolatedFromItsRobot()
     {
         Physics.gravity = new Vector3(0f, -Gravity, 0f);
         GameObject root = MakeChassis(out _);
-        // The arm sits LOW over the toggle (hinge 1 u up, bar 0.9..1.1) so the rising toggle meets the
-        // bar while still shallow — about 40 deg, where its top face pushes mostly UP, 0.9 u in from
-        // the bar's tip. With the bar at 2 u the first version of this fixture met it at 63 deg and
-        // at the very tip, and a 63-deg bar pushes a tip mostly ALONG the arm: no torque about the
-        // hinge, the arm read 0 deg while the toggle jammed on it for half a second and slid past.
+
+        // The arm, and a SIBLING mechanism link on the same robot (a toggle-style bar) whose sweep
+        // crosses the arm's bar — the exact thing the old design let bat the arm around.
         GameObject flap = MakeLink(root.transform, "Flap", new Vector3(0f, PushArmHeight, 0f), ArmMeshOffset, ArmMeshSize);
-        // The weakest band: this case is about whether the toggle can REACH the arm at all, and a
-        // band the toggle cannot overpower would read as the same failure.
-        PassiveArm arm = BuildArm(flap, 0f, 90f, returnToRest: true, strength: 1f);
+        PassiveArm arm = BuildArm(flap, -90f, 90f, returnToRest: true, strength: 3f);
         ArticulationBody armBody = flap.GetComponent<ArticulationBody>();
 
-        // The toggle: hinged 1 u out from the arm's hinge, a 5 u bar that lies flat pointing out and
-        // rises through the MIDDLE of the arm's bar (first touch near x = 1.8 of a bar that ends at 4).
-        // Hinged at x = 3 it met the bar 0.24 u from the tip, and box-against-box PhysX took the bar's
-        // END face as the separating axis: an axial shove with no torque about the hinge, then a
-        // tunnel straight through (measured 0.4 deg with the pair never ignored at all).
         GameObject toggle = MakeLink(root.transform, "Toggle", new Vector3(1f, 0f, 0f),
             new Vector3(2.5f, 0f, 0f), new Vector3(5f, 0.4f, 0.4f));
         AddMechanismJoint.Apply(toggle, AddMechanismJoint.JointType.Revolute, ArmAxis, Vector3.zero, 0f, 90f, useUndo: false);
         ArticulationBody toggleBody = toggle.GetComponent<ArticulationBody>();
-        MotorActuator motor = toggle.GetComponent<MotorActuator>();
-        ValidationUtil.Assert(motor != null, "fixture: the toggle must be wired as the standard motor");
-        ArticulationDrive td = toggleBody.xDrive;
-        ValidationUtil.Assert(td.driveType == ArticulationDriveType.Velocity,
-            "fixture: the toggle runs on the motor's velocity drive");
-        ValidationUtil.Near(td.forceLimit, motor.stallTorque, 1e-3f, "fixture: the toggle's cap is the motor's stall torque");
-        ValidationUtil.Near(td.damping, motor.velocityDriveDamping, 1e-3f, "fixture: the toggle's damping is the motor's");
 
-        // A third link, bolted to the chassis and drawn THROUGH the arm's bar. Siblings collide, so
-        // left alone PhysX would eject the arm on the first step.
-        if (withBracket)
+        // A game piece: a free Rigidbody box that is NOT under the robot root, so the blanket never
+        // touches it. Kept kinematic and parked clear until the field-side test, so it does not fall
+        // onto the arm during the toggle sweep.
+        GameObject piece = ValidationUtil.MakeBox(null, "Piece", new Vector3(3f, PushArmHeight + 9f, 0f),
+            new Vector3(0.6f, 0.6f, 0.6f));
+        Rigidbody pieceBody = piece.AddComponent<Rigidbody>();
+        pieceBody.isKinematic = true;
+
+        // The builder must have wired the blanket — that is the whole isolation mechanism now — and
+        // running it is what play does at execution order 50.
+        IgnoreRobotSelfCollision blanket = flap.GetComponent<IgnoreRobotSelfCollision>();
+        ValidationUtil.Assert(blanket != null,
+            "the builder must put an IgnoreRobotSelfCollision on a passive arm — that is what keeps the " +
+            "band from moving anything but its own part");
+        blanket.IgnoreAgainstRobot();
+
+        // Read both sides straight off PhysX: every arm/robot pair muted, every arm/piece pair live.
+        foreach (Collider a in armBody.GetComponentsInChildren<Collider>())
         {
-            // Placed by the arm's hinge, where the toggle's near end (radius 0.2 about x = 1) never reaches.
-            GameObject bracket = ValidationUtil.MakeBox(root.transform, "Bracket", new Vector3(0.4f, PushArmHeight, 0f),
-                new Vector3(0.6f, 0.6f, 0.6f));
-            bracket.AddComponent<ArticulationBody>();   // a fixed link: a sibling of the arm, not its parent
+            foreach (Collider t in toggleBody.GetComponentsInChildren<Collider>())
+                ValidationUtil.Assert(Physics.GetIgnoreCollision(a, t),
+                    $"an arm/robot pair ({a.name}/{t.name}) is still live — the arm must be muted against " +
+                    "its own robot, or the band's part can shove another");
+            foreach (Collider p in piece.GetComponentsInChildren<Collider>())
+                ValidationUtil.Assert(!Physics.GetIgnoreCollision(a, p),
+                    $"an arm/piece pair ({a.name}/{p.name}) was muted — the arm must still collide with the " +
+                    "field, or it deflects nothing");
         }
 
-        // The blanket IgnoreRobotSelfCollision on the toggle would lay at execution order 50.
-        if (layBlanket)
-            foreach (Collider a in armBody.GetComponentsInChildren<Collider>())
-                foreach (Collider t in toggleBody.GetComponentsInChildren<Collider>())
-                    Physics.IgnoreCollision(a, t, true);
-
-        report = new List<string>();
-        muted = applyRules ? arm.ApplyCollisionRules(report) : 0;
-
+        // Settle, then note where the band holds the arm at rest, so both swings are measured as a
+        // change from rest rather than an absolute (the arm sags a degree or so under its own weight).
         Physics.Simulate(0.02f);
-        ValidationUtil.Near(JointDeg(armBody), 0f, 2f,
-            "the arm must sit at rest before the toggle moves — with the rules on, a bracket drawn " +
-            "through it was NOT muted and threw it (a pair that overlaps at rest has to be ignored)");
+        Simulate(25);
+        float rest = JointDeg(armBody);
 
-        // What the rules actually left: every arm/toggle pair's ignore flag, read back from PhysX.
-        var pairs = new List<string>();
-        foreach (Collider a in armBody.GetComponentsInChildren<Collider>())
-            foreach (Collider t in toggleBody.GetComponentsInChildren<Collider>())
-                pairs.Add($"{a.name}/{t.name}:{(Physics.GetIgnoreCollision(a, t) ? "IGNORED" : "collide")}");
-
+        // The toggle side: sweep the sibling up across the arm; the arm must NOT follow it.
+        ArticulationDrive td = toggleBody.xDrive;
         td.targetVelocity = ToggleSweepDegPerSec;
         toggleBody.xDrive = td;
-        float peak = 0f;
-        var trace = new System.Text.StringBuilder();
+        float armFromToggle = 0f;
         for (int i = 0; i < 200; i++)   // 2 s
         {
             Physics.Simulate(ValidationUtil.StepSeconds);
-            peak = Mathf.Max(peak, JointDeg(armBody));
-            if (i % 10 == 9) trace.Append($" t{(i + 1) * 0.01f:0.00}: toggle {JointDeg(toggleBody):0.#} arm {JointDeg(armBody):0.#};");
+            armFromToggle = Mathf.Max(armFromToggle, Mathf.Abs(JointDeg(armBody) - rest));
         }
-        toggleDeg = JointDeg(toggleBody);
-        Debug.Log($"PassiveArmValidation push (blanket {layBlanket}, rules {(applyRules ? "on" : "off")}, bracket {withBracket}): muted {muted} " +
-                  $"[{string.Join(", ", report)}]; pairs [{string.Join(", ", pairs)}]; toggle mass {toggleBody.mass:0.##}, " +
-                  $"arm mass {armBody.mass:0.##}, arm cap {arm.bandForceLimit:0.#};{trace} peak arm {peak:0.#}.");
-        return peak;
+        ValidationUtil.Assert(JointDeg(toggleBody) > 30f,
+            $"fixture: the sibling toggle must sweep up across the arm (it reached {JointDeg(toggleBody):0.#} deg)");
+        ValidationUtil.Assert(armFromToggle < 3f,
+            $"the sibling toggle turned the arm {armFromToggle:0.#} deg off rest — it must pass straight " +
+            "through, because a passive arm no longer collides with its own robot (the band moves only its " +
+            "own part). If this moves, something re-enabled the arm's robot-internal collisions.");
+
+        // The field side: drop the piece onto the bar. An external hit MUST turn the arm. The toggle
+        // is now up and clear of x = 3, so the piece bears on bare bar.
+        pieceBody.isKinematic = false;
+        pieceBody.position = new Vector3(3f, PushArmHeight + 0.45f, 0f);
+        pieceBody.linearVelocity = Vector3.zero;
+        float armFromPiece = 0f;
+        for (int i = 0; i < 120; i++)   // 1.2 s under gravity
+        {
+            Physics.Simulate(ValidationUtil.StepSeconds);
+            armFromPiece = Mathf.Max(armFromPiece, Mathf.Abs(JointDeg(armBody) - rest));
+        }
+        ValidationUtil.Assert(armFromPiece > 10f,
+            $"a game piece bearing on the arm turned it only {armFromPiece:0.#} deg off rest — an external " +
+            "hit must still deflect the arm, or it is not a deflector");
+
+        return $"isolated: every arm/robot pair muted, every arm/piece pair live; the sibling toggle passes " +
+               $"through ({armFromToggle:0.#} deg off rest) while a piece deflects it {armFromPiece:0.#} deg.";
     }
 
     // --- 5. The window ---------------------------------------------------------------------------

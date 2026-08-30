@@ -14,7 +14,12 @@ using UnityEngine;
 [DefaultExecutionOrder(50)] // after the articulation exists, before gameplay settles
 public class IgnoreRobotSelfCollision : MonoBehaviour
 {
-    void Start()
+    void Start() => IgnoreAgainstRobot();
+
+    // Mutes every pair between this link's colliders and the rest of the robot. Public so edit-mode
+    // harnesses can run the real isolation (Physics.Simulate never calls Start), and so the passive
+    // arm's validation reads back the exact state play would leave.
+    public void IgnoreAgainstRobot()
     {
         RobotMechanisms root = GetComponentInParent<RobotMechanisms>();
         if (root == null) return;
