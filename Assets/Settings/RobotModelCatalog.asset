@@ -195,19 +195,3 @@ MonoBehaviour:
       styles:
       - mechanismId: outtake-1
         style: two
-  - id: darwinbot
-    displayName: Darwinbot
-    prefab: {fileID: 0}
-    bundle:
-      id: darwinbot
-      version: a4d37a4f
-      scriptVersion: 1
-      remote: 1
-      sourceGuid: 31076c858b32141ee85877012bc97ff5
-    mechanisms: []
-    visibility: 1
-    ownerCode: 654V-TESTING
-    ownerLabel: 
-    defaultButtonMap:
-      assignments: []
-      styles: []
