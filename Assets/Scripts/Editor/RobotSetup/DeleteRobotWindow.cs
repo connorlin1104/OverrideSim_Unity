@@ -60,17 +60,28 @@ public class DeleteRobotWindow : EditorWindow
     // Every id worth offering: catalog entries, plus prefabs in Assets/Robots that no entry claims.
     // The second half matters — a robot whose entry was hand-deleted still has a prefab and possibly
     // a bundle, and that is precisely the mess this is for.
+    //
+    // "Claims" is the entry's own prefab reference, never a name match. An id and its prefab's
+    // filename routinely slug apart ("360rpm-drivetrain" vs "360rpmdrivetrain"), and matching by
+    // name listed the same robot twice — with the extra row deleting only the prefab and leaving
+    // the dangling entry this window exists to prevent.
     public static List<string> DeletableIds()
     {
         var ids = new List<string>();
+        var claimed = new HashSet<string>();
         RobotModelCatalog catalog = RoboSimPaths.LoadRobotCatalog();
         if (catalog != null && catalog.models != null)
             foreach (RobotModelCatalog.Entry entry in catalog.models)
-                if (entry != null && !string.IsNullOrEmpty(entry.id) && !ids.Contains(entry.id))
-                    ids.Add(entry.id);
+            {
+                if (entry == null) continue;
+                if (!string.IsNullOrEmpty(entry.id) && !ids.Contains(entry.id)) ids.Add(entry.id);
+                if (entry.prefab != null)
+                    claimed.Add(AssetDatabase.GetAssetPath(entry.prefab).Replace('\\', '/'));
+            }
 
         foreach (string path in RoboSimPaths.RobotPrefabPaths())
         {
+            if (claimed.Contains(path.Replace('\\', '/'))) continue;
             string id = UrdfPostProcessor.Slugify(Path.GetFileNameWithoutExtension(path));
             if (!string.IsNullOrEmpty(id) && !ids.Contains(id)) ids.Add(id);
         }
