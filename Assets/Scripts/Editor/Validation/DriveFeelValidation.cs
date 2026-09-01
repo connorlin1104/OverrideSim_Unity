@@ -46,6 +46,7 @@ public static class DriveFeelValidation
         checks += SlewReversalTiming();
         checks += SlewTimestepInvariance();
         checks += MixPreservesTurn();
+        checks += PivotBlend();
         checks += AuthorityDecision();
         checks += ParkHandoff();
         checks += ShippedTune();
@@ -257,6 +258,99 @@ public static class DriveFeelValidation
             }
         }
         return checks;
+    }
+
+    // The pivot blend. Standing still the turn stick is worth pivotTurnRate of wheel speed, at
+    // full throttle turnRate, linearly between — and with the shipped 1.0 / 0.5 that turns the
+    // turn-priority mix into a plain clamped arcade drive (left = clamp(t + s), right = clamp(t - s))
+    // whenever the stick is fully over. That identity is the whole argument that a full-speed pivot
+    // and today's full-throttle turn are one drive rather than two settings, so it is pinned across
+    // the throttle range rather than at the two ends.
+    private static int PivotBlend()
+    {
+        const float pivot = RobotMotorController.DefaultPivotTurnRate;   // 1.0
+        const float moving = 0.5f;                                        // every shipped prefab's turnRate
+        int checks = 0;
+
+        ValidationUtil.Near(RobotMotorController.TurnRateFor(0f, pivot, moving), pivot, 1e-6f,
+            "standing still, the pivot rate applies in full");
+        ValidationUtil.Near(RobotMotorController.TurnRateFor(1f, pivot, moving), moving, 1e-6f,
+            "at full throttle the moving rate applies in full");
+        ValidationUtil.Near(RobotMotorController.TurnRateFor(-1f, pivot, moving), moving, 1e-6f,
+            "full reverse is full throttle too — the blend reads |throttle|");
+        ValidationUtil.Near(RobotMotorController.TurnRateFor(0.5f, pivot, moving), 0.75f, 1e-6f,
+            "half throttle sits halfway between the two rates");
+        ValidationUtil.Near(RobotMotorController.TurnRateFor(2f, pivot, moving), moving, 1e-6f,
+            "a throttle past 1 lands on the moving rate, never beyond it");
+        checks += 5;
+
+        for (int ti = -4; ti <= 4; ti++)
+        {
+            float t = ti * 0.25f;
+            foreach (float s in new[] { 1f, -1f })
+            {
+                RobotMotorController.MixArcade(t, s * RobotMotorController.TurnRateFor(t, pivot, moving),
+                    out float l, out float r);
+                ValidationUtil.Near(l, Mathf.Clamp(t + s, -1f, 1f), 1e-5f,
+                    $"a full turn stick must reproduce a clamped arcade drive (left, throttle {t}, turn {s})");
+                ValidationUtil.Near(r, Mathf.Clamp(t - s, -1f, 1f), 1e-5f,
+                    $"a full turn stick must reproduce a clamped arcade drive (right, throttle {t}, turn {s})");
+                checks += 2;
+            }
+        }
+
+        // A pivot is a pivot: from rest the sides are equal and opposite at FULL speed — twice what
+        // the single 0.5 rate gave, which is the change this exists to make.
+        RobotMotorController.MixArcade(0f, RobotMotorController.TurnRateFor(0f, pivot, moving),
+            out float pl, out float pr);
+        ValidationUtil.Near(pl, 1f, 1e-6f, "a full-stick pivot from rest runs the left side at full speed");
+        ValidationUtil.Near(pr, -1f, 1e-6f, "...and the right side at full speed the other way");
+        RobotMotorController.MixArcade(0f, moving, out float ol, out float orr);   // the old single-rate pivot
+        ValidationUtil.Near(pl - pr, 2f * (ol - orr), 1e-6f,
+            "the pivot differential is double the old single-rate pivot's");
+        checks += 3;
+
+        // ...AND THE DRIVE ACTUALLY USES IT. Everything above is arithmetic on a static method, which
+        // stays green if someone reverts either MixArcade call to the bare turnRate — the wiring is
+        // the part that regresses silently. A controller with no wheels still runs the whole command
+        // path (the brake and the relief early-return on an empty robot), so this drives the REAL
+        // ApplyStep, through the slew, and reads back what the mix commanded.
+        checks += DriveAppliesTheBlend();
+
+        return checks;
+    }
+
+    private static int DriveAppliesTheBlend()
+    {
+        // Reverse Drive is a 180-degree control-frame flip, and it is a PlayerPrefs value this
+        // machine may well have set. Read it to orient the expectation — the claim under test is the
+        // blend, not the flip, and pretending the flag cannot be on would make this fail on a device
+        // where a driver had turned it on.
+        float sign = ReverseDriveSettings.Reversed ? -1f : 1f;
+
+        var go = new GameObject("PivotBlendRig");
+        try
+        {
+            RobotMotorController motor = go.AddComponent<RobotMotorController>();
+
+            // Long enough for the turn slew (3/s) to reach full stick, held so the command settles.
+            for (int i = 0; i < 100; i++) { motor.SetManualInput(0f, 1f); motor.ApplyStep(0.01f); }
+            ValidationUtil.Near(motor.LeftCommand, sign * 1f, 1e-3f,
+                "a pivot from rest must run the LEFT side at full speed — the drive is not applying " +
+                "the pivot rate, whatever TurnRateFor computes");
+            ValidationUtil.Near(motor.RightCommand, sign * -1f, 1e-3f,
+                "...and the RIGHT side at full speed the other way");
+
+            // Full throttle: back to the moving rate, and to exactly the commands that shipped.
+            for (int i = 0; i < 100; i++) { motor.SetManualInput(1f, 1f); motor.ApplyStep(0.01f); }
+            ValidationUtil.Near(motor.LeftCommand, sign * 1f, 1e-3f,
+                "at full throttle the outer side must still hold full speed");
+            ValidationUtil.Near(motor.RightCommand, 0f, 1e-3f,
+                "at full throttle the inner side must still be commanded to a dead stop — the moving " +
+                "turn is meant to be bit-for-bit what it was");
+            return 4;
+        }
+        finally { UnityEngine.Object.DestroyImmediate(go); }
     }
 
     // The per-wheel authority decision: brake when back-driven at speed, EXCEPT while steering.

@@ -97,9 +97,19 @@ public class RobotMotorController : MonoBehaviour
     [Tooltip("Velocity-proportional spin loss on each wheel (ArticulationBody.angularDamping). " +
              "Measured contribution is under 1% of top speed — trim, not a tuning knob.")]
     public float wheelSpinDamping = 0.5f;
-    [Tooltip("How much of full wheel speed the turn stick commands. At 1 a full turn spins the wheels as fast as full throttle does, which pivots the robot faster than a driver can catch. Lower = calmer turning; straight-line speed is unaffected.")]
+    [Tooltip("How much of full wheel speed the turn stick commands while the robot is MOVING at full " +
+             "throttle. Lower = calmer turning at speed; straight-line speed is unaffected. Standing " +
+             "still the stick commands Pivot Turn Rate instead, and the two blend with the throttle.")]
     [Range(0.1f, 1f)]
     public float turnRate = 0.5f;
+    [Tooltip("How much of full wheel speed the turn stick commands when the robot is STANDING STILL. " +
+             "A pivot drives both sides, so at 1 both run at full speed the opposite way — which is " +
+             "what a real skid-steer does, and about twice the spin a 0.5 Turn Rate gave. Blends " +
+             "down to Turn Rate as the throttle rises, so a full-throttle turn is exactly what it was. " +
+             "With 1 here and 0.5 there, a full turn stick reproduces a plain clamped arcade drive " +
+             "at every throttle (see TurnRateFor).")]
+    [Range(0.1f, 1f)]
+    public float pivotTurnRate = DefaultPivotTurnRate;
     [Tooltip("Flip if the left side empirically drives backward (see sign convention in the file header).")]
     public bool invertLeft;
     [Tooltip("Flip if the right side empirically drives backward.")]
@@ -250,6 +260,14 @@ public class RobotMotorController : MonoBehaviour
     // in the physics reads it. Exposed so ChassisLeanValidation can watch a stop happen.
     public float LeanDegrees => leanDeg;
 
+    // The last per-side command the mix produced, as a fraction of full wheel speed (left - right is
+    // the differential). Read-only, and exposed for the same reason LeanDegrees is: it lets
+    // DriveFeelValidation assert that the DRIVE really applies the pivot blend, not merely that
+    // TurnRateFor computes it. The two MixArcade calls below are exactly what a refactor drops
+    // silently, and arithmetic on a static method cannot notice.
+    public float LeftCommand { get; private set; }
+    public float RightCommand { get; private set; }
+
     // Which way this robot actually drives, in world space, measured from its wheels in Initialise.
     // Public because every harness that drives a robot in a straight line and then measures anything
     // directional has to agree with the controller about which way that was — TipOverValidation's
@@ -286,6 +304,11 @@ public class RobotMotorController : MonoBehaviour
     private int leftWheelCount;
 
     public enum DriveAuthority { Drive, Brake }
+
+    // A NEW field name (2026-08-30) for the reason the Drive Feel block explains: every shipped prefab
+    // serializes turnRate 0.5, and a saved value beats a changed default. pivotTurnRate is absent from
+    // all of them, so this default reaches every robot without a prefab edit.
+    public const float DefaultPivotTurnRate = 1f;
 
     // Turn commands at or above this keep every wheel at full Drive authority. The inner wheel of
     // a moving turn is commanded slower than it is spinning — the braking quadrant by the numbers —
@@ -949,7 +972,13 @@ public class RobotMotorController : MonoBehaviour
             throttleRisePerSec, throttleFallPerSec, dt);
         turnCommand = Slew(turnCommand, turnTarget, turnRisePerSec, turnFallPerSec, dt);
 
-        MixArcade(throttleCommand, turnCommand * turnRate, out float left, out float right);
+        // The turn rate blends with the throttle it is mixed against — this call reads the slewed
+        // command, the brake's mix below reads the raw target, and each takes the rate for its OWN
+        // throttle so the two mixes describe the same drive.
+        MixArcade(throttleCommand, turnCommand * TurnRateFor(throttleCommand, pivotTurnRate, turnRate),
+            out float left, out float right);
+        LeftCommand = left;
+        RightCommand = right;
 
         // Revolute drive target velocities are in DEGREES per second: rpm x 360/60 = rpm x 6.
         float fullStickDegPerSec = maxWheelRpm * 6f;
@@ -966,7 +995,8 @@ public class RobotMotorController : MonoBehaviour
         // because what the brake needs is the sign of the command AT THIS WHEEL. Comparing a stick
         // axis against a joint velocity gets the reversal test exactly backwards on any robot whose
         // side is inverted, and inverted sides are the reason those bools exist.
-        MixArcade(throttleTarget, turnTarget * turnRate, out float leftRaw, out float rightRaw);
+        MixArcade(throttleTarget, turnTarget * TurnRateFor(throttleTarget, pivotTurnRate, turnRate),
+            out float leftRaw, out float rightRaw);
         float leftTargetDegPerSec = leftRaw * fullStickDegPerSec * (invertLeft ? -1f : 1f);
         float rightTargetDegPerSec = rightRaw * fullStickDegPerSec * (invertRight ? -1f : 1f);
 
@@ -1184,6 +1214,27 @@ public class RobotMotorController : MonoBehaviour
         float leftoverSeconds = (fallStep - toZero) / fallRate;
         return Mathf.MoveTowards(0f, target, leftoverSeconds * riseRate);
     }
+
+    // How much of full wheel speed the turn stick is worth at this throttle: pivotRate standing
+    // still, movingRate at full throttle, linear between.
+    //
+    // WHY IT BLENDS. Connor, 2026-08-30: "while turning while going forward and backwards is pretty
+    // similar [to real life], but if the bot is still and just a rotary motion it should be much
+    // faster, cuz the drive train is using both sides to do the turning." One turnRate of 0.5 served
+    // both cases and got the pivot wrong by half: a real pivot runs both sides at full speed.
+    //
+    // WHY 1.0 / 0.5 IS NOT A TUNE BUT AN IDENTITY. Feed MixArcade a full turn stick at rate
+    // 1 - 0.5|t| and its turn-priority overflow is exactly 0.5|t|, so the shaved throttle is 0.5t and
+    // the sides come out at (1, t - 1) for t >= 0 — which is precisely a plain clamped arcade drive,
+    // left = clamp(t + s), right = clamp(t - s), the mix every real VEX arcade program runs. So a
+    // full-speed pivot from rest, today's 1.0 / 0.0 at full throttle, and 1.0 / -0.5 at half throttle
+    // are one drive, not three settings. DriveFeelValidation.PivotBlend pins the identity across the
+    // whole throttle range. Below a full stick the turn-priority mix still calms the differential at
+    // speed by the moving rate, which is the part Connor said already matched the real robot.
+    //
+    // |throttle| is clamped, not trusted: a target past 1 must land on the moving rate, never beyond.
+    public static float TurnRateFor(float throttle, float pivotRate, float movingRate)
+        => Mathf.Lerp(pivotRate, movingRate, Mathf.Clamp01(Mathf.Abs(throttle)));
 
     // Renormalized arcade mix with TURN priority. The naive mix clamps throttle±turn to ±1, which
     // at full throttle hands the outer wheel a command it is already meeting and quietly eats up
