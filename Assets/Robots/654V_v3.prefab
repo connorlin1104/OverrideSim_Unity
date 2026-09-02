@@ -43244,7 +43244,6 @@ GameObject:
   - component: {fileID: 5933433151425797292}
   - component: {fileID: 6559056860090580787}
   - component: {fileID: 2835283007959872129}
-  - component: {fileID: 3033458749111472722}
   m_Layer: 0
   m_Name: RightSide
   m_TagString: Player
@@ -43260,15 +43259,15 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2601400023830204747}
   serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0, z: 0.099096924, w: 0.9950778}
-  m_LocalPosition: {x: 0.5699998, y: 0.26999998, z: 0}
+  m_LocalRotation: {x: -0, y: -0, z: 0.109281465, w: 0.99401087}
+  m_LocalPosition: {x: 0.6, y: 0.00999999, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 7849751112915121976}
   - {fileID: 7753730273861477732}
   m_Father: {fileID: 1657196062368525193}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 11.374}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 12.548}
 --- !u!171741748 &6559056860090580787
 ArticulationBody:
   m_ObjectHideFlags: 0
@@ -43279,9 +43278,9 @@ ArticulationBody:
   m_Enabled: 1
   serializedVersion: 6
   m_Mass: 0.014867964
-  m_ParentAnchorPosition: {x: -0.2659998, y: 2.911, z: 2.1005006}
-  m_ParentAnchorRotation: {x: -0.07007211, y: 0.7036262, z: 0.07007211, w: 0.7036262}
-  m_AnchorPosition: {x: -0.2671718, y: 2.9108617, z: 2.1005006}
+  m_ParentAnchorPosition: {x: -0.2677002, y: 2.9053, z: 2.1005006}
+  m_ParentAnchorRotation: {x: 0, y: 0.70710677, z: 0, w: 0.70710677}
+  m_AnchorPosition: {x: -0.2677002, y: 2.9053, z: 2.1005006}
   m_AnchorRotation: {x: 0, y: 0.70710677, z: 0, w: 0.70710677}
   m_MatchAnchors: 0
   m_ArticulationJointType: 2
@@ -43293,10 +43292,10 @@ ArticulationBody:
   m_Twist: 1
   m_XDrive:
     lowerLimit: 0
-    upperLimit: 40
-    stiffness: 95.60402
-    damping: 2.72789
-    forceLimit: 5.005815
+    upperLimit: 20
+    stiffness: 95.492966
+    damping: 2.4381318
+    forceLimit: 5
     target: 0
     targetVelocity: 0
     driveType: 0
@@ -43350,22 +43349,10 @@ MonoBehaviour:
   body: {fileID: 6559056860090580787}
   returnToRest: 1
   bandStrength: 3
-  bandForceLimit: 5.005815
-  bandStiffness: 95.60402
-  bandDamping: 2.72789
+  bandForceLimit: 5
+  bandStiffness: 95.492966
+  bandDamping: 2.4381318
   hingeFriction: 2
---- !u!114 &3033458749111472722
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2601400023830204747}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 233c535a255b44e296b1b3e58b5f0444, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::IgnoreRobotSelfCollision
 --- !u!1 &2604697775513459301
 GameObject:
   m_ObjectHideFlags: 0
@@ -61721,7 +61708,6 @@ GameObject:
   - component: {fileID: 7917816989406812429}
   - component: {fileID: 4437826300337417036}
   - component: {fileID: 5103679244393082822}
-  - component: {fileID: 3572824842868675466}
   m_Layer: 0
   m_Name: LeftSide
   m_TagString: Player
@@ -61737,15 +61723,15 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 3730618787035580146}
   serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0, z: 0.099096924, w: 0.9950778}
-  m_LocalPosition: {x: 0.57, y: 0.27, z: 0}
+  m_LocalRotation: {x: -0, y: -0, z: 0.109281465, w: 0.99401087}
+  m_LocalPosition: {x: 0.6, y: 0.01, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1657244961129557111}
   - {fileID: 8119276466570870075}
   m_Father: {fileID: 1657196062368525193}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 11.374}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 12.548}
 --- !u!171741748 &4437826300337417036
 ArticulationBody:
   m_ObjectHideFlags: 0
@@ -61756,9 +61742,9 @@ ArticulationBody:
   m_Enabled: 1
   serializedVersion: 6
   m_Mass: 0.014867971
-  m_ParentAnchorPosition: {x: -0.2659998, y: 2.9110003, z: 0.07000017}
-  m_ParentAnchorRotation: {x: -0.07007211, y: 0.7036262, z: 0.07007211, w: 0.7036262}
-  m_AnchorPosition: {x: -0.26717198, y: 2.910862, z: 0.07000017}
+  m_ParentAnchorPosition: {x: -0.2677002, y: 2.9053, z: 0.07000017}
+  m_ParentAnchorRotation: {x: 0, y: 0.70710677, z: 0, w: 0.70710677}
+  m_AnchorPosition: {x: -0.2677002, y: 2.9053, z: 0.07000017}
   m_AnchorRotation: {x: 0, y: 0.70710677, z: 0, w: 0.70710677}
   m_MatchAnchors: 0
   m_ArticulationJointType: 2
@@ -61770,10 +61756,10 @@ ArticulationBody:
   m_Twist: 1
   m_XDrive:
     lowerLimit: 0
-    upperLimit: 40
-    stiffness: 95.56642
-    damping: 2.7262805
-    forceLimit: 5.003846
+    upperLimit: 20
+    stiffness: 95.492966
+    damping: 2.4424217
+    forceLimit: 5
     target: 0
     targetVelocity: 0
     driveType: 0
@@ -61827,22 +61813,10 @@ MonoBehaviour:
   body: {fileID: 4437826300337417036}
   returnToRest: 1
   bandStrength: 3
-  bandForceLimit: 5.003846
-  bandStiffness: 95.56642
-  bandDamping: 2.7262805
+  bandForceLimit: 5
+  bandStiffness: 95.492966
+  bandDamping: 2.4424217
   hingeFriction: 2
---- !u!114 &3572824842868675466
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3730618787035580146}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 233c535a255b44e296b1b3e58b5f0444, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::IgnoreRobotSelfCollision
 --- !u!1 &3732274021840880980
 GameObject:
   m_ObjectHideFlags: 0
@@ -94228,7 +94202,7 @@ Transform:
   m_GameObject: {fileID: 6057685496363639837}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -0.2659998, y: 3.071, z: 2.1005006}
+  m_LocalPosition: {x: -0.25, y: 2.824, z: 2.1005006}
   m_LocalScale: {x: 0.036567, y: 0.036567, z: 0.052115288}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -118808,7 +118782,7 @@ Transform:
   m_GameObject: {fileID: 7782732890202257870}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -0.266, y: 3.071, z: 0.07}
+  m_LocalPosition: {x: -0.25, y: 2.824, z: 0.07}
   m_LocalScale: {x: 0.036567, y: 0.036567, z: 0.04}
   m_ConstrainProportionsScale: 0
   m_Children: []
