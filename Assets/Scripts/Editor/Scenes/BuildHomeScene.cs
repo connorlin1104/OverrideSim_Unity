@@ -214,6 +214,9 @@ public class BuildHomeScene
         if (FindDescendantRect(scene, "RecoveryIdLabel") != null) return false;
         if (FindDescendantRect(scene, "RecoveryIdInput") != null) return false;
         if (FindDescendantRect(scene, "TeamCodeInput") != null) return false;
+        // The drive-feel hint paragraph under the sensitivity sliders is gone (2026-09-01):
+        // the sliders' own percent labels say what they do.
+        if (FindDescendantRect(scene, "DriveFeelHint") != null) return false;
 
         SerializedObject so = new SerializedObject(controller);
         SerializedObject configSo = new SerializedObject(configScreen);
@@ -583,14 +586,6 @@ public class BuildHomeScene
             DriveFeelSettings.MinTurnSensitivity, DriveFeelSettings.MaxTurnSensitivity,
             DriveFeelSettings.DefaultTurnSensitivity,
             out TextMeshProUGUI turnSensitivityLabel, out Slider turnSensitivitySlider);
-
-        TextMeshProUGUI driveFeelHint = CreateText("DriveFeelHint", controlsPage.transform,
-            "How hard the sticks drive and turn. At 100% turn sensitivity a spin from standstill " +
-            "uses both sides at full speed, like the real robot: lower it for a calmer spin, raise " +
-            "it and the stick answers sooner. Every robot ramps its controls instead of snapping to " +
-            "full. Changes apply the next time you press Drive.", 24f);
-        driveFeelHint.alignment = TextAlignmentOptions.TopLeft;
-        SetLayoutHeight(driveFeelHint.gameObject, 96f);
 
         // --- Account page ---
         GameObject accountPage = CreateTabPage(content, "SettingsPage_Account");
