@@ -390,13 +390,13 @@ public class BuildHomeScene
         InputSystemUIInputModule uiModule = eventSystemGo.AddComponent<InputSystemUIInputModule>();
         AssignDefaultUiActions(uiModule);
 
-        // Title. "RoboSim" is 7 glyphs and fits at full size on every canvas we target, so the
+        // Title. "RoboSimL" is 8 glyphs and fits at full size on every canvas we target, so the
         // autosize range below no longer does any work — it is kept because it costs nothing and is
         // what stops a longer name from overflowing if this string is ever changed again. The app
         // was called "Override Simulation" until the App Store rename; ProjectSettings.productName
         // and this string are now the same word, and the bundle id (…overridesim) deliberately is
         // not — it was already registered and a bundle id cannot be changed after the first upload.
-        TextMeshProUGUI title = CreateText("Title", canvasGo.transform, "RoboSim", 88f);
+        TextMeshProUGUI title = CreateText("Title", canvasGo.transform, "RoboSimL", 88f);
         title.fontStyle = FontStyles.Bold;
         title.textWrappingMode = TextWrappingModes.NoWrap;
         title.enableAutoSizing = true;
