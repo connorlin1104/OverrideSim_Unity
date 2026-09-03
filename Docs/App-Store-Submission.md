@@ -5,14 +5,15 @@ Copy fenced blocks verbatim. `<ANGLE_BRACKETS>` = a decision only you can make.
 
 - **Done, nothing further needed** — support + privacy URLs, App Privacy questionnaire, export
   compliance, the three Info.plist keys, screenshot capture at Apple's sizes without a device
-- **One blocker open** — the name sweep, and only right before you submit for review
+- **All blockers closed** — the name sweep landed 2026-09-02 (commit `7b2f324`: app, scene,
+  Player Settings, web pages deployed; App Store Connect fields re-entered)
 
 ---
 
 ## Blockers
 
-- **3. Name sweep — DO THIS RIGHT BEFORE SUBMITTING FOR REVIEW**
-  - The store listing says `RoboSimL`; the app and the pasted listing copy still say `RoboSim`
+- **3. Name sweep — DONE 2026-09-02.** Everything below is the record of what changed
+  - The store listing, the app and the pasted listing copy all say `RoboSimL` now
   - Not urgent until submission (Apple only needs the two names to be *recognisably* related), but
     a mismatch is a guideline 2.3.7 flag and reads as unfinished
 
@@ -440,18 +441,18 @@ a second Hosting site (`firebase hosting:sites:create robosim`) and point the li
   - [x] ~~App icon assigned, VEX jpg deleted~~
   - [x] ~~`bundleVersion` -> `1.0.0`~~
   - [x] ~~`companyName`~~
-  - [ ] **File -> Save Project**, so Player Settings actually reach disk and git
-  - [ ] `productName` + home-screen title -> the final name (blocker 3)
+  - [x] ~~**File -> Save Project**, so Player Settings actually reach disk and git~~
+  - [x] ~~`productName` + home-screen title -> the final name (blocker 3)~~
   - [x] ~~`microphoneUsageDescription` cleared~~
 - **Screenshots**
   - [ ] iPhone 6.9" — 2868 x 1320
   - [ ] iPad 13" — 2752 x 2064, Game view Scale slider at 1x
 - **Web** (only once the name is final)
-  - [ ] `Web/index.html` and `Web/privacy.html` renamed, then `firebase deploy --only hosting`
+  - [x] ~~`Web/index.html` and `Web/privacy.html` renamed, then `firebase deploy --only hosting`~~
   - URLs do not change, so nothing gets re-entered in App Store Connect
 - **App Store Connect**
-  - [ ] Final name entered
-  - [ ] Description and review notes re-pasted (the ones you pasted name the app `RoboSim`)
+  - [x] ~~Final name entered~~
+  - [x] ~~Description and review notes re-pasted (the ones you pasted name the app `RoboSim`)~~
   - [ ] Keyword row matching that name — the three lists differ
   - [x] ~~Privacy Policy URL + Support URL~~
   - [x] ~~App Privacy questionnaire~~
