@@ -453,7 +453,7 @@ a second Hosting site (`firebase hosting:sites:create robosim`) and point the li
 - **App Store Connect**
   - [x] ~~Final name entered~~
   - [x] ~~Description and review notes re-pasted (the ones you pasted name the app `RoboSim`)~~
-  - [ ] Keyword row matching that name — the three lists differ
+  - [x] ~~Keyword row matching that name — the three lists differ~~
   - [x] ~~Privacy Policy URL + Support URL~~
   - [x] ~~App Privacy questionnaire~~
 - **Test on device before submitting**
