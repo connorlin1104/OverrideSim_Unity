@@ -6299,6 +6299,7 @@ MonoBehaviour:
   wheelRollingResistance: 0.3
   wheelSpinDamping: 0.5
   turnRate: 0.5
+  pivotTurnRate: 1
   invertLeft: 0
   invertRight: 0
   solverIterations: 16
@@ -43244,6 +43245,7 @@ GameObject:
   - component: {fileID: 5933433151425797292}
   - component: {fileID: 6559056860090580787}
   - component: {fileID: 2835283007959872129}
+  - component: {fileID: 3033458749111472722}
   m_Layer: 0
   m_Name: RightSide
   m_TagString: Player
@@ -43259,15 +43261,15 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2601400023830204747}
   serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0, z: 0.109281465, w: 0.99401087}
-  m_LocalPosition: {x: 0.6, y: 0.00999999, z: 0}
+  m_LocalRotation: {x: 0.0000000064747754, y: 7.118363e-10, z: -0.0000017657876, w: 1}
+  m_LocalPosition: {x: -0.004804611, y: 0.13244738, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 7849751112915121976}
   - {fileID: 7753730273861477732}
   m_Father: {fileID: 1657196062368525193}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 12.548}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!171741748 &6559056860090580787
 ArticulationBody:
   m_ObjectHideFlags: 0
@@ -43278,8 +43280,8 @@ ArticulationBody:
   m_Enabled: 1
   serializedVersion: 6
   m_Mass: 0.014867964
-  m_ParentAnchorPosition: {x: -0.2677002, y: 2.9053, z: 2.1005006}
-  m_ParentAnchorRotation: {x: 0, y: 0.70710677, z: 0, w: 0.70710677}
+  m_ParentAnchorPosition: {x: -0.27249432, y: 2.8777483, z: 2.1005006}
+  m_ParentAnchorRotation: {x: 0.0000012531788, y: 0.70710677, z: -0.000001244022, w: 0.70710677}
   m_AnchorPosition: {x: -0.2677002, y: 2.9053, z: 2.1005006}
   m_AnchorRotation: {x: 0, y: 0.70710677, z: 0, w: 0.70710677}
   m_MatchAnchors: 0
@@ -43353,6 +43355,18 @@ MonoBehaviour:
   bandStiffness: 95.492966
   bandDamping: 2.4381318
   hingeFriction: 2
+--- !u!114 &3033458749111472722
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2601400023830204747}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 233c535a255b44e296b1b3e58b5f0444, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::IgnoreRobotSelfCollision
 --- !u!1 &2604697775513459301
 GameObject:
   m_ObjectHideFlags: 0
@@ -61708,6 +61722,7 @@ GameObject:
   - component: {fileID: 7917816989406812429}
   - component: {fileID: 4437826300337417036}
   - component: {fileID: 5103679244393082822}
+  - component: {fileID: 3572824842868675466}
   m_Layer: 0
   m_Name: LeftSide
   m_TagString: Player
@@ -61723,15 +61738,15 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 3730618787035580146}
   serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0, z: 0.109281465, w: 0.99401087}
-  m_LocalPosition: {x: 0.6, y: 0.01, z: 0}
+  m_LocalRotation: {x: 0.0000000064747754, y: 7.118363e-10, z: -0.0000017657876, w: 1}
+  m_LocalPosition: {x: -0.004804611, y: 0.13244714, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1657244961129557111}
   - {fileID: 8119276466570870075}
   m_Father: {fileID: 1657196062368525193}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 12.548}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!171741748 &4437826300337417036
 ArticulationBody:
   m_ObjectHideFlags: 0
@@ -61742,8 +61757,8 @@ ArticulationBody:
   m_Enabled: 1
   serializedVersion: 6
   m_Mass: 0.014867971
-  m_ParentAnchorPosition: {x: -0.2677002, y: 2.9053, z: 0.07000017}
-  m_ParentAnchorRotation: {x: 0, y: 0.70710677, z: 0, w: 0.70710677}
+  m_ParentAnchorPosition: {x: -0.27249432, y: 2.8777483, z: 0.07000017}
+  m_ParentAnchorRotation: {x: 0.0000012531788, y: 0.70710677, z: -0.000001244022, w: 0.70710677}
   m_AnchorPosition: {x: -0.2677002, y: 2.9053, z: 0.07000017}
   m_AnchorRotation: {x: 0, y: 0.70710677, z: 0, w: 0.70710677}
   m_MatchAnchors: 0
@@ -61817,6 +61832,18 @@ MonoBehaviour:
   bandStiffness: 95.492966
   bandDamping: 2.4424217
   hingeFriction: 2
+--- !u!114 &3572824842868675466
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3730618787035580146}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 233c535a255b44e296b1b3e58b5f0444, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::IgnoreRobotSelfCollision
 --- !u!1 &3732274021840880980
 GameObject:
   m_ObjectHideFlags: 0
