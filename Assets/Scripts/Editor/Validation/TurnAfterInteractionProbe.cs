@@ -526,6 +526,8 @@ public static class TurnAfterInteractionProbe
         foreach (IntakePull i in r.intakes) { i.logEvents = false; if (i.stabilizeHoldPoint) i.StabilizeAnchors(); }
         foreach (IgnoreRobotSelfCollision s in r.root.GetComponentsInChildren<IgnoreRobotSelfCollision>(true))
             s.IgnoreAgainstRobot();
+        foreach (IgnoreFieldFloor f in r.root.GetComponentsInChildren<IgnoreFieldFloor>(true))
+            f.IgnoreAgainstFloor();
         r.mechs = r.root.GetComponent<RobotMechanisms>();
 
         r.wheels = RobotPhysicsValidation.FindWheels(r.root, out r.left, out r.right);
