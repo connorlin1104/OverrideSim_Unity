@@ -47988,7 +47988,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 3806319491269514768}
-  - component: {fileID: 7336155012331790808}
   m_Layer: 0
   m_Name: Component1:1
   m_TagString: Untagged
@@ -48012,23 +48011,6 @@ Transform:
   - {fileID: 8896718219683845181}
   m_Father: {fileID: 6300854977142908871}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &7336155012331790808
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1550169060018821723}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: eea346af0d5dc49f8867cb968187c467, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::PneumaticSlideFollower
-  slideAxisLocal: {x: 0, y: 0, z: -1}
-  slideUnits: -0.25
-  progressBody: {fileID: 8373634453097326621}
-  progressLowRad: 0
-  progressHighRad: 3.1415927
 --- !u!1 &1551105064133272784
 GameObject:
   m_ObjectHideFlags: 0
@@ -102956,7 +102938,7 @@ GameObject:
   - component: {fileID: 4148751306630898679}
   - component: {fileID: 6110499798839847105}
   - component: {fileID: 131726194853718877}
-  - component: {fileID: 8365750686104354966}
+  - component: {fileID: 2049908994826882692}
   m_Layer: 0
   m_Name: Rotating Claw Mount
   m_TagString: Player
@@ -103008,8 +102990,8 @@ ArticulationBody:
   m_SwingZ: 2
   m_Twist: 1
   m_XDrive:
-    lowerLimit: -345
-    upperLimit: 345
+    lowerLimit: -305
+    upperLimit: 305
     stiffness: 20000
     damping: 500
     forceLimit: 3.4028235e+38
@@ -103063,7 +103045,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 233c535a255b44e296b1b3e58b5f0444, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::IgnoreRobotSelfCollision
---- !u!114 &8365750686104354966
+--- !u!114 &2049908994826882692
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -103404,6 +103386,7 @@ MonoBehaviour:
   wheelRollingResistance: 0.3
   wheelSpinDamping: 0.5
   turnRate: 0.5
+  pivotTurnRate: 1
   invertLeft: 0
   invertRight: 0
   solverIterations: 16
@@ -103464,12 +103447,12 @@ MonoBehaviour:
     displayName: PlasticClaw Flip
     type: pneumatic
     motor: {fileID: 0}
-    pneumatic: {fileID: 8880344620491196483}
+    pneumatic: {fileID: 6350148851102700802}
   - id: claw-polycarb-left-side-claw-v1-1
     displayName: PlasticClaw Clamp
     type: pneumatic
     motor: {fileID: 0}
-    pneumatic: {fileID: 7433007288897788797}
+    pneumatic: {fileID: 5027435052469650265}
 --- !u!114 &5602463777934578425
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -112490,7 +112473,7 @@ BoxCollider:
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
   m_ProvidesContacts: 0
-  m_Enabled: 0
+  m_Enabled: 1
   serializedVersion: 3
   m_Size: {x: 2.3495002, y: 0.30480003, z: 0.30480003}
   m_Center: {x: -1.1747501, y: 0, z: 0}
@@ -118868,7 +118851,7 @@ BoxCollider:
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
   m_ProvidesContacts: 0
-  m_Enabled: 0
+  m_Enabled: 1
   serializedVersion: 3
   m_Size: {x: 2.2923498, y: 0.101600006, z: 0.101600006}
   m_Center: {x: -1.717675, y: 0, z: 0}
@@ -149971,7 +149954,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 806153783416519533}
-  - component: {fileID: 1197871584843274303}
+  - component: {fileID: 7719893781158573789}
   m_Layer: 0
   m_Name: Component1:1
   m_TagString: Untagged
@@ -149995,7 +149978,7 @@ Transform:
   - {fileID: 5431478018501172713}
   m_Father: {fileID: 8668360324093592692}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1197871584843274303
+--- !u!114 &7719893781158573789
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -150008,7 +149991,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PneumaticSlideFollower
   slideAxisLocal: {x: -1, y: 0.000000059604645, z: 0.00000011920929}
-  slideUnits: -0.25
+  slideUnits: 0.1
   progressBody: {fileID: 2027873128943287140}
   progressLowRad: -0.34906584
   progressHighRad: 0.2617994
@@ -176272,7 +176255,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 4740154229726533670}
-  - component: {fileID: 7479916779769294076}
+  - component: {fileID: 7841028848515739449}
   m_Layer: 0
   m_Name: Component2:1
   m_TagString: Untagged
@@ -176297,7 +176280,7 @@ Transform:
   - {fileID: 3621814492076750142}
   m_Father: {fileID: 8668360324093592692}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &7479916779769294076
+--- !u!114 &7841028848515739449
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -176310,7 +176293,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PneumaticSlideFollower
   slideAxisLocal: {x: -1, y: 0.000000059604645, z: 0.00000011920929}
-  slideUnits: 0.25
+  slideUnits: -0.1
   progressBody: {fileID: 2027873128943287140}
   progressLowRad: -0.34906584
   progressHighRad: 0.2617994
@@ -191384,7 +191367,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 40582983358c84c8b97ea4c11a203308, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ClawGrab
-  clampPneumatic: {fileID: 7433007288897788797}
+  clampPneumatic: {fileID: 5027435052469650265}
   grabWhenRetracted: 1
   holdPoint: {fileID: 2527304635566024310}
   maxHeld: 2
@@ -191443,7 +191426,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 8464461849550866962}
-  - component: {fileID: 1756666875986142496}
   m_Layer: 0
   m_Name: Component2:1
   m_TagString: Untagged
@@ -191467,23 +191449,6 @@ Transform:
   - {fileID: 8966483469356732272}
   m_Father: {fileID: 6300854977142908871}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1756666875986142496
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6274951895891086151}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: eea346af0d5dc49f8867cb968187c467, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::PneumaticSlideFollower
-  slideAxisLocal: {x: 0, y: 0, z: -1}
-  slideUnits: 0.25
-  progressBody: {fileID: 8373634453097326621}
-  progressLowRad: 0
-  progressHighRad: 3.1415927
 --- !u!1 &6275135842624413456
 GameObject:
   m_ObjectHideFlags: 0
@@ -232014,7 +231979,7 @@ GameObject:
   - component: {fileID: 8373634453097326621}
   - component: {fileID: 6510376667831421952}
   - component: {fileID: 7984225041268162400}
-  - component: {fileID: 8880344620491196483}
+  - component: {fileID: 6350148851102700802}
   m_Layer: 0
   m_Name: Rotating Claw Mount:1
   m_TagString: Player
@@ -232165,9 +232130,9 @@ MonoBehaviour:
   flipStiffness: 20000
   flipDamping: 500
   flipLink: {fileID: 7538184681047031635}
-  flipCylinderBody: {fileID: 1550169060018821723}
-  flipCylinderRod: {fileID: 6274951895891086151}
-  flipStrokeMm: 50
+  flipCylinderBody: {fileID: 0}
+  flipCylinderRod: {fileID: 0}
+  flipStrokeMm: 20
   flipRecoil: 0.5
   flipCylinderReverse: 0
   clampSections:
@@ -232194,9 +232159,9 @@ MonoBehaviour:
   clampDamping: 500
   clampCylinderBody: {fileID: 4883533608041966797}
   clampCylinderRod: {fileID: 5796851305283353651}
-  clampStrokeMm: 50
+  clampStrokeMm: 20
   clampRecoil: 0.5
-  clampCylinderReverse: 0
+  clampCylinderReverse: 1
   enableGrab: 1
   grabWhenRetracted: 1
   grabPassThrough: 1
@@ -232204,7 +232169,7 @@ MonoBehaviour:
   clawMouth: {fileID: 6272250711827222972}
   holdPoint: {fileID: 2527304635566024310}
   autoAssignButtons: 1
---- !u!114 &8880344620491196483
+--- !u!114 &6350148851102700802
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -282899,7 +282864,7 @@ GameObject:
   - component: {fileID: 2108853696208629693}
   - component: {fileID: 2027873128943287140}
   - component: {fileID: 516343481164092019}
-  - component: {fileID: 7433007288897788797}
+  - component: {fileID: 5027435052469650265}
   m_Layer: 0
   m_Name: Claw Polycarb_Left Side Claw v1:1
   m_TagString: Player
@@ -283002,7 +282967,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 233c535a255b44e296b1b3e58b5f0444, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::IgnoreRobotSelfCollision
---- !u!114 &7433007288897788797
+--- !u!114 &5027435052469650265
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
