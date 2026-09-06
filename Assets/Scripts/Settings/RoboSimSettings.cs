@@ -153,9 +153,9 @@ public static class DriveFeelSettings
 //
 // It is gone because it was a physics switch dressed as a preference: a player who ticked it (or
 // left it ticked from a robot they no longer drive) got a different stop with no way to tell that
-// was why. Every robot now brakes on the omni number, which is what the box defaulted to and what
-// almost every robot actually runs; DrivetrainTuning keeps both constants and DriveFeelValidation
-// keeps checking their ordering, so putting a per-robot answer back is a small change.
+// was why. Every robot brakes on the omni number. The per-robot answer came back where it belongs —
+// RobotMotorController.tractionPair, set by whoever rigs the robot — and it changes the TYRE
+// (WheelTyreModel: a traction wheel keeps its sideways grip), never the brake.
 // DriveFeelSettings.ClearRetiredKeys wipes the stored value.
 
 // Which field scene Drive loads: the full competition field, or the stripped-down "lite" field.

@@ -80,10 +80,9 @@ public static class TipOverValidation
         checks += ReversalDecelerates(out string dynamic);
         checks += ReleaseStopsSmoothly(out string release);
         checks += TurningWithTheLiftUpDoesNotRollIt(out string turning);
-        checks += NothingSidewaysCanLayItOver(out string shove);
         checks += ChatterMetricSeesChatter(out string chatter);
         return $"Validate Tipping: PASSED ({checks} checks).\n{clearance}\n{summary}\n{dynamic}\n" +
-               $"{release}\n{turning}\n{shove}\n{chatter}";
+               $"{release}\n{turning}\n{chatter}";
     }
 
     // --- Ground clearance: the answer must not depend on where the prefab sits ------------------
@@ -488,8 +487,8 @@ public static class TipOverValidation
             $"{comHeight * 100f:0.0} mm). That leaves it {weaker:0.0} degrees from going over towards " +
             $"one side against {stronger:0.0} towards the other — a {(1f - weaker / stronger) * 100f:0.} " +
             $"percent difference, and it will feel worse turning {weakStick.ToUpper()} than the other " +
-            "way, which is exactly how a driver reports this. Do NOT tune the roll relief to hide it: " +
-            "the relief is symmetric and cannot make a lopsided robot balanced.\n" +
+            "way, which is exactly how a driver reports this. No drivetrain constant can hide it: " +
+            "the tyre and the brake are both symmetric and cannot make a lopsided robot balanced.\n" +
             $"    STOWED it sits {stowedOffset * 100f:0.0} mm off centre with its COM " +
             $"{stowedHeight * 100f:0.0} mm up; RAISED, {offset * 100f:0.0} mm off centre at " +
             $"{comHeight * 100f:0.0} mm up. " +
@@ -611,10 +610,16 @@ public static class TipOverValidation
 
         // Then hold the turn stick without lifting off, which is what a driver does.
         float lastRoll = SignedRoll(root.transform), prevRate = 0f;
-        float yaw0 = root.transform.eulerAngles.y;
+        // Accumulated per step, not start-to-end: a 2 s turn passes 360 degrees on every robot now,
+        // and a DeltaAngle would report a robot that spun one full turn and a bit as having barely
+        // moved (654V_v2 read 60 for a 420-degree turn).
+        float lastYaw = root.transform.eulerAngles.y;
         for (int i = 0; i < TurnSteps; i++)
         {
             StepDriven(motor, 1f, turnSign, 1);
+            float yawNow = root.transform.eulerAngles.y;
+            result.yaw += Mathf.Abs(Mathf.DeltaAngle(lastYaw, yawNow));
+            lastYaw = yawNow;
             float roll = SignedRoll(root.transform);
             result.peakRoll = Mathf.Max(result.peakRoll, Mathf.Abs(roll));
             float rate = (roll - lastRoll) / ValidationUtil.StepSeconds;
@@ -639,7 +644,6 @@ public static class TipOverValidation
             }
         }
         result.liftJoints = liftLinks.Count;
-        result.yaw = Mathf.Abs(Mathf.DeltaAngle(yaw0, root.transform.eulerAngles.y));
         result.finalTilt = Vector3.Angle(root.transform.up, Vector3.up);
         result.exitSpeed = Planar(root.linearVelocity);
         return result;
@@ -653,198 +657,6 @@ public static class TipOverValidation
         if (flatForward.sqrMagnitude < 1e-6f) flatForward = Vector3.forward;
         Vector3 rightRef = Vector3.Cross(Vector3.up, flatForward);
         return Mathf.Atan2(Vector3.Dot(t.up, rightRef), Vector3.Dot(t.up, Vector3.up)) * Mathf.Rad2Deg;
-    }
-
-    // --- Sideways: nothing may lay this robot over --------------------------------------------
-
-    // THE RULE, and it is asymmetric on purpose. Front-to-back tipping is real and must survive —
-    // StaticThresholds and ReversalDecelerates above are what pin that a slammed reversal still puts
-    // a raised lift on its nose. Sideways tipping is an artifact of modelling omni wheels as
-    // isotropic spheres (see ApplyRollRelief) and must not be reachable AT ALL.
-    //
-    // WHY A SHOVE AND NOT A TURN. The turn check above only ever loads the robot sideways by holding
-    // the turn stick, so a roll relief gated on that stick passed it at 0.0 degrees while the robot
-    // still rocked in play. This pushes with the steering at DEAD CENTRE: nothing about the turn
-    // command can be what saves it.
-    //
-    // HOW HARD, AND WHY THAT EXACT NUMBER. mu * m * g — the most lateral force the tyres are
-    // physically capable of transmitting — applied at the centre of mass. That ceiling is the whole
-    // point, and picking it is what makes this a test of the defect rather than a wish.
-    //
-    // The defect ApplyRollRelief exists to cancel is that our wheels are isotropic spheres, so
-    // sideways scrub generates grip a real omni's rollers never would. However the robot gets loaded
-    // sideways — a turn, a straight-line scrub, riding up on a piece — the force reaching it through
-    // the contact patches CANNOT exceed the friction cone. So a robot that survives mu*m*g at the
-    // centre of mass survives every sideways load the ground can produce, which is exactly the rule.
-    //
-    // An earlier version pushed with 1 g at the TOP of the raised lift and failed 654V_v2 at 87
-    // degrees. That was the test being wrong, not the robot: a full body-weight force on the end of a
-    // 600 mm lever is a collision, not a tyre force, and no bounded relief should hold it. Modelling
-    // an impact that severe as un-tippable would mean a robot nothing can ever knock over, which is
-    // not what "sideways driving must not tip it" asks for — and MaxRollReliefOverturnMultiple caps
-    // the relief at 3x the static overturning moment precisely so it stays a tyre-artifact fix.
-    private static float ShoveForce(float mass, float friction)
-        => mass * Mathf.Abs(Physics.gravity.y) * Mathf.Max(friction, 0.1f);
-    private const int ShoveSteps = 60;               // 0.6 s of it
-    private const int ShoveWatchSteps = 200;         // then 2 s to go over in, if it is going to
-    private const float MinUnprotectedRollDeg = 40f; // loose: unmistakably going over
-
-    // WHAT COUNTS AS "DID NOT TIP", measured off each robot rather than picked.
-    //
-    // A robot rolls to the angle where its centre of mass crosses over the outside wheels —
-    // atan(halfTrack / comHeight) — and past that gravity finishes the job on its own. That angle is
-    // the real boundary between leaning and going over, it is different for every robot (about 29
-    // degrees for 654V_v3 raised, more for the squatter ones), and it is the honest thing to assert
-    // against. A flat "under 15 degrees" was a number I chose, and 654V_v3 came in at 15.2 — which
-    // says nothing about the robot and everything about the number.
-    //
-    // Peak must stay comfortably inside that angle AND the robot must come back down, because
-    // "never quite fell over" and "recovered" are different claims and only the second one is what
-    // a driver experiences as not tipping.
-    private const float SafeTipFraction = 0.8f;      // of the robot's own point of no return
-    private const float MaxSettleRollDeg = 5f;       // ...and it has to come back to level
-
-    private static int NothingSidewaysCanLayItOver(out string report)
-    {
-        var lines = new System.Text.StringBuilder();
-        int checks = 0, tested = 0, witnesses = 0;
-        foreach (string path in RoboSimPaths.RobotPrefabPaths())
-        {
-            GameObject candidate = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-            if (candidate == null || candidate.GetComponent<RobotMotorController>() == null) continue;
-            if (!HasLiftTravel(candidate)) continue;   // a robot with nothing raised is not the case
-            tested++;
-            checks += ShoveOne(candidate, lines, out bool witness);
-            if (witness) witnesses++;
-        }
-        ValidationUtil.Assert(tested > 0, "no robot with a lift to shove — nothing was checked");
-
-        // THE MUTATION, AT FLEET LEVEL. Not every robot can host it: 654V_v1's raised centre of mass
-        // needs 1.61 g sideways and its tyres deliver 0.80, so a full friction-cone push cannot tip
-        // it with the relief off either — it is un-tippable by construction, and demanding it roll
-        // would be demanding the wrong thing. But if NO robot rolls unprotected, the shove has gone
-        // slack and every pass above is vacuous, so at least one must still go over.
-        ValidationUtil.Assert(witnesses > 0,
-            $"none of the {tested} robot(s) rolled past {MinUnprotectedRollDeg:0} degrees with rollRelief " +
-            "switched OFF, so nothing here can tell a working relief from a deleted one. The shove is " +
-            "the friction cone (mu*m*g at the centre of mass), so this means no robot in the fleet has " +
-            "a raised centre of mass high enough to tip sideways at all — check the lifts actually " +
-            "raised before trusting this section.");
-
-        report = lines.ToString().TrimEnd();
-        return checks;
-    }
-
-    private static int ShoveOne(GameObject prefab, System.Text.StringBuilder lines, out bool witness)
-    {
-        SimulationMode previousMode = Physics.simulationMode;
-        try
-        {
-            Shoved held = Shove(prefab, rollRelief: 1f);
-            Shoved loose = Shove(prefab, rollRelief: 0f);
-            float limit = held.tipAngleDeg * SafeTipFraction;
-
-            // Does THIS robot prove the relief is doing anything? Only if the same push tips it with
-            // the relief off. A robot too squat to tip sideways at the friction limit is not a
-            // failure, it just cannot be the witness — see the fleet-level assert above.
-            witness = loose.peak >= MinUnprotectedRollDeg;
-            if (!witness)
-            {
-                lines.AppendLine($"  {prefab.name}: rolled {held.peak:0.0} deg — but only {loose.peak:0.0} " +
-                                 "deg with the relief off, so this robot is un-tippable sideways anyway");
-                return 1;
-            }
-
-            ValidationUtil.Assert(held.peak <= limit,
-                $"'{prefab.name}' rolled {held.peak:0.0} degrees under the hardest sideways push its tyres " +
-                $"can physically transmit, with the steering stick at centre — past {limit:0.0}, which is " +
-                $"{SafeTipFraction:0.0#} of its own {held.tipAngleDeg:0.0}-degree point of no return. The " +
-                $"same push rolls it {loose.peak:0.0} degrees unprotected. Sideways must not be able to tip " +
-                "this robot; front-to-back is the only direction that may. Check ApplyRollRelief is still " +
-                "unconditional and that MaxRollReliefOverturnMultiple leaves it enough authority.");
-
-            ValidationUtil.Assert(held.final <= MaxSettleRollDeg,
-                $"'{prefab.name}' was still leaning {held.final:0.0} degrees two seconds after the push " +
-                $"stopped (peak {held.peak:0.0}). It did not fall over, but it did not recover either, and " +
-                "a robot left leaning is one the next nudge puts down.");
-
-            lines.AppendLine($"  {prefab.name}: pushed sideways at the friction limit — peaked {held.peak:0.0} " +
-                             $"deg of {held.tipAngleDeg:0.0} available, settled back to {held.final:0.0} " +
-                             $"(the same push rolls it {loose.peak:0.0} deg with the relief off)");
-            return 3;
-        }
-        finally { Physics.simulationMode = previousMode; }
-    }
-
-    private struct Shoved
-    {
-        public float peak;         // worst roll reached, degrees
-        public float final;        // ...and where it ended up once the push stopped
-        public float tipAngleDeg;  // atan(halfTrack / comHeight): this robot's point of no return
-    }
-
-    // One robot, lift raised, steering centred, pushed sideways as hard as its tyres can transmit.
-    // rollRelief is the ONE thing that differs between the two runs, so the difference between them
-    // is attributable to it and nothing else.
-    private static Shoved Shove(GameObject prefab, float rollRelief)
-    {
-        ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
-        motor.rollRelief = rollRelief;
-        motor.Initialise();
-
-        Physics.simulationMode = SimulationMode.Script;
-        StepDriven(motor, 0f, 0f, SettleSteps);
-        RaiseLifts(root, motor);
-        StepDriven(motor, 0f, 0f, SettleSteps);
-
-        // Measured with the lift already UP: that is the worst case, the case the report was about,
-        // and the only configuration where the friction cone is anywhere near enough to tip it.
-        ArticulationBody[] wheels = RobotPhysicsValidation.FindWheels(root, out _, out _);
-        float mass = DrivetrainTuning.MeasureTotalMass(root);
-        float force = ShoveForce(mass, DrivetrainTuning.MeasureFriction(wheels));
-
-        float peak = 0f;
-        for (int i = 0; i < ShoveSteps + ShoveWatchSteps; i++)
-        {
-            // At the WHOLE ROBOT'S centre of mass, recomputed each step because the lift moves it.
-            //
-            // This is the one detail the first two attempts got wrong in opposite directions. The
-            // force must act at the COM and be reacted by friction at the contact patches: that
-            // couple, over the COM height, IS the overturning moment, and it is why a raised lift
-            // tips and a stowed one does not. AddForce on the root applies at the ROOT LINK's own
-            // centre of mass instead — the 4 kg chassis, near the floor — so the moment arm came out
-            // near zero and nothing rolled however hard it was pushed. Nothing is manufactured here:
-            // the magnitude is still the friction cone and the arm is still the robot's own geometry.
-            if (i < ShoveSteps)
-                root.AddForceAtPosition(root.transform.right * force, AggregateCentreOfMass(root),
-                    ForceMode.Force);
-            StepDriven(motor, 0f, 0f, 1);
-            peak = Mathf.Max(peak, Mathf.Abs(SignedRoll(root.transform)));
-        }
-
-        // The point of no return, from this robot's own geometry at the pose it was pushed in. The
-        // floor's top face is y = 0 on this rig, so the aggregate COM's y IS its height above the
-        // ground; half-track is the mean lateral offset of the wheel links, same as the controller's
-        // own MeasureRollResistance uses.
-        Vector3 com = AggregateCentreOfMass(root);
-        float halfTrack = 0f;
-        int counted = 0;
-        foreach (ArticulationBody w in wheels)
-        {
-            if (w == null) continue;
-            halfTrack += Mathf.Abs(Vector3.Dot(w.transform.position - root.transform.position,
-                root.transform.right));
-            counted++;
-        }
-        if (counted > 0) halfTrack /= counted;
-
-        return new Shoved
-        {
-            peak = peak,
-            final = Mathf.Abs(SignedRoll(root.transform)),
-            tipAngleDeg = com.y > 1e-3f
-                ? Mathf.Atan2(halfTrack, com.y) * Mathf.Rad2Deg : 90f,
-        };
     }
 
     // Where the robot's mass sits ACROSS its wheels, at whatever pose it is currently in.
@@ -867,8 +679,7 @@ public static class TipOverValidation
         // THE STEEPEST LEAN A SIDEWAYS FORCE CAN EVEN ASK FOR. On a flat floor the largest lateral
         // acceleration available is the friction limit, mu*g, so the resultant of that and gravity
         // leans atan(mu) from vertical — and a robot whose tipping angle is beyond that SLIDES
-        // rather than tips, whatever it does. Derived, not chosen: it is the same friction cone
-        // ShoveForce uses to size the push.
+        // rather than tips, whatever it does. Derived, not chosen: it is the tyres' own friction cone.
         frictionTipLimitDeg =
             Mathf.Atan(Mathf.Max(DrivetrainTuning.MeasureFriction(wheels), 0.01f)) * Mathf.Rad2Deg;
 
@@ -968,29 +779,32 @@ public static class TipOverValidation
         if (dirty.rollReversals <= MaxRollReversals)
         {
             // NOT a pass, and deliberately not a failure either — the metric has been made
-            // unfalsifiable by two changes that are both improvements, so failing here would be
-            // reporting a defect in the robot that does not exist.
+            // unfalsifiable by changes that are improvements, so failing here would be reporting a
+            // defect in the robot that does not exist.
             //
-            //   1. Roll relief is now unconditional, and it cancels roll about the forward axis.
-            //      This metric COUNTS roll direction changes about that same axis. The fix and the
-            //      measurement are the same quantity, so the relief suppresses the signal by design.
-            //   2. m_DefaultMaxDepenetrationVelocity went 10 -> 1 to stop overlapping parts being
+            //   1. m_DefaultMaxDepenetrationVelocity went 10 -> 1 to stop overlapping parts being
             //      fired apart. That is exactly what made a jammed part shake the chassis, so an
             //      overlap now resolves gently instead of ringing at the solver's limit.
+            //   2. The omni tyre lets a wheel slide sideways instead of scrubbing at 0.8, so the
+            //      lateral force that used to rock the frame through a turn is not there to be
+            //      counted either.
             //
-            // Verified rather than assumed: a 1.5 kg link jammed dead centre in a driven wheel moves
-            // the count from 0 to 1, against a limit of 12. The jam IS being injected and the robot
-            // IS being driven; the chassis simply no longer rocks in response.
+            // The roll relief USED to be blamed for this, on the reasoning that it cancelled roll
+            // about the very axis the metric counts. That was wrong: with the relief deleted the
+            // same injected jam reads 0 reversals where it read 1 with the relief in place, so the
+            // relief was never what suppressed the signal. Measured, not assumed — and the reason
+            // this note names measurements rather than mechanisms now.
             //
             // The consequence is real and should not be buried: MaxRollReversals and MaxRollTravelDeg
             // in the turn check above are currently guarding nothing. Re-earning them means measuring
-            // chatter somewhere the relief does not reach — wheel joint-velocity sign changes, or
-            // contact force variance — rather than the root's roll.
+            // chatter where it now lives — wheel joint-velocity sign changes, or contact force
+            // variance — rather than the root's roll.
             report = "  chatter metric: INCONCLUSIVE — a 1.5 kg link jammed inside a driven wheel " +
                      $"({dirty.injectedJam}) produced only {dirty.rollReversals} roll reversal(s) " +
-                     $"against a limit of {MaxRollReversals}. Unconditional roll relief cancels the " +
-                     "very axis this metric counts on, so MaxRollReversals/MaxRollTravelDeg above are " +
-                     "UNGUARDED until chatter is measured off the wheels instead of the chassis.";
+                     $"against a limit of {MaxRollReversals}. A gentle depenetration velocity and a " +
+                     "tyre that slides sideways leave the chassis nothing to rock about, so " +
+                     "MaxRollReversals/MaxRollTravelDeg above are UNGUARDED until chatter is " +
+                     "measured off the wheels instead of the chassis.";
             return 0;
         }
 
@@ -1197,8 +1011,7 @@ public static class TipOverValidation
                 DrivetrainTuning.MeasureFriction(wheels),
                 Physics.gravity.y,
                 motor.driveForceTractionMultiple,
-                motor.omniBrakeFraction,
-                motor.plowFraction);
+                motor.omniBrakeFraction);
 
             motor.Initialise();
             Physics.simulationMode = SimulationMode.Script;
@@ -1218,12 +1031,10 @@ public static class TipOverValidation
                 "Validate Robot Physics, which names the part, or Mass & Balance, which reports its " +
                 "ground clearance as a negative number.");
 
-            // THE SLAM — the stick thrown to full reverse, and nothing else. This used to write
-            // tuning.plowTorque onto every wheel by hand, because edit mode never ran Awake and the
-            // plow limit is a per-step runtime swap that is not in the serialized drive. That made
-            // the check a restatement of DrivetrainTuning rather than a test of the controller: it
-            // would have passed with BrakeForceLimit deleted. Driving through ApplyStep means the
-            // brake under test is the one the player gets, ramp and pre-slew target included.
+            // THE SLAM — the stick thrown to full reverse, and nothing else. Driven through ApplyStep
+            // rather than by writing a force limit onto every wheel by hand, so this tests the
+            // controller's authority rule (a full-stick reversal gets stall torque, and the tyre's
+            // cone is what it reaches) instead of restating DrivetrainTuning to itself.
             float slamTarget = -1f;
 
             // Step until the robot has actually STOPPED going forwards, and time it — do not sample a
@@ -1248,15 +1059,16 @@ public static class TipOverValidation
             float g = Mathf.Abs(Physics.gravity.y);
             float decelG = speedBefore / (stopStep * ValidationUtil.StepSeconds) / g;
 
-            // The discriminator. brakeG is what a released stick pulls and plowG is what a slam
-            // should; landing below the midpoint means the reversal is being treated as a coast,
-            // which is the whole regression this half exists to catch.
-            float floor = Mathf.Lerp(tuning.brakeG, tuning.plowG, MinPlowFraction);
+            // The discriminator. brakeG is what a released stick pulls and the friction cone is
+            // what a full-stick slam may reach (its authority is stall torque, three times the cone,
+            // so the tyre is the ceiling); landing below the midpoint means the reversal is being
+            // treated as a coast, which is the whole regression this half exists to catch.
+            float floor = Mathf.Lerp(tuning.brakeG, tuning.tractionG, MinPlowFraction);
             ValidationUtil.Assert(decelG > floor,
                 $"'{prefab.name}' decelerated at {decelG:0.00} g when slammed into reverse, but a " +
-                $"coast is {tuning.brakeG:0.00} g and a plow should be {tuning.plowG:0.00} g — this " +
-                $"is a released stick, not a reversal. Needs more than {floor:0.00} g. Check " +
-                "RobotMotorController.BrakeForceLimit and that the ramp reads the PRE-SLEW target.");
+                $"coast is {tuning.brakeG:0.00} g and the friction cone is {tuning.tractionG:0.00} g — " +
+                $"this is a released stick, not a reversal. Needs more than {floor:0.00} g. Check " +
+                "RobotMotorController.DriveForceLimit and that the stick throw is read off the RAW targets.");
 
             // Nothing is asserted about the tilt for a lift-down robot: a real drivetrain with its
             // lift stowed is not supposed to go over, and the static half already pins what the
@@ -1264,7 +1076,7 @@ public static class TipOverValidation
             // change, and a run where it silently reads 0.0 on every robot is worth seeing.
             report = $"reversal on '{prefab.name}': {speedBefore:0.0} u/s to a stop in " +
                      $"{stopStep * ValidationUtil.StepSeconds:0.00} s = {decelG:0.00} g " +
-                     $"(coast {tuning.brakeG:0.00} g, plow {tuning.plowG:0.00} g), " +
+                     $"(coast {tuning.brakeG:0.00} g, cone {tuning.tractionG:0.00} g), " +
                      $"peak tilt {peakTilt:0.0}° from {tiltBefore:0.0}°, " +
                      $"travelled {Planar(root.transform.position - beforePos):0.0} u";
             return 2;
@@ -1317,8 +1129,7 @@ public static class TipOverValidation
                 DrivetrainTuning.MeasureFriction(wheels),
                 Physics.gravity.y,
                 motor.driveForceTractionMultiple,
-                motor.omniBrakeFraction,
-                motor.plowFraction);
+                motor.omniBrakeFraction);
 
             motor.Initialise();
             Physics.simulationMode = SimulationMode.Script;

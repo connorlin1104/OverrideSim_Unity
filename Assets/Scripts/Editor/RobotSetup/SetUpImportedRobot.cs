@@ -38,6 +38,10 @@ public class SetUpImportedRobot : EditorWindow
     [SerializeField] private bool accurateColliders = true;
     [SerializeField] private bool validateAfterSetup = true;
     [SerializeField] private bool saveAsPrefabAfterSetup = true;
+    [SerializeField] private bool hasTractionPair;
+    [SerializeField] private RobotMotorController.TractionPair tractionPair = RobotMotorController.TractionPair.None;
+
+    private static readonly string[] PairNames = { "Front", "Middle", "Rear" };
 
     [MenuItem("Tools/RoboSim/Robot/Set Up Imported Robot", false, 1)]
     private static void ShowWindow()
@@ -119,6 +123,7 @@ public class SetUpImportedRobot : EditorWindow
                 return;
         }
 
+        DrawTractionPair();
         validateAfterSetup = EditorGUILayout.Toggle("Validate Physics After", validateAfterSetup);
         saveAsPrefabAfterSetup = EditorGUILayout.Toggle(new GUIContent("Save As Prefab After",
             "Save the finished robot as a prefab under Assets/Robots, link it to the home-screen model " +
@@ -132,7 +137,7 @@ public class SetUpImportedRobot : EditorWindow
         {
             string robotName = robotRoot.name;
             string summary = Run(robotRoot, kind, meshWheelNamePrefix, urdfWheelNameSubstring, keepUrdfInertials,
-                computeMassFromGeometry, accurateColliders);
+                computeMassFromGeometry, accurateColliders, hasTractionPair ? tractionPair : RobotMotorController.TractionPair.None);
             EditorUtility.DisplayDialog(Title, summary + Finish(robotName), "OK");
         }
         catch (Exception e)
@@ -245,17 +250,41 @@ public class SetUpImportedRobot : EditorWindow
 
     // --- Pipeline ----------------------------------------------------------------------------
 
+    // The one thing about a drivetrain the rig cannot read off the CAD: whether two of its wheels
+    // are traction wheels. See RobotMotorController.tractionPair.
+    private void DrawTractionPair()
+    {
+        hasTractionPair = EditorGUILayout.Toggle(new GUIContent("Has A Pair Of Traction Wheels",
+            "Tick if two of the drive wheels are traction wheels (rubber) rather than omnis. An all-omni " +
+            "drive slides when hit from the side and drifts through a turn; a traction pair keeps its full " +
+            "sideways grip, so a sideways hit costs something and a turn holds its line. The pair is found " +
+            "by position along the drive axis; a rail with an even number of wheels has no Middle. Change " +
+            "it later in Robot Setup Overview."), hasTractionPair);
+        if (!hasTractionPair) return;
+        if (tractionPair == RobotMotorController.TractionPair.None)
+            tractionPair = RobotMotorController.TractionPair.Middle;
+        using (new EditorGUI.IndentLevelScope())
+        {
+            int idx = Mathf.Clamp((int)tractionPair - 1, 0, PairNames.Length - 1);
+            idx = EditorGUILayout.Popup("Which Pair", idx, PairNames);
+            tractionPair = (RobotMotorController.TractionPair)(idx + 1);
+        }
+    }
+
     // Runs the full setup for the detected robot kind. Returns a human-readable summary.
     // Throws InvalidOperationException with a readable message on any precondition failure.
     public static string Run(GameObject root, RobotKind kind, string meshWheelPrefix, string urdfWheelSubstring,
-        bool keepUrdfInertials = false, bool computeMassFromGeometry = true, bool hullConcaveStructural = true)
+        bool keepUrdfInertials = false, bool computeMassFromGeometry = true, bool hullConcaveStructural = true,
+        RobotMotorController.TractionPair tractionPair = RobotMotorController.TractionPair.None)
     {
+        string tractionNote = tractionPair == RobotMotorController.TractionPair.None
+            ? "" : $"\n  - traction pair: {tractionPair} (the rest are omnis)";
         switch (kind)
         {
             case RobotKind.Urdf:
                 // Post-Process already does colliders + motors + mechanisms + catalog in one pass.
                 UrdfPostProcessor.PostProcess(root, UrdfScaleFactor, true, urdfWheelSubstring, keepUrdfInertials,
-                    computeMassFromGeometry);
+                    computeMassFromGeometry, tractionPair: tractionPair);
                 MarkDirty(root);
                 return $"'{root.name}' (URDF) is set up:\n" +
                        $"  - baked to {UrdfScaleFactor}x world scale\n" +
@@ -265,7 +294,7 @@ public class SetUpImportedRobot : EditorWindow
                            : keepUrdfInertials ? "  - kept the URDF mass properties\n" : "") +
                        "  - wheel motors wired to the joysticks\n" +
                        "  - arm/piston mechanisms wired for the controller buttons\n" +
-                       "  - added to the home-screen robot list";
+                       "  - added to the home-screen robot list" + tractionNote;
 
             case RobotKind.Mesh:
                 GeneratePartColliders.Report report = GeneratePartColliders.Generate(root, meshWheelPrefix, hullConcaveStructural);
@@ -275,7 +304,7 @@ public class SetUpImportedRobot : EditorWindow
                         "nothing to turn into motors. Set 'Wheel Name Contains' to a token in this robot's " +
                         "wheel node names (comma-separate several), then run again.");
 
-                RigDrivetrainArticulation.Rig(root, meshWheelPrefix);
+                RigDrivetrainArticulation.Rig(root, meshWheelPrefix, tractionPair);
 
                 // Register it as a first-class set-up robot: a mechanisms registry + button router
                 // (so Add/Fix Mechanism Joint can split arms/pistons off afterward) and a home-screen
@@ -290,7 +319,7 @@ public class SetUpImportedRobot : EditorWindow
                        $"({report.skippedFasteners} fasteners skipped)\n" +
                        $"  - {report.sphereCount} wheel spheres, now {report.sphereCount} motor-driven wheel links\n" +
                        "  - motors wired to the joysticks\n" +
-                       "  - registered as a robot (add arms/pistons with Advanced ▸ Add or Fix Mechanism Joint)";
+                       "  - registered as a robot (add arms/pistons with Advanced ▸ Add or Fix Mechanism Joint)" + tractionNote;
 
             default:
                 throw new InvalidOperationException(

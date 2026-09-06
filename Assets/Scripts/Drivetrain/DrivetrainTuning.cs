@@ -39,35 +39,20 @@ public static class DrivetrainTuning
 {
     // Stall force at full stick, as a MULTIPLE of the tyres' grip (mu*m*g).
     //
-    // Above 1 on purpose, and this is the part that looks wrong until you know why: the sim models
-    // omni wheels as plain isotropic spheres at mu 0.8, so they grip sideways exactly as hard as
-    // they grip forwards. A real omni's rollers make a point turn nearly free; here every wheel has
-    // to be SCRUBBED sideways, and for a 6-wheel layout spread front-to-back the resisting moment
-    // is larger than the moment a traction-limited drive can produce. At or below 1.0 the robot
-    // physically cannot turn — measured, not theorised: RobotPhysicsValidation yawed 0.1 degrees.
-    //
-    // So the drivetrain must be able to break traction, exactly as a real one can. What makes this
-    // NOT the old on/off throttle is the damping above, which the original 700/1000 pairing got
-    // wrong by ~57x.
-    //
-    // Why 3 specifically: it puts the traction crossover at one third of stick travel. Below a
-    // third the drive is motor-limited, so acceleration is proportional to the stick and fine
-    // control is real; above it the robot uses everything the tyres have. Fine at the bottom, full
-    // authority at the top, which is how a real drivetrain behaves. See Result.motorLimitedStick.
+    // Above 1 on purpose. It used to be the only way the robot could turn: with every wheel an
+    // isotropic mu-0.8 sphere, a point turn had to SCRUB six tyres sideways at full grip, and at or
+    // below 1.0 the robot physically could not — measured, RobotPhysicsValidation yawed 0.1 degrees.
+    // The tyre model took that job (WheelTyreModel); what 3 still buys is the launch: the traction
+    // crossover sits at one third of stick travel, so below a third the drive is motor-limited and
+    // fine control is real, and above it a full-throttle start spins the tyres the way a real one
+    // does. What makes this NOT the old on/off throttle is the damping above, which the original
+    // 700/1000 pairing got wrong by ~57x. See Result.motorLimitedStick.
     public const float DefaultDriveForceTractionMultiple = 3.0f;
 
-    // The same budget, for a wheel that is being BACK-DRIVEN — commanded slower than it is actually
-    // turning, which is the inner wheel of every moving turn. Placeholder equal to the drive multiple
-    // (i.e. no limit at all, the behaviour that shipped) until TurnAuthoritySweepProbe has measured
-    // where between 1 and 3 the turn survives without the inner wheel locking. See
-    // RobotMotorController.backDriveTractionMultiple; 1.0 was measured to stop the robot yawing at
-    // speed entirely, so this is not free to lower.
-    public const float DefaultBackDriveTractionMultiple = DefaultDriveForceTractionMultiple;
-
     // Braking authority as a fraction of the tyres' grip, used whenever the command TRAILS the
-    // wheels' spin — an eased-off throttle, the inner wheel of a moving turn, and, with centre-stick
-    // as the brake pedal, every release of the sticks. A command that actively opposes the spin is
-    // no longer this number; it ramps toward DefaultPlowTractionFraction below.
+    // wheels' spin with the sticks at centre — which, with centre stick as the brake pedal, is every
+    // release of the sticks. A held stick ramps a back-driven wheel from this up to stall torque
+    // (RobotMotorController.DriveForceLimit); this is the bottom of that ramp.
     //
     // This is the braking quadrant, and a real motor is weakest there: driven backwards against
     // its own rotation it is limited by its current limit and its own back-EMF, nowhere near the
@@ -79,55 +64,33 @@ public static class DrivetrainTuning
     // ground: the force builds progressively with the command rather than saturating instantly,
     // and the robot's own inertia is what the driver feels.
     //
-    // WHY THERE ARE TWO — the wheels. This is the one number where "what is the robot built from"
-    // changes the answer more than any tuning taste does:
-    //
-    //   ALL OMNI (0.2 -> 0.16 g) is the default, because that is what almost every robot runs.
-    //   An omni's rollers give it no sideways grip at all and a small, hard contact patch
-    //   forwards, so it cannot put a hard stop down: releasing the sticks rolls a 240 RPM robot on
-    //   for about 0.28 m (0.62 m on a 360 RPM drive), and one that was mid-turn keeps swinging.
-    //   That roll-out IS the drift an all-omni drive has, and pretending otherwise is what made
-    //   the old single 0.7 read as "the brake is too powerful".
-    //
-    //   A SET OF TRACTION WHEELS (0.7 -> 0.56 g) bites. Rubber, a real contact patch, and grip in
-    //   every direction, so the motors can hand the ground most of what they have: the same robot
-    //   pulls up in 0.08 m and stays put. This is exactly the number the drivetrain shipped with
-    //   before the split — the old firm stop, 3.5x shorter.
-    //
-    // Both stay under the 0.8 g friction cone, so a stop is always motor-limited (progressive)
-    // rather than traction-limited (an instant skid).
-    //
-    // ONLY THE OMNI ONE IS LIVE. A Settings checkbox used to let the player declare their wheels and
-    // pick between them; it asked a hardware question that changed the physics and that a player had
-    // no reason to answer correctly, so it is gone and RobotMotorController.BrakeFraction is the omni
-    // number for every robot. The traction constant stays because it is the measured alternative and
-    // DriveFeelValidation still holds the two apart — see the retirement note in RoboSimSettings.
+    // ONE NUMBER, the all-omni one (0.2 -> 0.16 g), because that is what almost every robot runs:
+    // an omni's rollers give it no sideways grip and a small, hard contact patch forwards, so it
+    // cannot put a hard stop down. Releasing the sticks rolls a 240 RPM robot on for about 0.28 m
+    // (0.62 m on a 360 RPM drive), and one that was mid-turn keeps swinging. That roll-out IS the
+    // drift an all-omni drive has. A robot with a traction pair brakes on the same number: where a
+    // traction wheel differs is its SIDEWAYS grip, which is the tyre's business (WheelTyreModel),
+    // not the brake's. The old second fraction (0.7, a firm 0.08 m stop) went with the Settings
+    // checkbox that picked it — a hardware question a player could not answer and that silently
+    // changed the physics. Stays under the 0.8 g cone, so a stop is motor-limited (progressive),
+    // never traction-limited (an instant skid).
     public const float DefaultOmniBrakeFraction = 0.2f;
-    public const float DefaultTractionBrakeFraction = 0.7f;
 
-    // The OTHER end of the braking quadrant: what a wheel may pull when the driver has actively
-    // slammed the stick into reverse, as a fraction of the tyres' grip.
-    //
-    // The two fractions above are one number doing three jobs — centre-stick coast, an eased-off
-    // throttle, and a full reversal — and the coast is what they were sized for. That left a slam
-    // pulling 0.16 g on omnis, which is not a stop a driver can feel and, more to the point, is
-    // roughly a fifth of the longitudinal force it takes to put a robot on its nose. No robot could
-    // tip itself by driving, in any configuration, however hard the reversal.
-    //
-    // Splitting them is also the more honest motor model. The comment above is right that a
-    // back-driven motor is limited by its current draw and its own back-EMF — but both of those
-    // scale with the voltage the controller is applying, which is the COMMAND. A flat constant says
-    // a feathered reverse and a slammed one brake identically; they don't. So the limit now ramps
-    // from the coast fraction at centre stick to this at full stick, and only when the command
-    // genuinely OPPOSES the spin (a command that merely trails it is a coast, and is also the inner
-    // wheel of every moving turn — see BrakeForceLimit).
-    //
-    // 1.0 = right AT the friction cone, on purpose, and the one place in this file where the ground
-    // rather than the motor is meant to be the limit. A V5 at full reverse current genuinely has
-    // more torque than the tyres can put down, so a full slam SHOULD skid at mu*g — that is what
-    // makes it a slam. Everything below full stick stays motor-limited and progressive, which is
-    // where the "carries its momentum" feel lives and why it survives this change untouched.
-    public const float DefaultPlowTractionFraction = 1.0f;
+    // THE OMNI TYRE (see WheelTyreModel). Friction across the wheel's rolling direction, as the
+    // coefficient a contact drops to once it is moving sideways; the material's 0.8 is what it grips
+    // with along the rolling direction. 0.05 is a roller: a sideways nudge sends the robot sliding,
+    // and it coasts to a stop in a few tenths of a unit. Tune here, never on a prefab.
+    public const float OmniLateralFriction = 0.05f;
+
+    // How much sideways contact velocity, in u/s, takes a contact halfway from full grip to the
+    // lateral coefficient. 1 u/s (0.1 m/s) keeps a wheel within a hand's width of the yaw centre
+    // gripping through a pivot and lets one at the ends of a 6-wheel drive (5-9 u/s sideways) go free.
+    public const float LateralSlipScale = 1f;
+
+    // How much sideways force from OTHER bodies, as a fraction of the robot's weight, takes its tyres
+    // halfway to the lateral coefficient while it is not yet moving sideways — the sustained-shove
+    // case, which no velocity can see. A tenth of the weight is a hand on the frame.
+    public const float ExternalLateralForceFraction = 0.1f;
 
     // Used when a robot's colliders/materials can't be measured (a robot rigged before
     // GeneratePartColliders, or a unit test with no scene). These are the 654V numbers.
@@ -139,8 +102,9 @@ public static class DrivetrainTuning
     {
         public float stallTorque;       // ArticulationDrive.forceLimit, per wheel
         public float damping;           // velocity-tracking gain == stallTorque / freeSpeed
-        public float brakeTorque;       // forceLimit while the command trails the spin (the coast)
-        public float plowTorque;        // ...and at full stick INTO the spin (the slam)
+        public float brakeTorque;       // forceLimit while the sticks are centred and a wheel still spins
+        public float gripTorque;        // one traction limit's worth of torque at this wheel — a
+                                        // diagnostic the probes print beside the force limits
         public float maxJointVelocity;  // rad/s
 
         // Diagnostics — not applied to anything, but they're what the validator asserts on and
@@ -161,17 +125,15 @@ public static class DrivetrainTuning
 
         // Braking deceleration as a multiple of g, and the friction cone it has to stay inside.
         // brakeG < tractionG is the invariant that keeps a COAST motor-limited (progressive)
-        // instead of traction-limited (an instant skid). plowG is allowed to reach tractionG —
-        // a full-stick reversal is meant to be the one input that spends everything the tyres have.
+        // instead of traction-limited (an instant skid). A full-stick reversal gets stall torque
+        // and is meant to reach the cone.
         public float brakeG;
-        public float plowG;
         public float tractionG;
     }
 
     public static Result Compute(float totalMass, float wheelRadius, int wheelCount,
         float maxWheelRpm, float friction, float gravity,
-        float driveForceTractionMultiple, float brakeTractionFraction = DefaultOmniBrakeFraction,
-        float plowTractionFraction = DefaultPlowTractionFraction)
+        float driveForceTractionMultiple, float brakeTractionFraction = DefaultOmniBrakeFraction)
     {
         // Everything is clamped rather than guarded-and-returned: a half-rigged robot must still
         // produce finite, non-negative values, because these go straight into PhysX and a NaN
@@ -185,7 +147,6 @@ public static class DrivetrainTuning
         float freeSpeed = Mathf.Max(maxWheelRpm * Mathf.PI * 2f / 60f, 0.01f); // rad/s — joint limits
         float freeSpeedDeg = Mathf.Max(maxWheelRpm * 6f, 0.01f);               // deg/s — drive targets
         float brakeFraction = Mathf.Max(brakeTractionFraction, 0f);
-        float plowFraction = Mathf.Max(plowTractionFraction, 0f);
 
         Result r = default;
         r.topSpeed = freeSpeed * radius;
@@ -208,24 +169,21 @@ public static class DrivetrainTuning
         // "feels wrong".
         r.damping = r.stallTorque / freeSpeedDeg;
 
-        // Braking quadrant: what the drive may pull when the command opposes or trails the
-        // wheel's current spin — which, with centre-stick as the brake pedal, is also every stop.
-        // Sized as a fraction of the tyres' grip so the motor, not the ground, is what limits it,
-        // and which fraction depends on what the wheels ARE — see DefaultOmniBrakeFraction. Never
-        // above stall torque: a motor cannot brake harder than it can drive.
+        // The brake: what the drive may pull when the sticks are centred and a wheel still spins —
+        // with centre-stick as the brake pedal, every stop. Sized as a fraction of the tyres' grip
+        // so the motor, not the ground, is what limits it — see DefaultOmniBrakeFraction. Never
+        // above stall torque: a motor cannot brake harder than it can drive. A held stick ramps a
+        // back-driven wheel from here to stall torque (RobotMotorController.DriveForceLimit).
         r.brakeTorque = Mathf.Min(r.tractionForce * brakeFraction * radius / wheels, r.stallTorque);
 
-        // The far end of that same ramp: what a full-stick reversal may pull. Same Min against stall
-        // torque (a motor cannot brake harder than it can drive), then a Max against brakeTorque so
-        // a plow fraction set below the brake fraction can't invert the ramp and make a slam WEAKER
-        // than letting go — the interpolation in BrakeForceLimit assumes plow >= brake.
-        r.plowTorque = Mathf.Min(r.tractionForce * plowFraction * radius / wheels, r.stallTorque);
-        r.plowTorque = Mathf.Max(r.plowTorque, r.brakeTorque);
+        // The tyre's own grip as torque at this wheel. NOT a limit anything applies — it was tried
+        // as the top of the back-driven ramp and cancelled the moving turn (see DriveForceLimit) —
+        // but the number every probe wants beside a force limit: a wheel held above it is locked.
+        r.gripTorque = Mathf.Max(Mathf.Min(r.tractionForce * radius / wheels, r.stallTorque), r.brakeTorque);
 
         r.tractionG = g > 1e-6f && mass > 0f ? r.tractionForce / (mass * g) : 0f;
         bool canExpressG = g > 1e-6f && mass > 0f && radius > 0f;
         r.brakeG = canExpressG ? r.brakeTorque * wheels / (radius * mass * g) : 0f;
-        r.plowG = canExpressG ? r.plowTorque * wheels / (radius * mass * g) : 0f;
 
         // Headroom above free speed so a coasting or back-driven wheel isn't clamped by the joint
         // limit (which would read as an invisible brake).

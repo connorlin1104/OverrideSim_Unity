@@ -458,17 +458,26 @@ public static class RobotBundleValidation
         "Dr4bBallast=5ba0a193",
         "Dr4bLift=e1c0ca0c",
         "Dr4bMoveFollower=8205b931",
+        "IgnoreFieldFloor=c8866665",
         "IgnoreRobotSelfCollision=811c9dc5",
         "IntakePull=e72f6705",
         "JointCoupler=c2cbd390",
         "MotorActuator=99f59dc3",
+        "PassiveArm=023e81f3",
         "PivotRotateFollower=d9dc14d3",
         "PneumaticActuator=4f6be775",
         "PneumaticCylinderFollower=514a5135",
         "PneumaticRig=ce2b7834",
         "PneumaticSlideFollower=d49ceb33",
         "RobotMechanisms=a9139d32",
-        "RobotMotorController=6a478539",
+        // RobotMotorController re-pinned 2026-09-05 WITHOUT a Version bump, on purpose. The drivetrain
+        // rewrite removed rollRelief/rollReliefFrequency/backDriveTractionMultiple/plowFraction/
+        // tractionBrakeFraction and added tractionPair (default None). Both directions load safely:
+        // an old bundle's dropped keys are ignored and its missing tractionPair reads None, which is
+        // what every shipped robot is. A bump would have taken every published robot offline until
+        // it was republished, for nothing. RobotBundleFormat's rule stands for changes that are NOT
+        // load-safe; this one was judged, not skipped.
+        "RobotMotorController=5df6eeb9",
     };
 
     private static void CheckScriptLayout(ValidationUtil.Checks checks)

@@ -190,6 +190,10 @@ internal static class ValidationUtil
 
     public static ArticulationBody SpawnOnBareFloor(GameObject prefab, out RobotMotorController motor)
     {
+        // NewScene destroys the previous robot without running OnDisable, so the tyre registry would
+        // otherwise carry the last robot's wheels into this one's measurement.
+        WheelTyreModel.Clear();
+
         UnityEditor.SceneManagement.EditorSceneManager.NewScene(
             UnityEditor.SceneManagement.NewSceneSetup.EmptyScene,
             UnityEditor.SceneManagement.NewSceneMode.Single);

@@ -101,8 +101,65 @@ public class RobotSetupOverviewWindow : EditorWindow
             EditorGUILayout.HelpBox("A side has fewer than 2 driven wheels, so some wheels may not spin. Select " +
                 "the missing wheel part(s) in the Hierarchy and press Add Selected Wheels.", MessageType.Warning);
 
+        DrawTractionPair(motor);
+
         if (GUILayout.Button("Add Selected Wheels to Drivetrain"))
             AddSelectedWheels(registry.gameObject);
+    }
+
+    // The one per-robot drivetrain fact the rig cannot read off the CAD: which wheels, if any, are
+    // traction wheels (see RobotMotorController.tractionPair). Written straight onto the controller —
+    // on a scene instance that is a prefab override until it is applied.
+    private static readonly string[] PairNames = { "Front", "Middle", "Rear" };
+
+    private void DrawTractionPair(RobotMotorController motor)
+    {
+        bool has = motor.tractionPair != RobotMotorController.TractionPair.None;
+        bool wantHas = EditorGUILayout.Toggle(new GUIContent("Has a pair of traction wheels",
+            "Tick if two of the drive wheels are traction wheels (rubber) rather than omnis. An all-omni " +
+            "drive slides when hit from the side and drifts through a turn; a traction pair keeps its full " +
+            "sideways grip, so a sideways hit costs something and a turn holds its line. Where a traction " +
+            "wheel differs is its sideways grip (WheelTyreModel), never the brake."), has);
+
+        RobotMotorController.TractionPair want = motor.tractionPair;
+        if (wantHas && !has) want = RobotMotorController.TractionPair.Middle;
+        if (!wantHas) want = RobotMotorController.TractionPair.None;
+        if (wantHas)
+        {
+            using (new EditorGUI.IndentLevelScope())
+            {
+                int idx = Mathf.Clamp((int)want - 1, 0, PairNames.Length - 1);
+                idx = EditorGUILayout.Popup("Which pair", idx, PairNames);
+                want = (RobotMotorController.TractionPair)(idx + 1);
+                EditorGUILayout.LabelField(DescribePair(motor, want), EditorStyles.miniLabel);
+            }
+        }
+
+        if (want != motor.tractionPair)
+        {
+            Undo.RecordObject(motor, "Traction Pair");
+            motor.tractionPair = want;
+            EditorUtility.SetDirty(motor);
+        }
+    }
+
+    // Which links the choice resolves to, from the same measurement the controller makes at Awake:
+    // front and rear come off the wheel axles, never off the root's own forward.
+    private static string DescribePair(RobotMotorController motor, RobotMotorController.TractionPair pair)
+    {
+        var wheels = new List<ArticulationBody>();
+        if (motor.leftWheels != null) foreach (ArticulationBody w in motor.leftWheels) if (w != null) wheels.Add(w);
+        int leftCount = wheels.Count;
+        if (motor.rightWheels != null) foreach (ArticulationBody w in motor.rightWheels) if (w != null) wheels.Add(w);
+        if (wheels.Count == 0) return "no wheels wired";
+        if (!RobotMotorController.MeasureDriveAxesWorld(wheels, leftCount, motor.invertLeft, motor.invertRight,
+                out _, out Vector3 forward))
+            return "cannot tell front from rear: the wheel axles do not agree";
+        bool[] flags = RobotMotorController.ResolveTractionPair(pair, wheels, leftCount, forward, out string refused);
+        if (!string.IsNullOrEmpty(refused)) return "not available — " + refused;
+        var names = new List<string>();
+        for (int i = 0; i < wheels.Count; i++) if (flags[i]) names.Add(wheels[i].name);
+        return names.Count == 0 ? "no wheels resolved" : "traction wheels: " + string.Join(" + ", names);
     }
 
     private void AddSelectedWheels(GameObject robot)

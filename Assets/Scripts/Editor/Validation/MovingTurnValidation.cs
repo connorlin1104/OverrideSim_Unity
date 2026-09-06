@@ -11,9 +11,9 @@ using UnityEngine;
 // in one case and smooth in the other. So the pass mark here is not an absolute number I would have
 // had to invent — it is the spin-from-rest, measured on the same robot moments earlier.
 //
-// WHAT IS BEING MEASURED, and why not the chassis. Every roll metric in TipOverValidation reads
-// ~zero on these robots now, because ApplyRollRelief is doing its job and holding the frame level;
-// a chassis-roll metric cannot see this and never could. What a driver calls "rough jumping" with a
+// WHAT IS BEING MEASURED, and why not the chassis. Every roll metric in TipOverValidation read
+// ~zero on these robots while a roll-relief torque held the frame level, and a chassis-roll metric
+// could not see this even without it. What a driver calls "rough jumping" with a
 // raised lift is the WHEELS breaking and regaining grip, so that is what this counts: how often
 // each wheel's spin direction reverses, and how hard the tyre is being dragged against the floor
 // (slip = the speed the tyre surface is turning at, against the speed the ground is actually going
@@ -22,20 +22,19 @@ using UnityEngine;
 //
 // WHERE TO LOOK IF THIS FAILS. MixArcade gives the TURN priority: at full throttle and full turn,
 // overflow eats the entire throttle, so both sides get the commands for a stationary spin while the
-// robot is still travelling at speed. DecideAuthority then exempts anything with the turn stick
-// held from the braking quadrant, so those wheels get full stall torque — 3x the tyres' grip — to
-// enforce a speed the robot's momentum is fighting. Both of those exist for good reasons (see their
-// comments; capping the inner wheel is what used to stop the robot turning at speed at all) and
-// neither is obviously the thing to change. The numbers below are what any change to either has to
-// answer to.
+// robot is still travelling at speed, and DriveForceLimit hands a held stick full authority to
+// enforce them. What made that rough was the TYRE — six isotropic spheres scrubbing sideways at
+// full grip — and WheelTyreModel is where that was fixed; this file is what any change to the tyre,
+// the mix or the authority rule has to answer to.
 public static class MovingTurnValidation
 {
     private const int SettleSteps = 60;
     private const int AccelSteps = 150;      // 1.5 s: enough to reach terminal speed in a straight line
     private const int TurnSteps = 200;       // 2 s of held turn, which is where the metrics come from
 
-    // A wheel reversing direction below this is stationary noise, not a wheel snatching.
-    private const float WheelRateNoiseFloor = 30f;     // deg/s
+    // A wheel reversing direction with less than this much change of speed in one step is
+    // stationary noise, not a wheel snatching: 30 deg/s per step is 2% of a 240 RPM free speed.
+    private const float WheelRateNoiseFloor = 30f;     // deg/s, per step
 
     // How much worse a moving turn is allowed to be than the same robot's spin from rest. Two is
     // generous on purpose: a moving turn genuinely does scrub more than a stationary one, because
@@ -128,9 +127,16 @@ public static class MovingTurnValidation
         return checks;
     }
 
+    // The standing reference for the reversal ratio never reads below this. A robot whose spin from
+    // rest is perfectly clean scores 0, and a ratio against 0 would demand EXACTLY zero moving
+    // reversals — one snatch in two seconds across six wheels, and the bar would call a clean turn
+    // rough. Four is a handful of sign flips, still far below any turn that is actually chattering.
+    private const float MinReversalReference = 4f;
+
     private static void Compare(GameObject prefab, Turn standing, Turn moving, List<string> failures)
     {
-        float reversals = Ratio(moving.wheelReversals, standing.wheelReversals);
+        float reversals = Ratio(moving.wheelReversals,
+            Mathf.Max(standing.wheelReversals, MinReversalReference));
         float slip = Ratio(moving.meanAbsSlip, standing.meanAbsSlip);
 
         if (reversals > MaxRoughnessMultiple || slip > MaxRoughnessMultiple)
@@ -185,8 +191,12 @@ public static class MovingTurnValidation
                 TipOverValidation.StepDriven(motor, throttleInTurn, 1f, 1);
 
                 // Recomputed each step: the robot is yawing, so a rolling direction captured before
-                // the turn would be pointing somewhere else entirely two seconds later.
-                Vector3 rollAxis = Vector3.ProjectOnPlane(root.transform.forward, Vector3.up).normalized;
+                // the turn would be pointing somewhere else entirely two seconds later. It is the
+                // DRIVE axis the controller measured off the wheel axles, not root.forward: 654V_v2
+                // and v3 drive perpendicular to their own transform.forward (see MeasureDriveAxes),
+                // so reading the root here measured the wrong component of the contact velocity on
+                // two of the four robots.
+                Vector3 rollAxis = Vector3.ProjectOnPlane(motor.DriveForwardWorld, Vector3.up).normalized;
 
                 result.peakVerticalSpeed =
                     Mathf.Max(result.peakVerticalSpeed, Mathf.Abs(root.linearVelocity.y));
@@ -207,10 +217,13 @@ public static class MovingTurnValidation
 
                     // Direction changes in the wheel's own spin. A tyre tracking its command turns
                     // steadily; one snatching at the floor keeps swapping direction.
+                    // A reversal is a sign flip with a real CHANGE of speed behind it — the floor is
+                    // compared against the change in one step, in deg/s. It used to divide the change
+                    // by the step first, so it was really 0.3 deg/s: a wheel held at zero by its drive
+                    // jittering +-1 deg/s counted as snatching a hundred times a second.
                     float spin = Spin(wheels[w]);
-                    float rate = (spin - lastSpin[w]) / ValidationUtil.StepSeconds;
                     if (i > 0 && Mathf.Sign(spin) != Mathf.Sign(lastSpin[w])
-                        && Mathf.Abs(rate) > WheelRateNoiseFloor) result.wheelReversals++;
+                        && Mathf.Abs(spin - lastSpin[w]) > WheelRateNoiseFloor) result.wheelReversals++;
                     lastSpin[w] = spin;
 
                     // Slip: how fast the tyre surface is moving against the ground under it. The
@@ -218,10 +231,9 @@ public static class MovingTurnValidation
                     // contains the robot's translation AND its yaw about that point, so nothing
                     // needs subtracting — doing it by hand would double-count the yaw.
                     //
-                    // Rolling direction comes from the ROOT, not the wheel link: the rig aligns
-                    // every wheel's local +X with robot right, so their roll axis is the robot's
-                    // forward by construction, and reading it off each wheel would let one
-                    // mis-authored link quietly change what "slip" means for that wheel alone.
+                    // Rolling direction comes from the CONTROLLER's measured drive axis, not the
+                    // wheel link: reading it off each wheel would let one mis-authored link quietly
+                    // change what "slip" means for that wheel alone.
                     float surface = spin * Mathf.Deg2Rad * radius;
                     Vector3 contact = wheels[w].transform.position - Vector3.up * radius;
                     Vector3 ground = root.GetPointVelocity(contact);

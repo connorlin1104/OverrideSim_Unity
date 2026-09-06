@@ -130,7 +130,8 @@ public class UrdfPostProcessor : EditorWindow
     // the freshly imported robot.
     public static void PostProcess(GameObject root, float scaleFactor, bool replaceColliders, string wheelNameSubstring,
         bool keepUrdfInertials = false, bool massFromGeometry = true, float defaultDensity = RobotPartClassifier.DefaultDensity,
-        bool mechanizeAllPoweredJoints = false)
+        bool mechanizeAllPoweredJoints = false,
+        RobotMotorController.TractionPair tractionPair = RobotMotorController.TractionPair.None)
     {
         if (root == null) throw new ArgumentNullException(nameof(root));
         UrdfLink[] links = root.GetComponentsInChildren<UrdfLink>(true);
@@ -393,6 +394,7 @@ public class UrdfPostProcessor : EditorWindow
         Undo.RecordObject(motor, UndoName);
         motor.leftWheels = leftWheels.ToArray();
         motor.rightWheels = rightWheels.ToArray();
+        motor.tractionPair = tractionPair;
         motor.leftJoystickAction = LoadActionReference("LeftStick");
         motor.rightJoystickAction = LoadActionReference("RightStick");
         EditorUtility.SetDirty(motor);

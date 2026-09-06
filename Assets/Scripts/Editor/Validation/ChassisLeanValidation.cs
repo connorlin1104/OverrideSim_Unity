@@ -282,10 +282,10 @@ public static class ChassisLeanValidation
                           "the forward axis it measured for itself");
 
                 // The two ways this fails are not the same failure, and saying so is the point of
-                // the check. Off the LINE is loud: the roll relief rolls about the pitch axis and
-                // cancels the front-to-back tipping it is documented to leave alone, the load
-                // transfer reads ~0 acceleration however hard the robot brakes, and the half-track
-                // is really the wheelbase. BACKWARDS down a correct line is silent: everything
+                // the check. Off the LINE is loud: the load transfer reads ~0 acceleration however
+                // hard the robot brakes, the half-track is really the wheelbase, and the tyre's
+                // lateral axis is the rolling one, so every omni wheel grips the wrong way round.
+                // BACKWARDS down a correct line is silent: everything
                 // reading these axes today flips with them and nothing moves on screen — but
                 // DriveForwardWorld is public, and the next thing to read it inherits the bug.
                 if (agreement < MinAxisAgreement)
@@ -297,9 +297,9 @@ public static class ChassisLeanValidation
                           "sign is wrong, so today's readers — which all flip with it — look fine " +
                           "and hide it; the axis is public and the next reader will not"
                         : $"'{prefab.name}' drives {off:0} deg away from the forward axis " +
-                          "MeasureDriveAxes derived from its wheels, so the roll relief rolls it " +
-                          "about the wrong axis, the load transfer reads the wrong acceleration, " +
-                          "and the half-track is really the wheelbase");
+                          "MeasureDriveAxes derived from its wheels, so the load transfer reads " +
+                          "the wrong acceleration, the half-track is really the wheelbase, and " +
+                          "the omni tyre is free in the direction it should grip");
                 }
             }
             finally { Physics.simulationMode = previousMode; }
@@ -346,10 +346,15 @@ public static class ChassisLeanValidation
             List<Vector3> leaning = SlamAReversal(prefab, 2.5f, out Slam slam);
             List<Vector3> level = SlamAReversal(prefab, 0f, out _);
             List<Vector3> control = SlamAReversal(prefab, 2.5f, out _);
+            List<Vector3> control2 = SlamAReversal(prefab, 2.5f, out _);
             float peakLean = slam.peakLeanDeg;
             tested++;
 
-            float noise = FurthestApart(leaning, control);
+            // The noise floor is the WORSE of two identical reruns. A slammed reversal skids, and a
+            // skid is not bit-deterministic run to run: one rerun read 0.000 mm against a lean-off
+            // difference of 1.383 mm on 654V_v3, and the next read 1.383 mm for both — a single
+            // control can land on a lucky pair and call ordinary noise a leak.
+            float noise = Mathf.Max(FurthestApart(leaning, control), FurthestApart(leaning, control2));
             float applied = FurthestApart(leaning, level);
             float allowed = Mathf.Max(2f * noise, RerunNoiseFloor);
 
@@ -373,11 +378,9 @@ public static class ChassisLeanValidation
                                    "full speed PERPENDICULAR to its own transform.forward, so root +Z " +
                                    "is not its driving axis. StepLoadTransfer takes longitudinal " +
                                    "acceleration as dot(velocity, forward) and therefore measures ~0 " +
-                                   "no matter how hard it brakes. The same assumption is in " +
-                                   "ApplyRollRelief, which rolls about forward — on this robot that " +
-                                   "is the PITCH axis, so the relief is cancelling exactly the " +
-                                   "front-to-back tipping it is documented to leave alone. Fix the " +
-                                   "axis (derive it from the wheels' axles), not this test."
+                                   "no matter how hard it brakes, and so does everything else that " +
+                                   "reads the drive axis. Fix the axis (derive it from the wheels' " +
+                                   "axles), not this test."
                                  : ""));
             else
                 lines.Add($"  '{prefab.name}': peak lean {peakLean:0.00} deg at {slam.peakDecel:0} " +

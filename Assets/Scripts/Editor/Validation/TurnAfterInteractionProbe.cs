@@ -71,7 +71,7 @@ public static class TurnAfterInteractionProbe
         public string label;
         public float yawDeg, pathU, meanSpeed, leftSpin, rightSpin;
         public int reversals, airborne;
-        public string gaps, contacts;
+        public string gaps, contacts, wheelSpins;
     }
 
     private static readonly MethodInfo IntakeFixedUpdate =
@@ -604,6 +604,7 @@ public static class TurnAfterInteractionProbe
         float lastYaw = root.eulerAngles.y;
         Vector3 start = root.position;
         var lastSpin = new float[r.wheels.Length];
+        var wheelSum = new float[r.wheels.Length];
         for (int w = 0; w < r.wheels.Length; w++) lastSpin[w] = WheelSpin(r.wheels[w]);
         float leftSum = 0f, rightSum = 0f, speedSum = 0f;
 
@@ -624,9 +625,17 @@ public static class TurnAfterInteractionProbe
                 if (i > 0 && Mathf.Sign(spin) != Mathf.Sign(lastSpin[w]) && Mathf.Abs(rate) > WheelRateNoiseFloor)
                     t.reversals++;
                 lastSpin[w] = spin;
+                wheelSum[w] += spin;
                 if (Array.IndexOf(r.left, r.wheels[w]) >= 0) leftSum += spin; else rightSum += spin;
             }
         }
+
+        // PER WHEEL, always. The per-side means below averaged a dead wheel away twice: one wheel at
+        // +5 deg/s beside two at +1440 reads as a healthy +960 mean.
+        var perWheel = new List<string>();
+        for (int w = 0; w < r.wheels.Length; w++)
+            perWheel.Add($"{Short(r.wheels[w].name)} {wheelSum[w] / steps:+0;-0}");
+        t.wheelSpins = string.Join(" ", perWheel);
 
         Vector3 d = root.position - start;
         t.pathU = new Vector2(d.x, d.z).magnitude;
@@ -640,8 +649,8 @@ public static class TurnAfterInteractionProbe
 
     private static string Format(Turn t)
         => $"{t.label,-44} yaw {t.yawDeg,+5:0;-0} deg  path {t.pathU,5:0.00} u  v {t.meanSpeed,4:0.0}  " +
-           $"wheel L {t.leftSpin,+6:0;-0} R {t.rightSpin,+6:0;-0} deg/s  rev {t.reversals,3}  " +
-           $"airborne {t.airborne} [{t.gaps}]  floor-contacts [{t.contacts}]";
+           $"wheel L {t.leftSpin,+6:0;-0} R {t.rightSpin,+6:0;-0} deg/s  per wheel [{t.wheelSpins}]  " +
+           $"rev {t.reversals,3}  airborne {t.airborne} [{t.gaps}]  floor-contacts [{t.contacts}]";
 
     private static float WheelSpin(ArticulationBody w)
         => w != null && w.jointVelocity.dofCount > 0 ? w.jointVelocity[0] * Mathf.Rad2Deg : 0f;

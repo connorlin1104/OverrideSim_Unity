@@ -230,8 +230,10 @@ public class RigDrivetrainArticulation
     // InvalidOperationException with a user-readable message on any precondition failure
     // (all validation happens BEFORE the first mutation, so a throw leaves the scene intact).
     // wheelNamePrefix: null uses this project's drivetrain wheel name; pass a new robot's wheel
-    // node prefix when rigging a freshly imported mesh robot.
-    public static void Rig(GameObject robot, string wheelNamePrefix = null)
+    // node prefix when rigging a freshly imported mesh robot. tractionPair: which pair of wheels,
+    // if any, are traction wheels — see RobotMotorController.tractionPair.
+    public static void Rig(GameObject robot, string wheelNamePrefix = null,
+        RobotMotorController.TractionPair tractionPair = RobotMotorController.TractionPair.None)
     {
         if (robot == null) throw new System.ArgumentNullException(nameof(robot));
 
@@ -257,7 +259,7 @@ public class RigDrivetrainArticulation
             Debug.LogWarning($"{UndoName}: expected {ExpectedWheelClusters} wheel clusters, found {clusters.Count}. " +
                              "Rigging anyway — check the drivetrain naming/geometry.", robot);
 
-        RigWithClusters(robot, clusters);
+        RigWithClusters(robot, clusters, tractionPair);
     }
 
     // Rigs a drivetrain from an explicit list of wheel parts (each part = one wheel) instead of
@@ -309,7 +311,7 @@ public class RigDrivetrainArticulation
                       "Run Rebuild Part Colliders first, then select the wheels and try again."
                     : "None of the selected parts have renderers to rig as wheels — select the wheel meshes.");
 
-        RigWithClusters(robot, clusters);
+        RigWithClusters(robot, clusters, RobotMotorController.TractionPair.None);
         return clusters.Count;
     }
 
@@ -317,7 +319,8 @@ public class RigDrivetrainArticulation
     // (split into sides by the clusters' mean X), wires the RobotMotorController, and switches to TGS.
     // Shared by Rig (name-detected clusters) and RigFromWheelParts (hand-picked wheels) so both use
     // identical, validated logic.
-    private static void RigWithClusters(GameObject robot, List<RobotPartClassifier.WheelCluster> clusters)
+    private static void RigWithClusters(GameObject robot, List<RobotPartClassifier.WheelCluster> clusters,
+        RobotMotorController.TractionPair tractionPair)
     {
         Transform wrapper = robot.transform;
 
@@ -507,6 +510,7 @@ public class RigDrivetrainArticulation
         RobotMotorController motor = Undo.AddComponent<RobotMotorController>(robot);
         motor.leftWheels = leftLinks.ToArray();
         motor.rightWheels = rightLinks.ToArray();
+        motor.tractionPair = tractionPair;
         SerializedObject motorSo = new SerializedObject(motor);
         motorSo.FindProperty("leftJoystickAction").objectReferenceValue = leftActionRef;
         motorSo.FindProperty("rightJoystickAction").objectReferenceValue = rightActionRef;
@@ -561,12 +565,9 @@ public class RigDrivetrainArticulation
             DrivetrainTuning.MeasureFriction(wheels),
             Physics.gravity.y,
             motor.driveForceTractionMultiple,
-            // The ALL-OMNI fraction, deliberately: the bake must not depend on a PlayerPrefs
-            // checkbox on whichever machine ran the tool, and brakeTorque isn't baked into the
-            // drive anyway (the forceLimit swap is a runtime decision) — this only shapes the
-            // diagnostics below.
-            motor.omniBrakeFraction,
-            motor.plowFraction);
+            // brakeTorque isn't baked into the drive (the forceLimit swap is a runtime decision) —
+            // this only shapes the diagnostics below.
+            motor.omniBrakeFraction);
 
         // Honour the per-robot escape hatch here too, or the bake and the runtime would disagree
         // for exactly the robots someone deliberately hand-tuned.
@@ -628,8 +629,7 @@ public class RigDrivetrainArticulation
            $"peak force {t.peakForce:0.} of {t.tractionForce:0.} available traction " +
            $"({(t.tractionForce > 0f ? t.peakForce / t.tractionForce : 0f):P0}), " +
            $"top speed {t.topSpeed:0.0} u/s, 95% of it in {t.secondsTo95:0.00} s, " +
-           $"coasts at {t.brakeG:0.00} g on omni wheels (a robot with traction wheels stops harder), " +
-           $"a slammed reversal plows at {t.plowG:0.00} g, " +
+           $"coasts at {t.brakeG:0.00} g when the sticks are released, " +
            $"inside a {t.tractionG:0.00} g friction cone.";
 
     // Wires already-present wheel parts into an ALREADY-rigged drivetrain: each part becomes a
