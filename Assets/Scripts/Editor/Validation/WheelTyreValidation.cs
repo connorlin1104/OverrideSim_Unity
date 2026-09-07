@@ -382,7 +382,13 @@ public static class WheelTyreValidation
     private const int PivotSteps = 150;
     private const int ArcRunUpSteps = 100;
     private const int ArcSteps = 150;
-    private const float MinPivotYawDeg = 300f;          // in 1.5 s from rest, every robot
+    // In 1.5 s from rest, every robot. Re-derived 2026-09-06 when pivotTurnRate came down from 1.0 to
+    // 0.65: 300 was set against a pivot that ran at ~350 deg/s and would now be a bar a robot could
+    // sit 10% above, which is a bar that has stopped saying anything. Connor specified ~225 deg/s and
+    // the slowest shipped robot measures 330 deg (654V_v2, 220 deg/s), so this floor is two thirds of
+    // what was asked for: a robot that cannot come 150 degrees a second round has lost its pivot,
+    // whatever the constant says.
+    private const float MinPivotYawDeg = 225f;
     private const float MinPivotGain = 1.3f;            // tyre ON over OFF: 360Rpm gains 1.44x, the 654Vs 1.6-2.5x
     private const float MinArcYawFraction = 0.4f;       // of the same robot's standing pivot yaw
     private const float MinCarriedYawDeg = 30f;         // after releasing a full pivot
@@ -457,7 +463,15 @@ public static class WheelTyreValidation
         foreach (GameObject prefab in RoboSimPaths.RobotPrefabs())
         {
             if (prefab.GetComponent<RobotMotorController>() == null) continue;
-            foreach (float turn in new[] { 0f, 0.3f })
+            // A FULL turn stick is in here because that is where the fault of 2026-09-06 lived and
+            // this case did not look: released out of a full-throttle full-turn arc, 654V_v3 read
+            // four wheels LOCKED and its whole right rail below the park gate at +0.00 s against
+            // +0.15 s for the left, while turn 0.3 and the straight release both looked perfect.
+            // Connor drives corners; a release sweep that only tests a gentle one is not testing the
+            // release. (The bare floor is enough — the field reproduces it no more clearly, and
+            // ValidationUtil is deliberately not a field rig. WheelTyreValidation's release PROBE
+            // does run on the field, ROBOSIM_PROBE_RIG=field, when a number needs chasing there.)
+            foreach (float turn in new[] { 0f, 0.3f, 1f })
             {
                 Release r = ReleaseRun(prefab, turn, tyreOn: true);
                 lines.AppendLine($"  release after full throttle{(turn > 0f ? $" + turn {turn:0.0#}" : "")}, '{prefab.name}': " +
@@ -935,30 +949,71 @@ public static class WheelTyreValidation
 
     // --- Probe: wheel release -----------------------------------------------------------------------
 
+    // WHICH RIG, and why it is a knob rather than a constant. The bare floor answered "does one wheel
+    // stop before the others in a straight line" with a flat no — every wheel crosses the park gate
+    // within a step of its rail-mates on all four robots, loaded or not. Connor drives on the FIELD,
+    // out of turns, and reports the opposite. So the rig is a variable of the experiment now:
+    //
+    //   bare   ValidationUtil.SpawnOnBareFloor + Initialise. What every earlier log was taken on;
+    //          kept bit-for-bit so those logs stay comparable.
+    //   mech   the bare floor, but with every one-time hook a play-mode robot gets (Prepare —
+    //          BakeDrive, Configure, StabilizeAnchors, IgnoreAgainstFloor). Separates "the field did
+    //          it" from "the mechanisms did it"; without this middle rig the two are confounded.
+    //   field  SampleScene as it ships: tiles, seams, tape, walls, settled pieces.
+    //
+    // ROBOSIM_PROBE_RIG=bare|mech|field|all (default bare), ROBOSIM_PROBE_TURNS=0,0.3,1 (default
+    // 0,0.3), ROBOSIM_PROBE_ROBOT=<prefab name>. A field run opens the scene per case and is slow —
+    // filter to one robot.
     private static string RunProbeRelease()
     {
         string filter = Environment.GetEnvironmentVariable("ROBOSIM_PROBE_ROBOT");
+        string rigs = Environment.GetEnvironmentVariable("ROBOSIM_PROBE_RIG");
+        if (string.IsNullOrEmpty(rigs)) rigs = "bare";
+        if (rigs == "all") rigs = "bare,mech,field";
+        string turnSpec = Environment.GetEnvironmentVariable("ROBOSIM_PROBE_TURNS");
+        if (string.IsNullOrEmpty(turnSpec)) turnSpec = "0,0.3";
+
+        var turns = new List<float>();
+        foreach (string t in turnSpec.Split(','))
+            if (float.TryParse(t.Trim(), out float v)) turns.Add(v);
+        ValidationUtil.Assert(turns.Count > 0, $"ROBOSIM_PROBE_TURNS='{turnSpec}' parsed to no turn values");
+
         var lines = new StringBuilder();
         int robots = 0;
         foreach (GameObject prefab in RoboSimPaths.RobotPrefabs())
         {
             if (prefab.GetComponent<RobotMotorController>() == null) continue;
             if (!string.IsNullOrEmpty(filter) && prefab.name != filter) continue;
-            lines.AppendLine(ProbeOne(prefab, turnDuringDrive: 0f));
-            lines.AppendLine(ProbeOne(prefab, turnDuringDrive: 0.3f));
+            foreach (string rig in rigs.Split(','))
+                foreach (float turn in turns)
+                    lines.AppendLine(ProbeOne(prefab, turn, rig.Trim()));
             robots++;
         }
         ValidationUtil.Assert(robots > 0, "no robot prefab with a RobotMotorController was found");
-        return $"Wheel Release Probe: {robots} robot(s), tyre friction " +
+        return $"Wheel Release Probe: {robots} robot(s), rig(s) {rigs}, turn(s) {turnSpec}, tyre friction " +
                $"{(WheelTyreModel.FrictionEnabled ? "ON" : "OFF")}\n{lines.ToString().TrimEnd()}";
     }
-    private static string ProbeOne(GameObject prefab, float turnDuringDrive)
+    private static string ProbeOne(GameObject prefab, float turnDuringDrive, string rig)
     {
         SimulationMode previous = Physics.simulationMode;
         try
         {
-            ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
-            motor.Initialise();
+            ArticulationBody root;
+            RobotMotorController motor;
+            float floorY;
+            if (rig == "bare")
+            {
+                root = ValidationUtil.SpawnOnBareFloor(prefab, out motor);
+                motor.Initialise();
+                floorY = 0f;   // ValidationUtil's floor is a box whose top face is y=0
+            }
+            else
+            {
+                ValidationUtil.Assert(rig == "mech" || rig == "field",
+                    $"unknown rig '{rig}' — expected bare, mech or field");
+                // Prepare() inside these already calls Initialise, along with every other one-time hook.
+                root = TurnAfterInteractionProbe.SpawnPrepared(prefab, rig == "field", out motor, out floorY);
+            }
             Physics.simulationMode = SimulationMode.Script;
             TipOverValidation.StepDriven(motor, 0f, 0f, SettleSteps);
 
@@ -984,7 +1039,7 @@ public static class WheelTyreValidation
             centroid /= Mathf.Max(1, n);
 
             var sb = new StringBuilder();
-            sb.AppendLine($"'{prefab.name}' ({(turnDuringDrive == 0f ? "straight" : $"arc, turn {turnDuringDrive:0.0#} held through the drive")}): " +
+            sb.AppendLine($"'{prefab.name}' [{rig}] ({(turnDuringDrive == 0f ? "straight" : $"arc, turn {turnDuringDrive:0.0#} held through the drive")}): " +
                           $"{n} wheels, park gate {gate:0} deg/s, weight {weight:0} " +
                           $"(even share {evenShare:0} per wheel), brakeG {tune.brakeG:0.00}");
             var header = new StringBuilder("    wheel        ");
@@ -1058,7 +1113,7 @@ public static class WheelTyreValidation
                 sb.AppendLine($"      {Short(wheels[w].name),-5} {(isLeft[w] ? 'L' : 'R')} " +
                               $"along {Along(wheels[w], centroid, fwd),+5:0.00;-0.00}  " +
                               $"load {steadyLoad[w],5:0} ({steadyLoad[w] / Mathf.Max(evenShare, 1e-3f),4:0%} of even)  " +
-                              $"gap {GapToFloor(wheels[w]) * 1000f,+4:0;-0} mm  {gated}, {locked}");
+                              $"gap {(GapToFloor(wheels[w]) - floorY) * 1000f,+4:0;-0} mm  {gated}, {locked}");
             }
             return sb.ToString().TrimEnd();
         }
@@ -1095,6 +1150,8 @@ public static class WheelTyreValidation
         => wheel != null && wheel.jointVelocity.dofCount > 0 ? wheel.jointVelocity[0] * Mathf.Rad2Deg : 0f;
 
     // Lowest point of the wheel's own sphere above the rig floor's top face (y = 0).
+    // The lowest point of a wheel's sphere in WORLD y; the caller subtracts the floor it is standing
+    // on, which is 0 on the bare rig and ~0.72 on the field.
     private static float GapToFloor(ArticulationBody wheel)
     {
         float lowest = float.PositiveInfinity;

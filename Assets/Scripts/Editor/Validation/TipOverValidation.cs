@@ -195,9 +195,10 @@ public static class TipOverValidation
     //   • The lift must be RAMPED. Driving a stage's prismatic straight to its upper limit slams
     //     600 mm in 0.2 s and throws the robot over on its own — an artefact of the harness, not the
     //     robot, which sits dead level when the lift is raised over its tuned time.
-    //   • The turn must use the robot's OWN turn authority. Full opposing differential is roughly
-    //     twice what a full turn stick actually commands, because MixArcade scales the turn by
-    //     turnRate — so testing at full differential fails a robot that plays fine.
+    //   • The turn must use the robot's OWN turn authority. Full opposing differential is several
+    //     times what a full turn stick actually commands, because TurnRateFor scales the turn by
+    //     turnRate (0.35 at full throttle) before MixArcade ever sees it — so testing at full
+    //     differential fails a robot that plays fine.
     //   • The controller has to be the thing DRIVING. Writing mixed velocities onto the wheel drives
     //     once, as this did, skips the slew, the turn exemption and the plow, and reported 0.1
     //     degrees of roll for a robot that shook through 7.4 in play.
@@ -370,10 +371,14 @@ public static class TipOverValidation
 
             // The robot has to be TRAVELLING, or "it didn't roll" is a robot that stood still.
             //
-            // Deliberately not a yaw threshold. A full-throttle turn stick is a swing turn — MixArcade
-            // holds the inside at zero at any throttle above 0.5 — so how far it comes round in 2.5 s
-            // is a statement about grip, not stability: measured 6 degrees on one robot and 128 on the
-            // same robot with its lift raised, both perfectly steady, both peak roll 0.0. Speed is what
+            // Deliberately not a yaw threshold. A full-throttle turn stick is an arc, not a spin, and
+            // how far it comes round in 2.5 s is a statement about grip, not stability: measured
+            // 6 degrees on one robot and 128 on the same robot with its lift raised, both perfectly
+            // steady, both peak roll 0.0. (It used to be a swing turn about a stopped inner rail,
+            // because the turn-priority mix commanded that rail to zero above half throttle. The
+            // proportional mix keeps it turning, so the robot carries more speed through the same
+            // stick — which is a heavier lateral load, and is why the roll bars below were
+            // re-measured rather than assumed when it changed.) Speed is what
             // loads a robot laterally, so speed is what has to be non-zero for the roll numbers below
             // to mean anything.
             ValidationUtil.Assert(result.entrySpeed > MinTurnEntrySpeed,

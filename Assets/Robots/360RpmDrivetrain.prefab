@@ -56825,7 +56825,7 @@ MonoBehaviour:
   velocityDriveDamping: 1000
   wheelRollingResistance: 0.3
   wheelSpinDamping: 0.5
-  turnRate: 0.5
+  turnRate: 0.35
   invertLeft: 0
   invertRight: 0
   solverIterations: 16

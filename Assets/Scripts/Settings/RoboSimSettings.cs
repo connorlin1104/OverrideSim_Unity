@@ -84,8 +84,10 @@ public static class DriveFeelSettings
     public const float DefaultDriveSensitivity = 1f;
 
     // Scales the turn command, on TOP of the robot's own turn rates, so 1.0 means "whatever this
-    // robot was built to do" — and since 2026-08-30 that is a FULL-SPEED pivot from rest
-    // (RobotMotorController.pivotTurnRate, 1.0) blending to the calmer 0.5 at full throttle.
+    // robot was built to do" — which is a standing pivot at RobotMotorController.pivotTurnRate (0.65,
+    // about 225 deg/s on a 654V) blending to the calmer turnRate (0.35) at full throttle. Those two
+    // came down from 1.0/0.5 on 2026-09-06: the numbers had not moved since 08-30 but the tyre
+    // underneath them had, and the same command started spinning the robot half as fast again.
     //
     // ABOVE 1 IS A STICK CURVE, NOT MORE TURN, and the old comment here had that wrong: it said 1.5
     // let "a driver who wants snappier pivots get back to the full rate", which the code never did —
@@ -93,7 +95,8 @@ public static class DriveFeelSettings
     // a full-stick turn. What 1.5 really does is make full stick arrive at two thirds of the travel,
     // partly undoing the 0.55 turn expo: the stick answers sooner, the ceiling is unchanged. That is
     // a real and useful thing for a small on-screen stick, so the ceiling stays — it just isn't what
-    // it claimed to be. 100% is now a full-speed pivot on its own.
+    // it claimed to be. 100% is a full-stick turn on its own; what that is worth in degrees per
+    // second is the robot's business, not this slider's.
     public const float MinTurnSensitivity = 0.3f;
     public const float MaxTurnSensitivity = 1.5f;
     public const float DefaultTurnSensitivity = 1f;

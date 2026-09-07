@@ -51,9 +51,12 @@ using UnityEngine;
 // and a turn hold its line. See RobotMotorController.tractionPair.
 //
 // WHAT ELSE THE CONTACT EVENT PROVIDES: each wheel's normal impulse, i.e. the load it is carrying,
-// one step old — which is what lets the drivetrain share a rail's torque by load the way a chain
-// does, instead of by wheel count. ContactPairPoint.impulse is the NORMAL impulse (PhysX does not
-// report friction per point) and nothing here relies on a friction impulse.
+// one step old. Nothing in the drivetrain uses it — splitting a rail's torque by it was built and
+// removed on 2026-09-06, for reasons worth reading before rebuilding it (RobotMotorController, above
+// the force limits). It stays because the release PROBE reports per-wheel load against the even
+// share, and that census is how the 220% / 56% / 1% split of a three-wheel rail was found at all.
+// ContactPairPoint.impulse is the NORMAL impulse (PhysX does not report friction per point) and
+// nothing here relies on a friction impulse.
 //
 // LIFETIME AND THREADS. One static registry for every robot in the scene: entries are keyed by
 // collider, so a second robot registers beside the first. The modify callback may run off the main
@@ -326,7 +329,10 @@ public static class WheelTyreModel
     }
 
     // The same, cleared on read, so a step in which no contact was reported reads as no load rather
-    // than as last step's — an airborne wheel must not keep the load it had on the floor.
+    // than as last step's — an airborne wheel must not keep the load it had on the floor. Written for
+    // a per-step consumer in the controller that was measured and removed; kept because that is the
+    // right shape for any future one, and Peek is not (it would hand an airborne wheel a stale load).
+    // Unused today — see RobotMotorController's note above the force limits before wiring it up.
     public static float ConsumeNormalImpulse(ArticulationBody wheel)
     {
         for (int i = 0; i < wheels.Count; i++)

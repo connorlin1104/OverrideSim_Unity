@@ -198,21 +198,31 @@ public static class DriveFeelValidation
 
     // --- Mixing ------------------------------------------------------------------------------
 
-    // The renormalized arcade mix: when throttle + turn ask for more than a wheel has, the
-    // THROTTLE gives way, never the turn. The old clamped mix silently threw away up to half the
-    // commanded differential at full throttle — which is what "the forward momentum doesn't allow
-    // turning" felt like: the outer wheel was already at free speed, the clamp ate the difference,
-    // and the robot ploughed straight on.
+    // The proportional arcade mix: when throttle + turn ask for more than a wheel has, BOTH give way
+    // together and neither is spent to pay for the other.
+    //
+    // WHAT THIS CHECK USED TO PIN, and why that had to go. Under the previous turn-priority mix the
+    // property asserted here was "the commanded differential survives at every throttle" — the
+    // throttle was shaved to make room and the turn always got what it asked for. That is the same
+    // fact as "at full throttle with a full turn stick the inner side is commanded to a DEAD STOP",
+    // which the authority rule then enforces at stall torque because a held stick is full authority.
+    // Connor, 2026-09-06: "the rotation overpowers the forward and just turns. The forward should be
+    // more overpowering." So the differential is deliberately no longer preserved through the corner.
+    //
+    // What replaces it is a strictly stronger statement about the DRIVER'S input rather than about
+    // one of its two components: the mix is a pure scaling. There is a single k for both sides, so
+    // the steering-to-forward BALANCE the driver asked for is what survives, and only the overall
+    // magnitude gives way. Turn priority fails this; so does clamp(throttle ± turn); so does
+    // throttle priority. It is the one of the four that is a scaling.
     private static int MixPreservesTurn()
     {
-        // Hand-computed pins. At full throttle + half turn the outer side stays at full and the
-        // inner side gives up the WHOLE differential (old mix: (1.0, 0.5) — half of it lost).
+        // Hand-computed pins. At full throttle + half turn both sides scale by 1/1.5.
         RobotMotorController.MixArcade(1f, 0.5f, out float l, out float r);
         ValidationUtil.Near(l, 1f, 1e-5f, "full throttle + half turn: outer side must hold full speed");
-        ValidationUtil.Near(r, 0f, 1e-5f, "full throttle + half turn: inner side must carry the whole differential");
+        ValidationUtil.Near(r, 1f / 3f, 1e-5f, "full throttle + half turn: inner side must keep turning, not stop dead");
 
         RobotMotorController.MixArcade(-1f, 0.5f, out l, out r);
-        ValidationUtil.Near(l, 0f, 1e-5f, "full reverse + half turn: outer side must carry the whole differential");
+        ValidationUtil.Near(l, -1f / 3f, 1e-5f, "full reverse + half turn: outer side must keep turning");
         ValidationUtil.Near(r, -1f, 1e-5f, "full reverse + half turn: inner side must hold full speed");
 
         RobotMotorController.MixArcade(1f, 0f, out l, out r);
@@ -237,38 +247,61 @@ public static class DriveFeelValidation
                 ValidationUtil.Assert(Mathf.Abs(left) <= 1f + 1e-5f && Mathf.Abs(right) <= 1f + 1e-5f,
                     $"the mix must stay inside ±1 (throttle {th}, turn {tu})");
 
-                // THE property this mix exists for: the differential survives at every throttle.
-                ValidationUtil.Near(left - right, 2f * tu, 1e-5f,
-                    $"the commanded differential must survive at every throttle (throttle {th}, turn {tu})");
+                // THE property this mix exists for: ONE scale factor for both sides, so the driver's
+                // balance of steering against forward is what survives — never one at the other's
+                // expense. Derived from the overflow, then required to explain BOTH outputs.
+                float k = 1f / Mathf.Max(1f, Mathf.Max(Mathf.Abs(th + tu), Mathf.Abs(th - tu)));
+                ValidationUtil.Near(left + right, 2f * k * th, 1e-5f,
+                    $"throttle must survive scaled by the same k as the turn (throttle {th}, turn {tu})");
+                ValidationUtil.Near(left - right, 2f * k * tu, 1e-5f,
+                    $"the differential must survive scaled by the same k as the throttle (throttle {th}, turn {tu})");
+
+                // THE FAULT THIS MIX WAS WRITTEN TO REMOVE, stated exactly so it cannot come back
+                // quietly. A side is commanded to a standstill exactly when the driver asked for one
+                // — |throttle| == |turn|, which is a pivot with drive on it — and never as a side
+                // effect of the mix making room. Under turn priority the inner side read zero at
+                // EVERY stick position past the square (throttle 1 + turn 0.5 gave it too), and that
+                // zero is what the authority rule then pinned at stall torque. A pure scaling cannot
+                // introduce a zero, which is the whole reason this mix is a scaling; both the old mix
+                // and a throttle-priority one fail this line.
+                ValidationUtil.Assert((Mathf.Abs(right) < 1e-6f) == Mathf.Approximately(th, tu),
+                    $"the right side may only be commanded to a standstill when the driver asked for " +
+                    $"one (throttle {th}, turn {tu}, right {right})");
+                ValidationUtil.Assert((Mathf.Abs(left) < 1e-6f) == Mathf.Approximately(th, -tu),
+                    $"...and the left side likewise (throttle {th}, turn {tu}, left {left})");
 
                 // Odd symmetry, or the robot turns differently left vs right.
                 RobotMotorController.MixArcade(-th, -tu, out float ml, out float mr);
                 ValidationUtil.Near(ml, -left, 1e-5f, $"mix must be odd-symmetric (throttle {th}, turn {tu})");
                 ValidationUtil.Near(mr, -right, 1e-5f, $"mix must be odd-symmetric (throttle {th}, turn {tu})");
 
-                // And throttle only gives way when it must: inside the square, it passes through.
+                // And nothing gives way until it must: inside the square, k is exactly 1.
                 if (Mathf.Abs(th) + Mathf.Abs(tu) <= 1f + 1e-5f)
                 {
                     ValidationUtil.Near(left + right, 2f * th, 1e-5f,
                         $"throttle must pass through untouched when the mix fits (throttle {th}, turn {tu})");
-                    checks++;
+                    ValidationUtil.Near(left - right, 2f * tu, 1e-5f,
+                        $"the turn must pass through untouched when the mix fits (throttle {th}, turn {tu})");
+                    checks += 2;
                 }
-                checks += 4;
+                checks += 7;
             }
         }
         return checks;
     }
 
-    // The pivot blend. Standing still the turn stick is worth pivotTurnRate of wheel speed, at
-    // full throttle turnRate, linearly between — and with the shipped 1.0 / 0.5 that turns the
-    // turn-priority mix into a plain clamped arcade drive (left = clamp(t + s), right = clamp(t - s))
-    // whenever the stick is fully over. That identity is the whole argument that a full-speed pivot
-    // and today's full-throttle turn are one drive rather than two settings, so it is pinned across
-    // the throttle range rather than at the two ends.
+    // The pivot blend. Standing still the turn stick is worth pivotTurnRate of wheel speed, at full
+    // throttle turnRate, linearly between. Both ends moved on 2026-09-06 (1.0/0.5 -> 0.65/0.35) and
+    // the mix underneath them changed with them, so what this pins moved too: it used to assert that
+    // the pair reproduced a plain clamped arcade drive at every throttle, which was true and was also
+    // the same fact as "the inner side is commanded to a dead stop at full throttle". See MixArcade.
+    // What is pinned now is the thing the blend is actually for — one continuous rate across the
+    // whole throttle range, worth more standing still than at speed, with the arc keeping most of its
+    // forward speed.
     private static int PivotBlend()
     {
-        const float pivot = RobotMotorController.DefaultPivotTurnRate;   // 1.0
-        const float moving = 0.5f;                                        // every shipped prefab's turnRate
+        const float pivot = RobotMotorController.DefaultPivotTurnRate;   // 0.65
+        const float moving = RobotMotorController.DefaultTurnRate;       // 0.35
         int checks = 0;
 
         ValidationUtil.Near(RobotMotorController.TurnRateFor(0f, pivot, moving), pivot, 1e-6f,
@@ -277,43 +310,59 @@ public static class DriveFeelValidation
             "at full throttle the moving rate applies in full");
         ValidationUtil.Near(RobotMotorController.TurnRateFor(-1f, pivot, moving), moving, 1e-6f,
             "full reverse is full throttle too — the blend reads |throttle|");
-        ValidationUtil.Near(RobotMotorController.TurnRateFor(0.5f, pivot, moving), 0.75f, 1e-6f,
-            "half throttle sits halfway between the two rates");
+        ValidationUtil.Near(RobotMotorController.TurnRateFor(0.5f, pivot, moving),
+            0.5f * (pivot + moving), 1e-6f, "half throttle sits halfway between the two rates");
         ValidationUtil.Near(RobotMotorController.TurnRateFor(2f, pivot, moving), moving, 1e-6f,
             "a throttle past 1 lands on the moving rate, never beyond it");
-        checks += 5;
+        ValidationUtil.Assert(pivot > moving,
+            "a pivot must be worth more stick than a turn at speed, or the blend has nothing to blend");
+        checks += 6;
 
-        for (int ti = -4; ti <= 4; ti++)
+        // One continuous rate across the range: monotone, no step, and never outside the two ends.
+        float previous = float.PositiveInfinity;
+        for (int ti = 0; ti <= 8; ti++)
         {
-            float t = ti * 0.25f;
-            foreach (float s in new[] { 1f, -1f })
-            {
-                RobotMotorController.MixArcade(t, s * RobotMotorController.TurnRateFor(t, pivot, moving),
-                    out float l, out float r);
-                ValidationUtil.Near(l, Mathf.Clamp(t + s, -1f, 1f), 1e-5f,
-                    $"a full turn stick must reproduce a clamped arcade drive (left, throttle {t}, turn {s})");
-                ValidationUtil.Near(r, Mathf.Clamp(t - s, -1f, 1f), 1e-5f,
-                    $"a full turn stick must reproduce a clamped arcade drive (right, throttle {t}, turn {s})");
-                checks += 2;
-            }
+            float t = ti * 0.125f;
+            float rate = RobotMotorController.TurnRateFor(t, pivot, moving);
+            ValidationUtil.Assert(rate <= previous + 1e-6f,
+                $"the turn rate must fall as the throttle rises, with no step (throttle {t})");
+            ValidationUtil.Assert(rate >= moving - 1e-6f && rate <= pivot + 1e-6f,
+                $"the turn rate must stay between the two ends (throttle {t})");
+            previous = rate;
+            checks += 2;
         }
 
-        // A pivot is a pivot: from rest the sides are equal and opposite at FULL speed — twice what
-        // the single 0.5 rate gave, which is the change this exists to make.
+        // AND THE ARC KEEPS ITS FORWARD SPEED. This is the number Connor chose on 2026-09-06 against
+        // "the rotation overpowers the forward and just turns": at full throttle with a full turn
+        // stick the robot holds about three quarters of its speed through the corner. The old
+        // turn-priority mix at turnRate 0.5 held exactly half and stopped the inner wheel dead, so
+        // the literal below is the regression, named.
+        RobotMotorController.MixArcade(1f, RobotMotorController.TurnRateFor(1f, pivot, moving),
+            out float al, out float ar);
+        ValidationUtil.Near(0.5f * (al + ar), 0.741f, 1e-3f,
+            "a full-throttle full-stick arc must keep about three quarters of its forward speed");
+        ValidationUtil.Assert(0.5f * (al + ar) > 0.5f + 1e-3f,
+            "...which is more than the half the turn-priority mix left, or nothing has changed");
+        ValidationUtil.Assert(Mathf.Abs(ar) > 1e-3f,
+            "...and the inner side must still be turning, not stopped dead");
+        checks += 3;
+
+        // A pivot is a pivot: from rest the sides are equal and opposite, and worth more than the
+        // same stick is at speed by exactly the ratio of the two rates.
         RobotMotorController.MixArcade(0f, RobotMotorController.TurnRateFor(0f, pivot, moving),
             out float pl, out float pr);
-        ValidationUtil.Near(pl, 1f, 1e-6f, "a full-stick pivot from rest runs the left side at full speed");
-        ValidationUtil.Near(pr, -1f, 1e-6f, "...and the right side at full speed the other way");
-        RobotMotorController.MixArcade(0f, moving, out float ol, out float orr);   // the old single-rate pivot
-        ValidationUtil.Near(pl - pr, 2f * (ol - orr), 1e-6f,
-            "the pivot differential is double the old single-rate pivot's");
+        ValidationUtil.Near(pl, pivot, 1e-6f, "a full-stick pivot from rest runs the left side at the pivot rate");
+        ValidationUtil.Near(pr, -pivot, 1e-6f, "...and the right side the same, the other way");
+        RobotMotorController.MixArcade(0f, moving, out float ol, out float orr);   // the same stick at speed
+        ValidationUtil.Near(pl - pr, (pivot / moving) * (ol - orr), 1e-5f,
+            "the pivot differential must be pivotTurnRate/turnRate times what the same stick gets at speed");
         checks += 3;
 
         // ...AND THE DRIVE ACTUALLY USES IT. Everything above is arithmetic on a static method, which
         // stays green if someone reverts either MixArcade call to the bare turnRate — the wiring is
         // the part that regresses silently. A controller with no wheels still runs the whole command
-        // path (the brake and the relief early-return on an empty robot), so this drives the REAL
-        // ApplyStep, through the slew, and reads back what the mix commanded.
+        // path (the brake early-returns on an empty robot), so this drives the REAL ApplyStep,
+        // through the slew, and reads back what the mix commanded.
         checks += DriveAppliesTheBlend();
 
         return checks;
@@ -326,6 +375,8 @@ public static class DriveFeelValidation
         // blend, not the flip, and pretending the flag cannot be on would make this fail on a device
         // where a driver had turned it on.
         float sign = ReverseDriveSettings.Reversed ? -1f : 1f;
+        const float pivot = RobotMotorController.DefaultPivotTurnRate;
+        const float moving = RobotMotorController.DefaultTurnRate;
 
         var go = new GameObject("PivotBlendRig");
         try
@@ -334,19 +385,19 @@ public static class DriveFeelValidation
 
             // Long enough for the turn slew (3/s) to reach full stick, held so the command settles.
             for (int i = 0; i < 100; i++) { motor.SetManualInput(0f, 1f); motor.ApplyStep(0.01f); }
-            ValidationUtil.Near(motor.LeftCommand, sign * 1f, 1e-3f,
-                "a pivot from rest must run the LEFT side at full speed — the drive is not applying " +
-                "the pivot rate, whatever TurnRateFor computes");
-            ValidationUtil.Near(motor.RightCommand, sign * -1f, 1e-3f,
-                "...and the RIGHT side at full speed the other way");
+            ValidationUtil.Near(motor.LeftCommand, sign * pivot, 1e-3f,
+                "a pivot from rest must run the LEFT side at the pivot rate — the drive is not " +
+                "applying it, whatever TurnRateFor computes");
+            ValidationUtil.Near(motor.RightCommand, sign * -pivot, 1e-3f,
+                "...and the RIGHT side the same, the other way");
 
-            // Full throttle: back to the moving rate, and to exactly the commands that shipped.
+            // Full throttle: back to the moving rate, through the proportional mix.
+            RobotMotorController.MixArcade(1f, moving, out float el, out float er);
             for (int i = 0; i < 100; i++) { motor.SetManualInput(1f, 1f); motor.ApplyStep(0.01f); }
-            ValidationUtil.Near(motor.LeftCommand, sign * 1f, 1e-3f,
-                "at full throttle the outer side must still hold full speed");
-            ValidationUtil.Near(motor.RightCommand, 0f, 1e-3f,
-                "at full throttle the inner side must still be commanded to a dead stop — the moving " +
-                "turn is meant to be bit-for-bit what it was");
+            ValidationUtil.Near(motor.LeftCommand, sign * el, 1e-3f,
+                "at full throttle the outer side must hold full speed");
+            ValidationUtil.Near(motor.RightCommand, sign * er, 1e-3f,
+                "...and the inner side must keep turning at the mix's scaled command, not stop dead");
             return 4;
         }
         finally { UnityEngine.Object.DestroyImmediate(go); }
@@ -363,15 +414,18 @@ public static class DriveFeelValidation
         // A stand-in gate, not the shipped one — this check is about WHICH SIDE of a gate each
         // case lands on, and ParkHandoff is what pins where the gate actually goes.
         const float gate = 216f, full = 1440f, brake = 10f, stall = 100f;
-        float At(float command, float spin, float stickThrow) =>
-            RobotMotorController.DriveForceLimit(command, spin, gate, stickThrow, brake, stall);
+        // chassisParked defaults TRUE so every case below reads as it did before the chassis term
+        // existed; the cases that turn it off are grouped at the end, where the term is the subject.
+        float At(float command, float spin, float stickThrow, bool chassisParked = true) =>
+            RobotMotorController.DriveForceLimit(command, spin, gate, stickThrow, brake, stall, chassisParked);
 
         // THE one that must not move: centre stick against a spinning wheel is the brake pedal, and
         // every roll-out distance in BrakeRollout assumes it pulls exactly the coast torque.
         ValidationUtil.Near(At(0f, full, 0f), brake, 1e-4f, "released at speed must pull exactly the coast torque");
         ValidationUtil.Near(At(0f, -full, 0f), brake, 1e-4f, "...at reverse speed too");
 
-        // ...and below the moving gate the wheel parks under full authority instead.
+        // ...and below the moving gate, on a robot that has also stopped, the wheel parks under full
+        // authority instead.
         ValidationUtil.Near(At(0f, 10f, 0f), stall, 1e-4f, "a stopped wheel must hold, not chatter on the brake");
 
         // Acceleration is never limited, whatever the throw.
@@ -400,12 +454,26 @@ public static class DriveFeelValidation
         // A sensitivity slider above 1 can shape a target past full stick; the ramp must saturate.
         ValidationUtil.Near(At(720f, full, 2f), stall, 1e-4f, "beyond full stick the ramp must clamp");
 
+        // THE PARKING HOLD NEEDS THE ROBOT PARKED, NOT JUST THE WHEEL (2026-09-06). A wheel that has
+        // reached zero while the chassis is still travelling is not a parked robot resisting a shove,
+        // it is a locked wheel skidding — measured on 654V_v3, wheels pinned below a tenth of their
+        // rail's spin with the chassis at 2.7-6.4 u/s. It stays on the brake ramp instead, which at
+        // centre stick is the coast torque: a hold, not a lock.
+        ValidationUtil.Near(At(0f, 10f, 0f, chassisParked: false), brake, 1e-4f,
+            "a stopped wheel on a MOVING robot must coast, not lock — the hold is for a parked robot");
+        ValidationUtil.Near(At(0f, 10f, 1f, chassisParked: false), stall, 1e-4f,
+            "...but a held stick still commands it, so full authority is the driver's to ask for");
+
+        // And the wheel gate still binds: a robot that has stopped does not park a wheel that has not.
+        ValidationUtil.Near(At(0f, full, 0f), brake, 1e-4f,
+            "a spinning wheel on a stopped robot is still on the brake — BOTH have to be below the gate");
+
         // The quadrant predicate itself, both ways round.
         ValidationUtil.Assert(RobotMotorController.BackDriven(0f, full), "commanded to a stop at speed is back-driven");
         ValidationUtil.Assert(RobotMotorController.BackDriven(-full, full), "commanded into reverse is back-driven");
         ValidationUtil.Assert(RobotMotorController.BackDriven(720f, full), "commanded slower is back-driven");
         ValidationUtil.Assert(!RobotMotorController.BackDriven(full, 720f), "commanded faster is not");
-        return 16;
+        return 19;
     }
 
     // The handoff from the brake to the parking hold. This is the check that "the end part just

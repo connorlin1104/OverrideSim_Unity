@@ -20,12 +20,18 @@ using UnityEngine;
 // past underneath it). A wheel held at a speed the robot's momentum will not let it reach is a
 // wheel that alternately locks and lets go, a hundred times a second.
 //
-// WHERE TO LOOK IF THIS FAILS. MixArcade gives the TURN priority: at full throttle and full turn,
-// overflow eats the entire throttle, so both sides get the commands for a stationary spin while the
-// robot is still travelling at speed, and DriveForceLimit hands a held stick full authority to
-// enforce them. What made that rough was the TYRE — six isotropic spheres scrubbing sideways at
-// full grip — and WheelTyreModel is where that was fixed; this file is what any change to the tyre,
-// the mix or the authority rule has to answer to.
+// WHERE TO LOOK IF THIS FAILS. A full turn stick at full throttle asks the inner rail for a speed
+// well below the one the robot's momentum is carrying it at, and DriveForceLimit hands a held stick
+// full authority to enforce that — so the inner rail is braked, hard, and that braking IS the turn.
+// Two things have been the answer before. The TYRE: six isotropic spheres scrubbing sideways at full
+// grip, fixed in WheelTyreModel. The MIX: turn priority used to pay for the turn out of the throttle
+// and command the inner rail to a literal dead stop, which turned the arc into a spin about three
+// skidding wheels; MixArcade scales both together now, so the same stick brakes the inner rail less
+// and the yaw here is roughly half what it was — smaller numbers, less slip, and by design.
+//
+// This file is what any change to the tyre, the mix or the authority rule has to answer to, and it
+// is sensitive: a load-proportional torque split was tried on 2026-09-06 and read here as 654V_v1
+// turning 0 degrees where it had turned 455. See RobotMotorController's note on why that is gone.
 public static class MovingTurnValidation
 {
     private const int SettleSteps = 60;
@@ -59,6 +65,8 @@ public static class MovingTurnValidation
         public float peakVerticalSpeed;    // the "jumping": how hard the chassis is coming off the floor
         public float yawDeg;               // ...and it still has to actually turn
         public float meanSpeed;
+        public string deadestWheel;        // the wheel that turned least, BY NAME — see Measure
+        public float deadestWheelFraction; // ...as a fraction of the wheel that turned most
     }
 
     private static string Run()
@@ -156,7 +164,8 @@ public static class MovingTurnValidation
         => lines.AppendLine(
             $"    {t.label,-24} {t.wheelReversals,4} wheel direction changes · slip mean " +
             $"{t.meanAbsSlip:0.00} peak {t.peakAbsSlip:0.00} u/s · chassis lift " +
-            $"{t.peakVerticalSpeed:0.00} u/s · turned {t.yawDeg:0} deg at {t.meanSpeed:0.0} u/s");
+            $"{t.peakVerticalSpeed:0.00} u/s · turned {t.yawDeg:0} deg at {t.meanSpeed:0.0} u/s · " +
+            $"deadest wheel {t.deadestWheel} at {t.deadestWheelFraction:0%} of the busiest");
 
     // One robot, lift raised, one held turn — either entered at speed or from a standstill.
     private static Turn Measure(GameObject prefab, string label, bool accelFirst, float throttleInTurn)
@@ -179,6 +188,7 @@ public static class MovingTurnValidation
             ArticulationBody[] wheels = RobotPhysicsValidation.FindWheels(root, out _, out _);
             float radius = DrivetrainTuning.MeasureWheelRadius(wheels);
             var lastSpin = new float[wheels.Length];
+            var spinSum = new float[wheels.Length];
             for (int w = 0; w < wheels.Length; w++) lastSpin[w] = Spin(wheels[w]);
 
             var result = new Turn { label = label };
@@ -225,6 +235,7 @@ public static class MovingTurnValidation
                     if (i > 0 && Mathf.Sign(spin) != Mathf.Sign(lastSpin[w])
                         && Mathf.Abs(spin - lastSpin[w]) > WheelRateNoiseFloor) result.wheelReversals++;
                     lastSpin[w] = spin;
+                    spinSum[w] += Mathf.Abs(spin);
 
                     // Slip: how fast the tyre surface is moving against the ground under it. The
                     // contact point's own world velocity is what the ground sees, and it already
@@ -248,6 +259,21 @@ public static class MovingTurnValidation
 
             result.meanAbsSlip = slipSamples > 0 ? slipSum / slipSamples : 0f;
             result.meanSpeed = speedSum / TurnSteps;
+
+            // PER WHEEL, ALWAYS — everything above this line is a total or a mean over all wheels,
+            // and a mean is exactly how a dead wheel hides: one wheel at +5 deg/s beside two at
+            // +1440 reads as a healthy +960. TurnAfterInteractionProbe learned this twice and says so
+            // at its own per-wheel loop; this file went on averaging anyway, and the fault Connor
+            // reported on 2026-09-06 was three wheels on one rail held at zero. So the quietest wheel
+            // is named, against the busiest, and it costs one line of output.
+            float busiest = 0f, quietest = float.PositiveInfinity;
+            for (int w = 0; w < wheels.Length; w++)
+            {
+                if (wheels[w] == null) continue;
+                busiest = Mathf.Max(busiest, spinSum[w]);
+                if (spinSum[w] < quietest) { quietest = spinSum[w]; result.deadestWheel = wheels[w].name; }
+            }
+            result.deadestWheelFraction = busiest > 1e-3f ? quietest / busiest : 1f;
             return result;
         }
         finally { Physics.simulationMode = previousMode; }

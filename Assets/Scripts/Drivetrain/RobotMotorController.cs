@@ -9,7 +9,7 @@ using UnityEngine.InputSystem;
 // so the robot's speed emerges from motor strength vs. load: it can stall against a wall, get
 // slowed by heavy pieces, and shove things with real contact forces instead of teleport-pushes.
 //
-// DRIVE FEEL. Four things shape it:
+// DRIVE FEEL. Five things shape it:
 //
 //   1. The motor curve. See DrivetrainTuning — with the old forceLimit 700 / damping 1000 the
 //      drive was a bang-bang torque source for 99.95% of every acceleration, so half stick pulled
@@ -21,8 +21,10 @@ using UnityEngine.InputSystem;
 //      feel sluggish.
 //   3. The brake. Centre stick is the brake pedal, like a car: released sticks command ZERO wheel
 //      speed under the coast torque — 0.2 of the tyres' grip, the all-omni number, which rolls a
-//      240 RPM robot on for about 0.28 m (see DrivetrainTuning) — and once a wheel is ONE
-//      BRAKE-STEP from stopped it parks under full Drive authority at target 0. The gate is derived,
+//      240 RPM robot on for about 0.28 m (see DrivetrainTuning) — and once a wheel AND THE ROBOT
+//      are ONE BRAKE-STEP from stopped it parks under full Drive authority at target 0. Both,
+//      because a wheel pinned at full motor torque while the chassis is still travelling is not a
+//      parked robot resisting a shove, it is a locked wheel skidding. The gate is derived,
 //      not pinned: a PhysX velocity drive handed stall torque deletes whatever speed is left in a
 //      single step, so a gate anywhere above one brake-step of speed is a cliff. See ParkGateDegPerSec.
 //        Note this is NOT the retired "Coast When You Let Go" checkbox coming back. That offered
@@ -45,6 +47,14 @@ using UnityEngine.InputSystem;
 //      carried at 2. The tyre is fixed at the tyre now — WheelTyreModel: an omni grips along its
 //      rolling direction and rolls freely across it — so a turn no longer has to scrub six tyres
 //      sideways at full grip, and none of those compensations has anything left to compensate.
+//
+//   5. THE MIX. Throttle and turn are combined by scaling both together when they overflow a wheel
+//      (MixArcade), so the balance the driver asked for survives and only the magnitude gives way.
+//      It replaced a turn-priority mix that paid for the turn out of the throttle, and whose corner
+//      case was the fault Connor reported on 2026-09-06: at full throttle a full turn stick
+//      commanded the inner rail to a DEAD STOP, the authority rule enforced it at stall torque, and
+//      three wheels skidded while the robot pivoted about them. "the back right wheel still goes
+//      still faster than others ... the left side would all work."
 //
 //   Tipping is front-to-back ONLY, and that is physics now rather than a torque. A slammed
 //      reversal can still put a raised lift on its nose, which is real. A sideways load meets omni
@@ -93,16 +103,17 @@ public class RobotMotorController : MonoBehaviour
              "Measured contribution is under 1% of top speed — trim, not a tuning knob.")]
     public float wheelSpinDamping = 0.5f;
     [Tooltip("How much of full wheel speed the turn stick commands while the robot is MOVING at full " +
-             "throttle. Lower = calmer turning at speed; straight-line speed is unaffected. Standing " +
-             "still the stick commands Pivot Turn Rate instead, and the two blend with the throttle.")]
+             "throttle. Lower = calmer turning at speed, and more of the throttle kept through an arc; " +
+             "straight-line speed is unaffected. Standing still the stick commands Pivot Turn Rate " +
+             "instead, and the two blend with the throttle.")]
     [Range(0.1f, 1f)]
-    public float turnRate = 0.5f;
+    public float turnRate = DefaultTurnRate;
     [Tooltip("How much of full wheel speed the turn stick commands when the robot is STANDING STILL. " +
-             "A pivot drives both sides, so at 1 both run at full speed the opposite way — which is " +
-             "what a real skid-steer does, and about twice the spin a 0.5 Turn Rate gave. Blends " +
-             "down to Turn Rate as the throttle rises, so a full-throttle turn is exactly what it was. " +
-             "With 1 here and 0.5 there, a full turn stick reproduces a plain clamped arcade drive " +
-             "at every throttle (see TurnRateFor).")]
+             "A pivot drives both sides at once, so this buys roughly twice the spin the same number " +
+             "would give at speed; it blends down to Turn Rate as the throttle rises. Raise it for a " +
+             "snappier point turn, lower it if the robot over-rotates on a short input. This is a " +
+             "COMMAND, not an outcome — how far the robot actually comes round also depends on how " +
+             "freely its wheels slide sideways (see WheelTyreModel).")]
     [Range(0.1f, 1f)]
     public float pivotTurnRate = DefaultPivotTurnRate;
     [Tooltip("Flip if the left side empirically drives backward (see sign convention in the file header).")]
@@ -263,6 +274,7 @@ public class RobotMotorController : MonoBehaviour
     private float[] wheelForceLimit = new float[0];
     private float forceLimitEpsilon;
 
+
     // WHICH WAY THIS ROBOT ACTUALLY DRIVES, in the root's own frame. Measured from the wheels in
     // Initialise; see MeasureDriveAxes for why it cannot be assumed.
     private Vector3 driveRightLocal = Vector3.right;
@@ -280,10 +292,26 @@ public class RobotMotorController : MonoBehaviour
 
     public enum TractionPair { None, Front, Middle, Rear }
 
-    // A NEW field name (2026-08-30) for the reason the Drive Feel block explains: every shipped prefab
-    // serializes turnRate 0.5, and a saved value beats a changed default. pivotTurnRate is absent from
-    // all of them, so this default reaches every robot without a prefab edit.
-    public const float DefaultPivotTurnRate = 1f;
+    // THESE DEFAULTS DO NOT REACH EVERY ROBOT — check the prefabs when you move one. A saved value
+    // beats a changed default, and the shipped prefabs are not consistent about which they serialize:
+    // turnRate is written in all four, pivotTurnRate in 654V_v2 and 654V_v3 but not in 654V_v1 or
+    // 360RpmDrivetrain. (The note that used to sit here claimed pivotTurnRate was absent from all of
+    // them; it was true when written on 08-30 and stopped being true when v2 and v3 were next saved.)
+    // Changing a constant alone therefore ships two robots on the new feel and two on the old.
+    //
+    // 0.65 / 0.35 (2026-09-06). Both came down together, and the pivot's reason is not a taste change:
+    // the command never moved, the PHYSICS underneath it did. pivotTurnRate went to 1.0 on 08-31
+    // because Connor wanted a standing pivot "much faster", and against the scrubbing isotropic tyre
+    // of the day it bought 331 deg in 1.5 s. WheelTyreModel then deleted the scrub, and the same
+    // command started producing 520 deg in the same window — "the full speed pivot is wayyy too fast",
+    // 09-06. 0.65 puts the ROBOT back where he approved it (~225 deg/s) rather than the number.
+    // 0.35 is the other half of "the forward should be more overpowering": with the proportional mix
+    // it leaves a full-throttle full-turn arc at 3/4 speed instead of half. See TurnRateFor, MixArcade.
+    public const float DefaultPivotTurnRate = 0.65f;
+
+    // Named for the same reason pivotTurnRate is: DriveFeelValidation used to hardcode 0.5 beside a
+    // field it could not see change.
+    public const float DefaultTurnRate = 0.35f;
 
     // Player prefs, snapshotted at Awake (see DriveFeelSettings for why they aren't read live).
     private float driveSensitivity = DriveFeelSettings.DefaultDriveSensitivity;
@@ -437,7 +465,11 @@ public class RobotMotorController : MonoBehaviour
         // Mirrors the bake below: every wheel leaves Awake carrying stallTorque, so that is what the
         // change tracker starts from. Half a percent of stall is the noise floor — below it a
         // difference is a drifting stick, not a decision worth a marshalled struct write.
-        forceLimitEpsilon = Mathf.Max(tuning.stallTorque * 0.005f, 1e-4f);
+        // Sized against brakeTorque, not stallTorque. It was 0.5% of stall, which is 7.5% of the
+        // brake — a fine deadband when the only two values written were "brake" and "stall", and far
+        // too coarse now that a load share moves the value continuously: the brake range would have
+        // had about thirteen distinct settings in it. See SetForceLimit, which quantises onto this.
+        forceLimitEpsilon = Mathf.Max(tuning.brakeTorque * 0.05f, 1e-4f);
         for (int i = 0; i < wheelForceLimit.Length; i++) wheelForceLimit[i] = tuning.stallTorque;
 
         // Bake the motor model into every wheel joint's X drive. Velocity drives need
@@ -862,7 +894,7 @@ public class RobotMotorController : MonoBehaviour
     // One drivetrain step: targets, slew, mix, drive, brake. Split out of FixedUpdate so an
     // edit-mode harness can step the REAL control path — SetManualInput, then ApplyStep(dt) before
     // each Physics.Simulate(dt) — instead of writing wheel drives directly and missing the slew,
-    // MixArcade's turn priority and the authority rule entirely.
+    // MixArcade's scaling and the authority rule entirely.
     //
     // Reading the sticks stays in FixedUpdate: there is no input device behind a validator, and
     // manualInput is the path a scripted routine is supposed to take anyway.
@@ -985,9 +1017,15 @@ public class RobotMotorController : MonoBehaviour
         float gravity, float dt)
     {
         if (topSpeed <= 1e-6f) return 0f;
-        float perStep = Mathf.Max(brakeG, 0f) * Mathf.Abs(gravity) * Mathf.Max(dt, 0f);
-        return Mathf.Max(fullStickDegPerSec, 0f) * Mathf.Clamp01(perStep / topSpeed);
+        return Mathf.Max(fullStickDegPerSec, 0f)
+             * Mathf.Clamp01(ParkGateSpeed(brakeG, gravity, dt) / topSpeed);
     }
+
+    // The same gate in the units the CHASSIS is measured in: the speed the brake removes in one
+    // physics step. ParkGateDegPerSec is this number scaled into wheel deg/s, so a wheel and its
+    // robot cross their gates together by construction rather than by two tunings agreeing.
+    public static float ParkGateSpeed(float brakeG, float gravity, float dt)
+        => Mathf.Max(brakeG, 0f) * Mathf.Abs(gravity) * Mathf.Max(dt, 0f);
 
     private void UpdateBrakingQuadrant(float leftDegPerSec, float rightDegPerSec, float stickThrow,
         float fullStickDegPerSec, float dt)
@@ -995,6 +1033,8 @@ public class RobotMotorController : MonoBehaviour
         if (allWheels.Length == 0) return;
         float movingDegPerSec = ParkGateDegPerSec(fullStickDegPerSec, tuning.brakeG,
             tuning.topSpeed, Physics.gravity.y, dt);
+        bool chassisParked = rootBody == null
+            || Planar(rootBody.linearVelocity).magnitude <= ParkGateSpeed(tuning.brakeG, Physics.gravity.y, dt);
 
         for (int i = 0; i < allWheels.Length; i++)
         {
@@ -1011,9 +1051,34 @@ public class RobotMotorController : MonoBehaviour
                 ? wheel.jointVelocity[0] * Mathf.Rad2Deg : 0f;
 
             SetForceLimit(i, DriveForceLimit(commandDegPerSec, spinDegPerSec, movingDegPerSec,
-                stickThrow, tuning.brakeTorque, tuning.stallTorque));
+                stickThrow, tuning.brakeTorque, tuning.stallTorque, chassisParked));
         }
     }
+
+    // SHARING A RAIL'S TORQUE BY THE LOAD EACH WHEEL CARRIES — built, measured, removed. Do not
+    // rebuild it without reading this.
+    //
+    // The reasoning was sound and the asymmetry it aimed at is real: brakeTorque is mu*m*g*f*r/N, one
+    // N-th of what it takes to stop the ROBOT, and a rigid chassis on a rail of three unevenly spaced
+    // wheels rests on two of them — 654V_v3's right rail measures 220% / 56% / 1% of the even share
+    // and repeats to the percent every run. So a wheel carrying almost nothing was being handed a
+    // robot-sized brake. WheelTyreModel.ConsumeNormalImpulse exists for this and nothing else.
+    //
+    // It cost far more than it bought. A contact impulse is a per-step quantity and it is violently
+    // noisy — the same wheel reads 0, then 699, then 244 on consecutive samples of a turn — so using
+    // it as a torque multiplier is a force limit dithering at 100 Hz. 654V_v1's moving turn went
+    // 455 -> 155 degrees, its "spinning, then throttle" case 453 -> 9, and mean slip 0.45 -> 1.85 u/s
+    // with 14 wheel direction changes where there had been none. Filtering the load onto a 0.2 s time
+    // constant recovered most of the yaw (317 / 421) but still left slip at 3.66 against 0.45: better,
+    // never as good, and still a robot sliding where it used to grip.
+    //
+    // And the fault it was built for turned out to be the parking hold instead. Once DriveForceLimit
+    // asked whether the ROBOT was parked rather than one wheel, every symptom went: 654V_v3 on the
+    // field, released out of a full turn, went from its right rail crossing the park gate at +0.00 s
+    // with four wheels LOCKED, to all six crossing together at +0.51 s with none locked. With the
+    // share removed on top of that, MovingTurnValidation is bit-for-bit the pre-change baseline.
+    // A wheel carrying no load is not, in the end, a wheel that needs less brake — it is a wheel
+    // whose contact cannot transmit the brake it is given, which the contact already handles.
 
     // --- Force limits ---------------------------------------------------------------------------
     // Same struct-swap shape as MotorActuator.EnterHold/ExitHold, including the per-wheel tracker
@@ -1025,7 +1090,14 @@ public class RobotMotorController : MonoBehaviour
 
     private void SetForceLimit(int index, float forceLimit)
     {
-        if (Mathf.Abs(wheelForceLimit[index] - forceLimit) <= forceLimitEpsilon) return;
+        // Quantise onto the gate's own grid before comparing. The gate exists so six xDrive structs
+        // are not marshalled on every one of the 100 physics steps a second; with a per-wheel load
+        // share the raw value now jitters with contact noise on every step, so without a grid it
+        // would write constantly, and with the old bare deadband a slow drift could crawl past it a
+        // hair at a time and never write at all. Rounding both sides fixes both: noise inside a
+        // bucket is free, a real change crosses one.
+        forceLimit = Mathf.Round(forceLimit / forceLimitEpsilon) * forceLimitEpsilon;
+        if (Mathf.Abs(wheelForceLimit[index] - forceLimit) < forceLimitEpsilon * 0.5f) return;
         ArticulationBody wheel = allWheels[index];
         if (wheel == null) return;
 
@@ -1089,35 +1161,64 @@ public class RobotMotorController : MonoBehaviour
     //
     // WHY IT BLENDS. Connor, 2026-08-30: "while turning while going forward and backwards is pretty
     // similar [to real life], but if the bot is still and just a rotary motion it should be much
-    // faster, cuz the drive train is using both sides to do the turning." One turnRate of 0.5 served
-    // both cases and got the pivot wrong by half: a real pivot runs both sides at full speed.
+    // faster, cuz the drive train is using both sides to do the turning." One turn rate served both
+    // cases and got the pivot wrong by half, because a pivot drives both sides against each other and
+    // a turn at speed does not. The rates have moved since (0.65 / 0.35, see DefaultPivotTurnRate) —
+    // the blend is the part that answers Connor's report, not the particular pair of numbers.
     //
-    // WHY 1.0 / 0.5 IS NOT A TUNE BUT AN IDENTITY. Feed MixArcade a full turn stick at rate
-    // 1 - 0.5|t| and its turn-priority overflow is exactly 0.5|t|, so the shaved throttle is 0.5t and
-    // the sides come out at (1, t - 1) for t >= 0 — which is precisely a plain clamped arcade drive,
-    // left = clamp(t + s), right = clamp(t - s), the mix every real VEX arcade program runs. So a
-    // full-speed pivot from rest, today's 1.0 / 0.0 at full throttle, and 1.0 / -0.5 at half throttle
-    // are one drive, not three settings. DriveFeelValidation.PivotBlend pins the identity across the
-    // whole throttle range. Below a full stick the turn-priority mix still calms the differential at
-    // speed by the moving rate, which is the part Connor said already matched the real robot.
+    // THE IDENTITY THAT USED TO BE HERE IS GONE ON PURPOSE (2026-09-06). At 1.0 / 0.5 against the
+    // turn-priority mix, a full turn stick reproduced a plain clamped arcade drive at every throttle,
+    // and that was written up as the argument that a pivot and a full-throttle turn were one drive
+    // rather than two settings. It was true, and it was also the same sentence as "at full throttle
+    // the inner side is commanded to a dead stop" — the clamp and the dead stop are one fact seen
+    // twice. MixArcade is proportional now and the rates are 0.65 / 0.35, so the identity no longer
+    // holds and nothing pins it. What is still true, and is what the identity was really standing in
+    // for, is that ONE blend covers the whole throttle range: there is no mode switch between
+    // pivoting and turning at speed, just a lerp.
     //
     // |throttle| is clamped, not trusted: a target past 1 must land on the moving rate, never beyond.
     public static float TurnRateFor(float throttle, float pivotRate, float movingRate)
         => Mathf.Lerp(pivotRate, movingRate, Mathf.Clamp01(Mathf.Abs(throttle)));
 
-    // Renormalized arcade mix with TURN priority. The naive mix clamps throttle±turn to ±1, which
-    // at full throttle hands the outer wheel a command it is already meeting and quietly eats up
-    // to half the differential — "the forward momentum doesn't allow turning", in code. Here the
-    // THROTTLE gives way instead: the differential (left - right == 2*turn) survives at every
-    // throttle, and shaving the throttle also pulls the outer wheel down off the top of the motor
-    // curve, where it actually has torque left to steer with.
+    // PROPORTIONAL arcade mix: build the two side commands, then scale BOTH down together if either
+    // has overflowed. Throttle and turn keep their ratio; neither is ever spent to pay for the other.
+    //
+    // Inside the unit square nothing overflows and this is the identity, exactly as every mix before
+    // it. What changes is the corner.
+    //
+    // WHAT THIS REPLACED, and why the replacement is not a step backwards to the mix before THAT.
+    // There have been three:
+    //   1. clamp(throttle ± turn) — the naive mix. At full throttle the outer wheel is already at
+    //      free speed, the clamp eats the difference, and up to half the commanded differential
+    //      silently disappears: "the forward momentum doesn't allow turning".
+    //   2. TURN priority — the throttle gave way instead, so the differential survived at every
+    //      throttle. It fixed (1) and introduced its own: at full throttle with a full turn stick the
+    //      overflow ate the ENTIRE throttle and the inner side was commanded to a DEAD STOP. The
+    //      authority rule then enforces that stop with stall torque, because a held stick is full
+    //      authority by design — so three wheels on the inner rail are pinned at zero and skidding
+    //      while the robot travels. Measured on 654V_v3 on the field, full throttle + full turn:
+    //      outer rail 574 deg/s, inner rail -22 deg/s under 381-478 units of load. Connor, 2026-09-06:
+    //      "the back right wheel still goes still faster than others ... the left side would all
+    //      work", and "the rotation overpowers the forward and just turns". Both are this line.
+    //   3. This. Scaling both sides keeps the inner wheel turning (0.48 rather than 0.00 at full
+    //      throttle and a full turn stick, at turnRate 0.35), so the robot arcs on six rolling wheels
+    //      instead of pivoting about a locked rail.
+    //
+    // The differential no longer survives the corner unscaled — that was (2)'s defining property and
+    // it is deliberately given up, because it is the same sentence as "the inner side stops dead".
+    // What survives instead is the RATIO: there is a single k in (0,1] with left + right == 2*k*throttle
+    // and left - right == 2*k*turn. The driver's steering-to-forward balance is what is preserved, at
+    // every stick position; only the overall scale gives way. DriveFeelValidation.MixPreservesTurn
+    // pins exactly that.
     public static void MixArcade(float throttle, float turn, out float left, out float right)
     {
         turn = Mathf.Clamp(turn, -1f, 1f);
-        float overflow = Mathf.Abs(throttle) + Mathf.Abs(turn) - 1f;
-        if (overflow > 0f) throttle = Mathf.Sign(throttle) * (Mathf.Abs(throttle) - overflow);
         left = throttle + turn;
         right = throttle - turn;
+        float peak = Mathf.Max(Mathf.Abs(left), Mathf.Abs(right));
+        if (peak <= 1f) return;
+        left /= peak;
+        right /= peak;
     }
 
     // THE AUTHORITY RULE — how much force a wheel's drive may use this step.
@@ -1142,13 +1243,22 @@ public class RobotMotorController : MonoBehaviour
     // capped where it matters and the moving turn is 329-455 degrees in 2 s. The snatch a locked
     // inner wheel makes is the tyre's business (static = dynamic friction, see WheelTyreModel).
     //
-    // Below the moving gate the wheel is stopping this step whichever authority holds it, so it
-    // takes stall torque and the parking hold — see ParkGateDegPerSec.
+    // THE PARKING HOLD IS ABOUT THE ROBOT BEING PARKED, NOT ONE WHEEL (2026-09-06). Below the moving
+    // gate a wheel is stopping this step whichever authority holds it, so handing it stall torque
+    // changes nothing a driver can feel — that is the whole argument for the hold, and it is only
+    // sound while the ROBOT is stopping too. Read per wheel it says something else: a wheel that has
+    // reached zero on a chassis still travelling at speed gets pinned at full motor torque, which is
+    // not a parked robot resisting a shove, it is a locked wheel skidding. Measured on 654V_v3 on the
+    // field, a released full-throttle turn: wheels pinned below a tenth of their rail's spin with the
+    // chassis still doing 2.7-6.4 u/s. So both have to be below the gate — the wheel in deg/s, the
+    // robot in u/s, one derivation apart (ParkGateSpeed). A stopped wheel on a moving robot stays on
+    // the brake ramp instead, which at centre stick is the coast torque: a hold, not a lock.
     public static float DriveForceLimit(float commandDegPerSec, float spinDegPerSec,
-        float movingGateDegPerSec, float stickThrow, float brakeTorque, float stallTorque)
+        float movingGateDegPerSec, float stickThrow, float brakeTorque, float stallTorque,
+        bool chassisParked)
     {
-        bool moving = Mathf.Abs(spinDegPerSec) > movingGateDegPerSec;
-        if (!moving || !BackDriven(commandDegPerSec, spinDegPerSec)) return stallTorque;
+        bool parked = chassisParked && Mathf.Abs(spinDegPerSec) <= movingGateDegPerSec;
+        if (parked || !BackDriven(commandDegPerSec, spinDegPerSec)) return stallTorque;
         return Mathf.Lerp(brakeTorque, stallTorque, Mathf.Clamp01(stickThrow));
     }
 
@@ -1168,6 +1278,10 @@ public class RobotMotorController : MonoBehaviour
         manualTurn = turn;
         manualInput = true;
     }
+
+    // Horizontal speed only: a robot settling onto its wheels after a spawn drop, or riding over a
+    // tile seam, has vertical velocity that has nothing to do with whether it is travelling.
+    private static Vector3 Planar(Vector3 v) => new Vector3(v.x, 0f, v.z);
 
     private static void ApplySide(ArticulationBody[] wheels, float degPerSec)
     {

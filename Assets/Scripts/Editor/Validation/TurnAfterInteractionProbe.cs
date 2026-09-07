@@ -351,6 +351,20 @@ public static class TurnAfterInteractionProbe
 
     // --- The play-mode robot, in edit mode --------------------------------------------------------
 
+    // Lent to other probes. The rig below is the only place in the project that puts a robot on the
+    // REAL field with every one-time hook a play-mode robot gets (Prepare), and a measurement whose
+    // answer depends on the surface — which wheel is carrying load, which is off the floor — has no
+    // business being taken anywhere else. Returns the same pair ValidationUtil.SpawnOnBareFloor does,
+    // so a caller can swap rigs on one bool.
+    internal static ArticulationBody SpawnPrepared(GameObject prefab, bool onField,
+        out RobotMotorController motor, out float floorY)
+    {
+        Rig r = onField ? BuildOnField(prefab) : Build(prefab);
+        motor = r.motor;
+        floorY = r.floorY;
+        return r.root;
+    }
+
     private static Rig Build(GameObject prefab)
     {
         var r = new Rig { prefab = prefab, floorY = BareFloorTopY, where = "bare floor" };
