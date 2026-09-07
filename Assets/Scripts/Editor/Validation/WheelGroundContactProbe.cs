@@ -75,6 +75,11 @@ public static class WheelGroundContactProbe
     // A wall or a wedged cup resists with a HORIZONTAL normal, so the normal impulse — the only
     // one PhysX reports — does capture it, keyed on the collider doing the pushing.
     private static readonly Dictionary<EntityId, Vector3> stepBlock = new Dictionary<EntityId, Vector3>();
+    // (link, what it touched, impulse) for this step. A claw resting on the tiles and a claw
+    // holding a cup deliver the SAME vertical load; only the other collider's identity separates
+    // them, so the name is the whole point of this list.
+    private static readonly List<(int link, EntityId world, Vector3 impulse)> stepPairs =
+        new List<(int, EntityId, Vector3)>();
     private static bool[] stepTouching = Array.Empty<bool>();
     private static bool subscribed;
 
@@ -83,6 +88,7 @@ public static class WheelGroundContactProbe
         Array.Clear(stepImpulse, 0, stepImpulse.Length);
         Array.Clear(stepTouching, 0, stepTouching.Length);
         stepBlock.Clear();
+        stepPairs.Clear();
 
         for (int h = 0; h < headers.Length; h++)
         {
@@ -108,6 +114,7 @@ public static class WheelGroundContactProbe
                 stepTouching[link] = true;
 
                 EntityId world = aRobot ? pair.otherColliderEntityId : pair.colliderEntityId;
+                stepPairs.Add((link, world, onRobot));
                 stepBlock.TryGetValue(world, out Vector3 acc);
                 stepBlock[world] = acc + onRobot;
             }
@@ -205,6 +212,7 @@ public static class WheelGroundContactProbe
             int sampled = 0;
             float wheelSupportSum = 0f, otherTotalSum = 0f;
             var blockSum = new Dictionary<EntityId, float>();   // horizontal reaction, by pusher
+            var carriedBy = new Dictionary<int, Dictionary<EntityId, float>>();  // link -> what held it up
 
             // push  = the NET forward force the wheels put into the ground, in g. This is the
             //         drivetrain's actual output, and the number "the drive train feels weak" is
@@ -275,6 +283,16 @@ public static class WheelGroundContactProbe
                         otherSupportSum[i] += load;
                     }
 
+                    foreach ((int link, EntityId world, Vector3 impulse) in stepPairs)
+                    {
+                        float up = impulse.y / dt;
+                        if (up <= 0f) continue;
+                        if (!carriedBy.TryGetValue(link, out Dictionary<EntityId, float> byWorld))
+                            carriedBy[link] = byWorld = new Dictionary<EntityId, float>();
+                        byWorld.TryGetValue(world, out float prior);
+                        byWorld[world] = prior + up;
+                    }
+
                     // What the WORLD is holding the robot back with. A robot stalled against a
                     // wall reads a large held; a robot that has simply run out of grip reads ~0.
                     float held = 0f;
@@ -317,11 +335,11 @@ public static class WheelGroundContactProbe
             }
 
             // Where the weight goes when it does not go through a wheel.
-            var carriers = new List<KeyValuePair<string, float>>();
+            var carriers = new List<(string Key, float Value, int Index)>();
             for (int i = 0; i < links.Length; i++)
             {
                 if (Array.IndexOf(wheels, links[i]) >= 0 || otherSupportSum[i] / sampled < evenShare * 0.01f) continue;
-                carriers.Add(new KeyValuePair<string, float>(links[i].name, otherSupportSum[i] / sampled));
+                carriers.Add((links[i].name, otherSupportSum[i] / sampled, i));
             }
             carriers.Sort((x, y) => y.Value.CompareTo(x.Value));
 
@@ -341,9 +359,22 @@ public static class WheelGroundContactProbe
             if (carriers.Count == 0) sb.Append("       Nothing but the wheels ever took the robot's weight.");
             else
             {
-                sb.Append("       Also load-bearing: ");
+                sb.AppendLine("       Also load-bearing:");
                 for (int i = 0; i < carriers.Count && i < 5; i++)
-                    sb.Append($"{carriers[i].Key} {carriers[i].Value / evenShare:0%} of an even share; ");
+                {
+                    sb.Append($"         {carriers[i].Key} {carriers[i].Value / evenShare:0%} of an even " +
+                              "share, resting on ");
+                    if (!carriedBy.TryGetValue(carriers[i].Index, out Dictionary<EntityId, float> byWorld))
+                    { sb.AppendLine("?"); continue; }
+                    var on = new List<KeyValuePair<string, float>>();
+                    foreach (KeyValuePair<EntityId, float> kv in byWorld)
+                        on.Add(new KeyValuePair<string, float>(
+                            nameByCollider.TryGetValue(kv.Key, out string n) ? n : "?", kv.Value));
+                    on.Sort((x, y) => y.Value.CompareTo(x.Value));
+                    for (int k = 0; k < on.Count && k < 3; k++)
+                        sb.Append($"{on[k].Key} ({on[k].Value / Mathf.Max(carriers[i].Value * sampled, 1e-3f):0%}) ");
+                    sb.AppendLine();
+                }
             }
             sb.AppendLine();
             if (blockers.Count == 0)
