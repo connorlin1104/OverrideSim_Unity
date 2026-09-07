@@ -36,6 +36,27 @@ using UnityEngine;
 // Nothing asserts here on purpose: this reports. Assertions that come out of it live in
 // DrivetrainRigValidation / WheelTyreValidation.
 //
+// WHAT THIS PROBE ESTABLISHED, 2026-09-07 — read before trying to "fix" a dead wheel.
+// Connor: "it does seem to self fix to 2 wheels each side working, but the first minute its 2 from
+// one side and later on, the right side one of them would fix while the left side one would break."
+// True, reproduced, and NOT the field: on a BARE FLAT FLOOR with nothing else touching the robot and
+// closure at exactly 100%, the middle wheel of a rail carried nothing at all — 654V_v2 read
+// 231/67/0 down the left rail and 242/60/0 down the right, 654V_v3's right rail 61/221/0.
+//
+// Three coplanar wheels on a rigid rail is a statically INDETERMINATE contact set: two of them hold
+// the rail up, so the equilibrium equations have a whole family of solutions and the solver is free
+// to pick any one. It picks the extremes, differently on each rail, and on the field it drifts
+// between solutions — which is the trade Connor describes, exactly. A real rigid six-wheel robot has
+// the same problem; that is what drop centres and suspension are for. It costs nothing in
+// straight-line grip (the weight is still on the wheels) but it does cost grip in a TURN, because
+// the tyre's mu is keyed on lateral slip and the rail's end wheels are the ones that slip most.
+//
+// Contact-level compliance was built and REVERTED — see [[robosim-wheel-tyre-model]] for the two
+// traps, in short: SetSeparation gives the right MEAN share but only by hunting in and out of
+// contact (which broke the parked-shove hold and then roll-out), and SetMaxImpulse cannot be
+// measured with this probe at all, because Physics.ContactEvent reports the impulse PhysX COMPUTED,
+// not the one the clamp allowed. Real suspension travel is the honest fix and it is a rig change.
+//
 // ROBOSIM_PROBE_RIG=field|bare|both (default field)   ROBOSIM_PROBE_ROBOT=<prefab name filter>
 public static class WheelGroundContactProbe
 {
@@ -317,12 +338,24 @@ public static class WheelGroundContactProbe
 
                     if (sampled % timelineEvery == 0)
                     {
+                        // Connor, 2026-09-07: "it does seem to self fix to 2 wheels each side
+                        // working ... later on, the right side one of them would fix while the left
+                        // side one would break." A COUNT cannot show a TRADE — 4/6 reads the same
+                        // whichever two are dead. The mask can: one character per wheel in rail
+                        // order, '#' carrying load, '.' below the dead threshold.
                         int loaded = 0;
+                        var maskL = new StringBuilder();
+                        var maskR = new StringBuilder();
                         for (int w = 0; w < wheels.Length; w++)
-                            if (stepImpulse[indexOfLink[wheels[w]]].y / dt >= evenShare * DeadLoadFraction)
-                                loaded++;
+                        {
+                            bool live = stepImpulse[indexOfLink[wheels[w]]].y / dt
+                                        >= evenShare * DeadLoadFraction;
+                            if (live) loaded++;
+                            (isLeft[w] ? maskL : maskR).Append(live ? '#' : '.');
+                        }
                         timeline.Add($"{sampled * dt,5:0.0}s {phase.name,-10} " +
                                      $"loaded {loaded}/{wheels.Length}  " +
+                                     $"L {maskL} R {maskR}  " +
                                      $"tilt {Vector3.Angle(root.transform.up, Vector3.up),4:0.0} deg  " +
                                      $"height {root.transform.position.y,6:0.00}");
                     }
@@ -359,7 +392,12 @@ public static class WheelGroundContactProbe
             if (laps > 1)
             {
                 sb.AppendLine($"    ({laps} laps; the phase table above is lap 1 only)");
+                var legendL = new StringBuilder();
+                var legendR = new StringBuilder();
+                for (int w = 0; w < wheels.Length; w++)
+                    (isLeft[w] ? legendL : legendR).Append(Short(wheels[w].name) + " ");
                 sb.AppendLine("    timeline — wheels carrying load, every 0.5 s:");
+                sb.AppendLine($"      mask order:  L {legendL}  R {legendR}");
                 foreach (string t in timeline) sb.AppendLine("      " + t);
             }
 
@@ -369,7 +407,9 @@ public static class WheelGroundContactProbe
             for (int w = 0; w < wheels.Length; w++)
             {
                 string air = worstAirRun[w] == 0 ? "never left the ground"
-                    : $"off the ground for up to {worstAirRun[w] * dt:0.00} s (gap {worstAirGap[w] * 1000f:0} mm)";
+                    // 100, not 1000: the world is 10 units to the METRE (gravity 98, and an 11 kg
+                    // robot weighs 1077), so a unit is 100 mm. This read 10x high until 2026-09-07.
+                    : $"off the ground for up to {worstAirRun[w] * dt:0.00} s (gap {worstAirGap[w] * 100f:0} mm)";
                 sb.AppendLine($"      {Short(wheels[w].name),-6} {(isLeft[w] ? 'L' : 'R')}  " +
                               $"touching {(float)touchSteps[w] / sampled,4:0%} of steps  " +
                               $"mean load {loadSum[w] / sampled / evenShare,5:0%} of even  " +
