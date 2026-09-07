@@ -542,6 +542,9 @@ public static class TurnAfterInteractionProbe
             s.IgnoreAgainstRobot();
         foreach (IgnoreFieldFloor f in r.root.GetComponentsInChildren<IgnoreFieldFloor>(true))
             f.IgnoreAgainstFloor();
+        NonSupportingLinkModel.Clear();   // edit-mode NewScene destroys robots without OnDisable
+        foreach (NonSupportingLink n in r.root.GetComponentsInChildren<NonSupportingLink>(true))
+            n.RegisterNow();
         r.mechs = r.root.GetComponent<RobotMechanisms>();
 
         r.wheels = RobotPhysicsValidation.FindWheels(r.root, out r.left, out r.right);

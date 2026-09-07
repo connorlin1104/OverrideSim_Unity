@@ -63,6 +63,17 @@ public static class WheelGroundContactProbe
         new Phase { name = "brake",      throttle =  0f, turn =  0f,   steps =  50 },
     };
 
+    // Connor, 2026-09-06: "the drivetrain just breaks after a while. Half the wheels cease
+    // touching the ground." A ten-second run cannot tell a fault that CREEPS IN (mechanisms
+    // drifting, a joint walking out of pose, the robot slowly climbing something) from one that is
+    // TRIGGERED and recovers. ROBOSIM_PROBE_LAPS repeats the match; the timeline below prints how
+    // many wheels are carrying load over time, so the shape of the failure is visible.
+    private static int Laps()
+    {
+        string s = Environment.GetEnvironmentVariable("ROBOSIM_PROBE_LAPS");
+        return int.TryParse(s, out int n) && n > 0 ? n : 1;
+    }
+
     [MenuItem("Tools/RoboSim/Validate/Probes/Wheel Ground Contact", false, 72)]
     public static void Probe() => ValidationUtil.RunInteractive("Wheel Ground Contact", Run);
 
@@ -197,6 +208,12 @@ public static class WheelGroundContactProbe
             float evenShare = weight / Mathf.Max(wheels.Length, 1);
             float dt = ValidationUtil.StepSeconds;
 
+            // A component whose whole effect is a contact that never happens is invisible until
+            // something climbs, so print the wiring: 0 registered means it never ran.
+            NonSupportingLinkModel.CollectDiagnostics = true;
+            NonSupportingLinkModel.ResetCounters();
+            sb.AppendLine($"    [non-supporting links: {NonSupportingLinkModel.RegisteredColliderCount} " +
+                          $"colliders registered{(NonSupportingLinkModel.Disabled ? ", DISABLED by env" : "")}]");
             sb.AppendLine($"'{prefab.name}' on the {(onField ? "field" : "bare floor")}: " +
                           $"{left.Length} left / {wheels.Length - left.Length} right wheels, " +
                           $"{mass:0.0} kg, weight {weight:0} ({evenShare:0} per wheel if shared evenly)");
@@ -232,6 +249,11 @@ public static class WheelGroundContactProbe
             //         exactly what this column is here to expose.
             sb.AppendLine("    phase        travel  speed  down  thru wheels  accel(g)  grip(g)  held(g)   mu   " +
                           "per wheel: load as % of an even share");
+            int laps = Laps();
+            var timeline = new List<string>();
+            int timelineEvery = Mathf.Max(1, Mathf.RoundToInt(0.5f / dt));
+
+            for (int lap = 0; lap < laps; lap++)
             foreach (Phase phase in Match)
             {
                 int phaseTouch = 0, phaseSteps = 0;
@@ -293,6 +315,18 @@ public static class WheelGroundContactProbe
                         byWorld[world] = prior + up;
                     }
 
+                    if (sampled % timelineEvery == 0)
+                    {
+                        int loaded = 0;
+                        for (int w = 0; w < wheels.Length; w++)
+                            if (stepImpulse[indexOfLink[wheels[w]]].y / dt >= evenShare * DeadLoadFraction)
+                                loaded++;
+                        timeline.Add($"{sampled * dt,5:0.0}s {phase.name,-10} " +
+                                     $"loaded {loaded}/{wheels.Length}  " +
+                                     $"tilt {Vector3.Angle(root.transform.up, Vector3.up),4:0.0} deg  " +
+                                     $"height {root.transform.position.y,6:0.00}");
+                    }
+
                     // What the WORLD is holding the robot back with. A robot stalled against a
                     // wall reads a large held; a robot that has simply run out of grip reads ~0.
                     float held = 0f;
@@ -320,9 +354,17 @@ public static class WheelGroundContactProbe
                     $"{phaseMu / (phaseSteps * wheels.Length),5:0.00}  ");
                 for (int w = 0; w < wheels.Length; w++)
                     row.Append($"{phaseLoad[w] / phaseSteps / evenShare,5:0%} ");
-                sb.AppendLine(row.ToString());
+                if (lap == 0) sb.AppendLine(row.ToString());
+            }
+            if (laps > 1)
+            {
+                sb.AppendLine($"    ({laps} laps; the phase table above is lap 1 only)");
+                sb.AppendLine("    timeline — wheels carrying load, every 0.5 s:");
+                foreach (string t in timeline) sb.AppendLine("      " + t);
             }
 
+            sb.AppendLine($"    non-supporting contacts suppressed: {NonSupportingLinkModel.SuppressedContacts}");
+            sb.AppendLine($"    {NonSupportingLinkModel.ConeHistogram()}");
             sb.AppendLine("    per wheel over the whole run:");
             for (int w = 0; w < wheels.Length; w++)
             {
@@ -344,6 +386,12 @@ public static class WheelGroundContactProbe
             carriers.Sort((x, y) => y.Value.CompareTo(x.Value));
 
             float total = Mathf.Max(wheelSupportSum + otherTotalSum, 1e-3f);
+            // HONESTY CHECK. Everything holding the robot up must add to its weight. If this reads
+            // far above 100% the reported impulses are ones PhysX COMPUTED but did not apply, and
+            // every "carried by" number below is inflated — which is exactly what contact
+            // modification does to a probe that measures support from contact impulses.
+            sb.AppendLine($"    reported support / weight: {total / sampled / weight:0%} " +
+                          "(100% = the accounting is closed; well above = impulses were clamped away)");
             sb.AppendLine($"    -> the drive wheels carried {wheelSupportSum / total:0%} of the support the " +
                           $"robot got from the world; {otherTotalSum / total:0%} went through something else.");
             var blockers = new List<KeyValuePair<string, float>>();

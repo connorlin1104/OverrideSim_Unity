@@ -137272,6 +137272,7 @@ GameObject:
   - component: {fileID: 732050773773602170}
   - component: {fileID: 3871156690346766074}
   - component: {fileID: 6176460363852638692}
+  - component: {fileID: 2586560270018548847}
   m_Layer: 0
   m_Name: IntakeMech
   m_TagString: Player
@@ -139641,3 +139642,15 @@ Transform:
   - {fileID: 4277024928815987757}
   m_Father: {fileID: 3956449010644705526}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2586560270018548847
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9027989593267430507}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fae4cd305eafe46f388843d9a425fcd6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::NonSupportingLink

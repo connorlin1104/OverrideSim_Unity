@@ -463,6 +463,12 @@ public static class RobotBundleValidation
         "IntakePull=e72f6705",
         "JointCoupler=c2cbd390",
         "MotorActuator=99f59dc3",
+        // Added 2026-09-06 with NO Version bump, and the validator agreed: this is a script ADDED
+        // to a robot, not a script whose fields moved. An old bundle simply has no NonSupportingLink
+        // and behaves exactly as it did; a new one gains a component an old client ignores. Nothing
+        // is stale, so nothing goes offline. Contrast the RobotMotorController note below, which
+        // was a judged exception rather than a structurally safe one.
+        "NonSupportingLink=811c9dc5",
         "PassiveArm=023e81f3",
         "PivotRotateFollower=d9dc14d3",
         "PneumaticActuator=4f6be775",
