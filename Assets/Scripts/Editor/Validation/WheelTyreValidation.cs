@@ -47,7 +47,34 @@ public static class WheelTyreValidation
     private const float PushWeightFraction = 0.5f;
     private const int PushSteps = 50;
     private const float MinOmniSlide = 1f;     // u, with the tyre on
-    private const float MaxGrippedSlide = 0.2f; // u, with it off — the same push, resisted at 0.8
+    private const float MaxGrippedSlide = 0.2f; // u, a push from BEHIND with the tyre on
+
+    // THE BOX IS AN IMPACT, and how far an impact shoves a robot is not a property of its grip. A
+    // free body of the robot's own mass crosses the 0.35 u gap under half a weight of force and
+    // arrives at about 5.9 u/s, so the peak it delivers is 1.2 to 4.0 weights depending on how the
+    // two bodies happen to meet — outside the friction cone either way, on every robot. This case
+    // used to cap the tyre-OFF slide at 0.2 u, which was really a pin on how hard the box happened
+    // to land: measured 2026-09-07 it reads 0.00-0.02 u on three robots and 0.09-0.43 on 654V_v2,
+    // whose own geometry puts the box further out and lets it arrive at 4.0 weights. What the spike
+    // actually claims is that the two arms are SEPARATED, so that is what is asserted now, and the
+    // absolute statement about grip is made by the breakaway below where it belongs. Measured
+    // separations: 5.6x (654V_v2) and 119x to 857x on the other three.
+    private const float MinShoveSeparation = 3f;      // tyre ON slide over tyre OFF
+
+    // THE BREAKAWAY, which is the absolute one. WheelPhysics is static 0.9 / dynamic 0.8 and the
+    // rig floor 0.6 / 0.6, combined MAXIMUM, so a robot must hold a steady lateral force up to
+    // about 0.9 of its own weight and must NOT hold much past it. Both ends are asserted: the low
+    // one catches a robot that has lost its grip, and the high one catches a robot that has become
+    // immovable, which is a real failure this rig has actually produced — before the droop links
+    // the wheels rested two-of-three per rail and none of the four robots could be moved AT ALL by
+    // a ramp to 1.5 of its weight. Measured with the links in: 0.68 (654V_v2), 0.82 (v3), 0.85
+    // (v1), 0.88 (360Rpm).
+    private const float MinBreakawayFraction = 0.5f;  // of the robot's own weight
+    private const float MaxBreakawayFraction = 1.2f;
+
+    // Once it IS sliding, the tyre is the whole difference: same breakaway (there is no lateral
+    // motion yet, so the tyre has not engaged), then three times the distance. Measured 2.9x-3.3x.
+    private const float MinTyreSlideRatio = 2f;
 
     // What a settled manoeuvre may do, per second and per step, in the things a driver can feel: a
     // wheel snatching (spin sign flips with a real change of speed behind them, MovingTurnValidation's
@@ -78,6 +105,11 @@ public static class WheelTyreValidation
 
     public static void RunBatchProbeTrace() => ValidationUtil.RunBatch("Wheel Tyre Trace", RunProbeTrace);
 
+    [MenuItem("Tools/RoboSim/Validate/Probe Sideways Shove (slide and breakaway)", false, 62)]
+    public static void ProbeShove() => ValidationUtil.RunInteractive("Sideways Shove", RunProbeShove);
+
+    public static void RunBatchProbeShove() => ValidationUtil.RunBatch("Sideways Shove", RunProbeShove);
+
     private static string Run()
     {
         bool previous = WheelTyreModel.FrictionEnabled;
@@ -88,6 +120,7 @@ public static class WheelTyreValidation
             checks += ContactModificationReachesTheWheels(lines, out float omniSlide);
             checks += AForwardPushIsHeld(lines);
             checks += ATractionPairResistsTheShove(lines, omniSlide);
+            checks += ALateralPushBreaksAwayAtTheFrictionCone(lines);
             checks += TheTractionPairResolvesByDriveAxis(lines);
             checks += TheStandingPivotIsFaster(lines);
             checks += TheMovingArcTurns(lines);
@@ -111,11 +144,12 @@ public static class WheelTyreValidation
         lines.AppendLine($"  sustained sideways push, '{prefab.name}': tyre ON slid {on:0.00} u ({onDetail}); " +
                          $"tyre OFF slid {off:0.00} u ({offDetail})");
 
-        ValidationUtil.Assert(off <= MaxGrippedSlide,
-            $"'{prefab.name}' slid {off:0.00} u under a push of {PushWeightFraction:0.0#} of its weight with the " +
-            $"tyre OFF, more than {MaxGrippedSlide:0.0#} — so the push is one the isotropic wheels cannot " +
-            "resist either, and a slide with the tyre on would prove nothing. Check the pusher's force and " +
-            $"that the robot is standing on the rig floor. ({offDetail})");
+        ValidationUtil.Assert(on >= off * MinShoveSeparation,
+            $"'{prefab.name}' slid {on:0.00} u with the tyre on against {off:0.00} u without, under " +
+            $"{MinShoveSeparation:0.0#}x — the two arms are not separated, so a slide with the tyre on proves " +
+            "nothing. Either the tyre is not reaching the solver or the isotropic robot is being shoved just " +
+            "as far. Run Probe Sideways Shove: the breakaway number there separates those two, because it is " +
+            $"a grip measurement and this one is an impact. ({onDetail}; tyre OFF: {offDetail})");
         ValidationUtil.Assert(on >= MinOmniSlide,
             $"'{prefab.name}' slid only {on:0.00} u under the same push with the tyre ON (needs " +
             $"{MinOmniSlide:0.0#}). Either Physics.ContactModifyEvent is not firing for the wheel colliders " +
@@ -309,6 +343,166 @@ public static class WheelTyreValidation
             $"'{prefab.name}' rolled {roll:0.0} deg under a sideways push with a traction pair — nothing " +
             "sideways may lay this robot over, traction wheels or not.");
         return 2;
+    }
+
+    private const int BreakawaySteps = 300;             // 3 s
+    private const float BreakawayRampPerSecond = 0.5f;  // of the robot's weight, per second: 0..1.5
+    private const float BreakawayTravel = 0.05f;        // u — 5 mm, clear of any settling creep
+
+    // THE STATIC HALF OF THE SHOVE. Ramp a lateral force at the centre of mass and report the
+    // fraction of the robot's own weight that was on it the moment the robot had moved 5 mm
+    // sideways. That is the friction cone itself: the floor is 0.6 and the wheels 0.8, combined
+    // MAXIMUM, so an isotropic robot must hold until about 0.8 of its weight and an omni one must
+    // let go far earlier. It is worth measuring separately from the box because the box is an
+    // IMPACT — a free body of the robot's own mass crosses a 0.35 u gap under half a weight of
+    // force and arrives at about 5.9 u/s, delivering a peak of several weights — so how far the box
+    // shoves the robot is a dynamic answer that moves whenever the contact set does, while this one
+    // does not.
+    private static float LateralBreakaway(GameObject prefab, bool tyreOn, out string detail)
+        => LateralBreakaway(prefab, tyreOn, out detail, out _);
+
+    private static float LateralBreakaway(GameObject prefab, bool tyreOn, out string detail, out float travel)
+    {
+        SimulationMode previous = Physics.simulationMode;
+        try
+        {
+            WheelTyreModel.FrictionEnabled = tyreOn;
+            ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
+            motor.Initialise();
+            Physics.simulationMode = SimulationMode.Script;
+            TipOverValidation.StepDriven(motor, 0f, 0f, SettleSteps);
+
+            ArticulationBody[] bodies = root.GetComponentsInChildren<ArticulationBody>(true);
+            float mass = DrivetrainTuning.MeasureTotalMass(root);
+            float weight = mass * Mathf.Abs(Physics.gravity.y);
+            Vector3 push = -Vector3.ProjectOnPlane(motor.DriveRightWorld, Vector3.up).normalized;
+            Vector3 start = Com(bodies);
+            float dt = ValidationUtil.StepSeconds;
+            float broke = -1f, fraction = 0f, moved = 0f, roll = 0f;
+            for (int i = 0; i < BreakawaySteps; i++)
+            {
+                fraction = BreakawayRampPerSecond * (i * dt);
+                root.AddForceAtPosition(push * (fraction * weight), Com(bodies), ForceMode.Force);
+                TipOverValidation.StepDriven(motor, 0f, 0f, 1);
+                moved = Vector3.Dot(Com(bodies) - start, push);
+                roll = Mathf.Max(roll, Vector3.Angle(root.transform.up, Vector3.up));
+                if (broke < 0f && moved > BreakawayTravel) broke = fraction;
+            }
+            travel = moved;
+            detail = broke >= 0f
+                ? $"broke away at {broke:0.00} of its weight ({moved:0.00} u by {fraction:0.00}, rolled {roll:0.0} deg)"
+                : $"never broke away: {moved:0.00} u under a ramp to {fraction:0.00} of its weight";
+            return broke >= 0f ? broke : float.PositiveInfinity;
+        }
+        finally { Physics.simulationMode = previous; }
+    }
+
+    // Does the robot ever read as PARKED standing still? The hold that resists a shove from rest is
+    // gated on the ROOT's planar speed against ParkGateSpeed, and a chassis on springs is never
+    // perfectly still. If the residual sits above the gate the hold never arms, every wheel is on
+    // the coast brake instead of stall torque, and a push that three robots hold rolls the fourth
+    // away. Reports the settled root speed against its own gate, with no push applied at all.
+    private static string ParkedAtRest(GameObject prefab)
+    {
+        SimulationMode previous = Physics.simulationMode;
+        try
+        {
+            WheelTyreModel.FrictionEnabled = true;
+            ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
+            motor.Initialise();
+            Physics.simulationMode = SimulationMode.Script;
+            TipOverValidation.StepDriven(motor, 0f, 0f, SettleSteps);
+
+            float gate = RobotMotorController.ParkGateSpeed(
+                motor.Tuning.brakeG, Physics.gravity.y, ValidationUtil.StepSeconds);
+            float worst = 0f, sum = 0f;
+            int parked = 0, samples = 0;
+            for (int i = 0; i < SettleSteps; i++)
+            {
+                TipOverValidation.StepDriven(motor, 0f, 0f, 1);
+                Vector3 v = root.linearVelocity;
+                float planar = new Vector2(v.x, v.z).magnitude;
+                worst = Mathf.Max(worst, planar);
+                sum += planar;
+                if (planar <= gate) parked++;
+                samples++;
+            }
+            return $"root planar speed mean {sum / Mathf.Max(samples, 1):0.0000} worst {worst:0.0000} u/s " +
+                   $"against a {gate:0.0000} gate — reads PARKED on {parked * 100 / Mathf.Max(samples, 1)}% of steps";
+        }
+        finally { Physics.simulationMode = previous; }
+    }
+
+    // Both halves of the shove for every robot, tyre on and off, printed and asserted nowhere —
+    // this is the instrument the two bars above were re-derived from, and the one to run before
+    // arguing with either of them.
+    private static string RunProbeShove()
+    {
+        bool previous = WheelTyreModel.FrictionEnabled;
+        try
+        {
+            var lines = new StringBuilder();
+            foreach (string path in RoboSimPaths.RobotPrefabPaths())
+            {
+                GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                if (prefab == null || prefab.GetComponentInChildren<RobotMotorController>() == null) continue;
+                float off = SustainedPush(prefab, tyreOn: false, out string offDetail, out float offRoll,
+                    out _, RobotMotorController.TractionPair.None, fromBehind: false);
+                float on = SustainedPush(prefab, tyreOn: true, out string onDetail, out float onRoll,
+                    out _, RobotMotorController.TractionPair.None, fromBehind: false);
+                float behindOn = SustainedPush(prefab, tyreOn: true, out string behindOnDetail, out _,
+                    out _, RobotMotorController.TractionPair.None, fromBehind: true);
+                float behindOff = SustainedPush(prefab, tyreOn: false, out string behindOffDetail, out _,
+                    out _, RobotMotorController.TractionPair.None, fromBehind: true);
+                LateralBreakaway(prefab, tyreOn: false, out string breakOff);
+                LateralBreakaway(prefab, tyreOn: true, out string breakOn);
+                lines.AppendLine($"'{prefab.name}':");
+                lines.AppendLine($"    box shove  tyre OFF  slid {off:0.00} u, rolled {offRoll:0.0} deg   ({offDetail})");
+                lines.AppendLine($"    box shove  tyre ON   slid {on:0.00} u, rolled {onRoll:0.0} deg   ({onDetail})");
+                lines.AppendLine($"    separation           ON is {(off > 1e-3f ? on / off : float.PositiveInfinity):0.0}x OFF");
+                lines.AppendLine($"    from behind  tyre ON   moved {behindOn:0.00} u   ({behindOnDetail})");
+                lines.AppendLine($"    from behind  tyre OFF  moved {behindOff:0.00} u   ({behindOffDetail})");
+                lines.AppendLine($"    at rest      {ParkedAtRest(prefab)}");
+                lines.AppendLine($"    breakaway  tyre OFF  {breakOff}");
+                lines.AppendLine($"    breakaway  tyre ON   {breakOn}");
+            }
+            return $"Sideways Shove:\n{lines.ToString().TrimEnd()}";
+        }
+        finally { WheelTyreModel.FrictionEnabled = previous; }
+    }
+
+    // Every robot, both ends of the cone, and the tyre's share of what happens after. This is the
+    // check the spike's old 0.2 u cap was reaching for: an absolute statement about lateral grip
+    // that an impact cannot make, because an impact's peak force is a property of the geometry it
+    // lands on rather than of the robot's tyres.
+    private static int ALateralPushBreaksAwayAtTheFrictionCone(StringBuilder lines)
+    {
+        int checks = 0;
+        foreach (string path in RoboSimPaths.RobotPrefabPaths())
+        {
+            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            if (prefab == null || prefab.GetComponentInChildren<RobotMotorController>() == null) continue;
+            float off = LateralBreakaway(prefab, tyreOn: false, out string offDetail, out float offTravel);
+            float on = LateralBreakaway(prefab, tyreOn: true, out string onDetail, out float onTravel);
+            lines.AppendLine($"  lateral breakaway, '{prefab.name}': tyre OFF {offDetail}; tyre ON {onDetail}");
+
+            ValidationUtil.Assert(off >= MinBreakawayFraction,
+                $"'{prefab.name}' started sliding sideways under only {off:0.00} of its own weight with the " +
+                $"tyre OFF (needs {MinBreakawayFraction:0.0#}) — the isotropic wheels grip at 0.9 static, so " +
+                $"this robot has lost lateral grip it should have. ({offDetail})");
+            ValidationUtil.Assert(off <= MaxBreakawayFraction,
+                $"'{prefab.name}' held a steady sideways force of {off:0.00} of its own weight with the tyre " +
+                $"OFF without sliding (limit {MaxBreakawayFraction:0.0#}) — 0.9 static is the whole friction " +
+                "cone and nothing may hold past it. A robot that cannot be pushed sideways at all is standing " +
+                "on a contact set the solver is over-constraining, which is what two-of-three coplanar wheels " +
+                $"on a rigid rail used to do here. ({offDetail})");
+            ValidationUtil.Assert(onTravel >= offTravel * MinTyreSlideRatio,
+                $"'{prefab.name}' slid {onTravel:0.0} u with the tyre on against {offTravel:0.0} without, " +
+                $"under {MinTyreSlideRatio:0.0#}x — once a robot IS sliding sideways the omni tyre is the " +
+                $"whole difference, and here it made almost none. ({onDetail}; tyre OFF: {offDetail})");
+            checks += 3;
+        }
+        return checks;
     }
 
     // Front, Middle and Rear are read off the wheels' positions along the DRIVE axis the controller

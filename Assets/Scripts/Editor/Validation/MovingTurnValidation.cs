@@ -29,9 +29,26 @@ using UnityEngine;
 // skidding wheels; MixArcade scales both together now, so the same stick brakes the inner rail less
 // and the yaw here is roughly half what it was — smaller numbers, less slip, and by design.
 //
+// SLIP IS COMPARED AS A SHARE, NOT AS A SPEED, and that is not a detail. Slip in u/s scales with
+// how fast the contact is travelling: a wheel rolling perfectly at 10 u/s and one rolling perfectly
+// at 0.1 u/s both score zero, but the same 5% of scrub scores 0.50 and 0.005. The control here is a
+// spin from REST, which 360RpmDrivetrain takes at 0.1 u/s against 10 u/s for its arc, so dividing
+// the raw speeds into each other measured the speed ratio far more strongly than it measured
+// roughness. The share — the same difference over the faster of the tyre surface and the ground —
+// is the form that survives the comparison, and a wheel dragged locked along the floor reads 1.0 at
+// any speed, which is what it should say.
+//
 // This file is what any change to the tyre, the mix or the authority rule has to answer to, and it
 // is sensitive: a load-proportional torque split was tried on 2026-09-06 and read here as 654V_v1
 // turning 0 degrees where it had turned 455. See RobotMotorController's note on why that is gone.
+// The wheel droop links (2026-09-07) are the standing case: they are correct, they are shipped, and
+// they read RED here on 360RpmDrivetrain and 654V_v1 for a reason the share makes plain — with all
+// three wheels of a rail on the floor instead of two, the wheels sit at different radii from the
+// turn centre and are all driven at one rail speed, so they must scrub against each other. 654V_v2
+// and 654V_v3 are untouched (0.024 -> 0.029 and 0.017 -> 0.012). The bar is NOT the thing to move
+// here: it was re-derived onto the share and still reads red, which is the honest answer. Commit
+// 3fe30b3 is the change, WheelDroopRig the mechanism, and Probe Sideways Shove the other half of
+// what the links did to lateral grip.
 public static class MovingTurnValidation
 {
     private const int SettleSteps = 60;
@@ -41,6 +58,10 @@ public static class MovingTurnValidation
     // A wheel reversing direction with less than this much change of speed in one step is
     // stationary noise, not a wheel snatching: 30 deg/s per step is 2% of a 240 RPM free speed.
     private const float WheelRateNoiseFloor = 30f;     // deg/s, per step
+
+    // Below this contact speed a wheel is not really going anywhere and its slip FRACTION is 0/0.
+    // 0.5 u/s is 50 mm/s, a twentieth of the slowest speed any of these turns is taken at.
+    private const float SlipFractionFloor = 0.5f;      // u/s
 
     // How much worse a moving turn is allowed to be than the same robot's spin from rest. Two is
     // generous on purpose: a moving turn genuinely does scrub more than a stationary one, because
@@ -62,6 +83,8 @@ public static class MovingTurnValidation
         public int wheelReversals;         // spin-direction changes summed over every wheel
         public float meanAbsSlip;          // tyre surface speed against the ground under it, u/s
         public float peakAbsSlip;
+        public float meanSlipFraction;     // ...the same thing as a SHARE of the faster of the two
+        public float peakSlipFraction;
         public float peakVerticalSpeed;    // the "jumping": how hard the chassis is coming off the floor
         public float yawDeg;               // ...and it still has to actually turn
         public float meanSpeed;
@@ -141,18 +164,34 @@ public static class MovingTurnValidation
     // rough. Four is a handful of sign flips, still far below any turn that is actually chattering.
     private const float MinReversalReference = 4f;
 
+    // The same guard for the slip reference, and it exists for the same reason: a spin from rest
+    // that scrubs almost nothing would otherwise demand a moving turn that scrubs almost nothing.
+    // Measured standing shares 2026-09-07, all four robots, droop and pre-droop: 0.018 to 0.268.
+    // At 0.05 the floor binds only on the cleanest standing pivots and changes no verdict on any
+    // robot in either build — it is there so a future robot with a perfect one cannot make the bar
+    // unmeetable.
+    private const float MinSlipFractionReference = 0.05f;
+
     private static void Compare(GameObject prefab, Turn standing, Turn moving, List<string> failures)
     {
         float reversals = Ratio(moving.wheelReversals,
             Mathf.Max(standing.wheelReversals, MinReversalReference));
-        float slip = Ratio(moving.meanAbsSlip, standing.meanAbsSlip);
+        // The SHARE, not the u/s. Slip in u/s scales with the speed the contact is travelling at,
+        // and these two turns are not taken at the same speed — 360RpmDrivetrain spins on the spot
+        // at 0.1 u/s and takes its arc at 10, so dividing one into the other measured the speed
+        // ratio a hundred times more strongly than it measured roughness. The share is the same
+        // quantity over the faster of the tyre surface and the ground, which is what slip means.
+        float slip = Ratio(moving.meanSlipFraction,
+            Mathf.Max(standing.meanSlipFraction, MinSlipFractionReference));
 
         if (reversals > MaxRoughnessMultiple || slip > MaxRoughnessMultiple)
             failures.Add(
                 $"'{prefab.name}' ({moving.label}): {moving.wheelReversals} wheel direction changes " +
-                $"against {standing.wheelReversals} from rest ({reversals:0.0}x) and mean slip " +
-                $"{moving.meanAbsSlip:0.00} u/s against {standing.meanAbsSlip:0.00} ({slip:0.0}x), " +
-                $"limit {MaxRoughnessMultiple:0.0}x; chassis lifting at {moving.peakVerticalSpeed:0.00} " +
+                $"against {standing.wheelReversals} from rest ({reversals:0.0}x) and mean slip share " +
+                $"{moving.meanSlipFraction:0.000} against {standing.meanSlipFraction:0.000} from rest " +
+                $"({slip:0.0}x), limit {MaxRoughnessMultiple:0.0}x — that is {moving.meanAbsSlip:0.00} u/s " +
+                $"at {moving.meanSpeed:0.0} u/s against {standing.meanAbsSlip:0.00} at " +
+                $"{standing.meanSpeed:0.0}; chassis lifting at {moving.peakVerticalSpeed:0.00} " +
                 $"u/s against {standing.peakVerticalSpeed:0.00}");
     }
 
@@ -163,7 +202,8 @@ public static class MovingTurnValidation
     private static void Report(System.Text.StringBuilder lines, Turn t)
         => lines.AppendLine(
             $"    {t.label,-24} {t.wheelReversals,4} wheel direction changes · slip mean " +
-            $"{t.meanAbsSlip:0.00} peak {t.peakAbsSlip:0.00} u/s · chassis lift " +
+            $"{t.meanAbsSlip:0.00} peak {t.peakAbsSlip:0.00} u/s · slip share mean " +
+            $"{t.meanSlipFraction:0.000} peak {t.peakSlipFraction:0.000} · chassis lift " +
             $"{t.peakVerticalSpeed:0.00} u/s · turned {t.yawDeg:0} deg at {t.meanSpeed:0.0} u/s · " +
             $"deadest wheel {t.deadestWheel} at {t.deadestWheelFraction:0%} of the busiest");
 
@@ -193,8 +233,8 @@ public static class MovingTurnValidation
 
             var result = new Turn { label = label };
             float lastYaw = root.transform.eulerAngles.y;
-            float slipSum = 0f, speedSum = 0f;
-            int slipSamples = 0;
+            float slipSum = 0f, speedSum = 0f, slipFractionSum = 0f;
+            int slipSamples = 0, slipFractionSamples = 0;
 
             for (int i = 0; i < TurnSteps; i++)
             {
@@ -254,10 +294,30 @@ public static class MovingTurnValidation
                     slipSum += slip;
                     slipSamples++;
                     result.peakAbsSlip = Mathf.Max(result.peakAbsSlip, slip);
+
+                    // ...and as a SHARE of the faster of the two, which is the only form of this
+                    // number that survives being compared across two turns taken at different
+                    // speeds. Slip in u/s scales with how fast the contact is travelling: a wheel
+                    // rolling perfectly at 10 u/s and one rolling perfectly at 0.1 u/s both score
+                    // zero, but the same 5% of scrub scores 0.50 and 0.005. Dividing one into the
+                    // other therefore measures the SPEED RATIO far more than it measures roughness.
+                    // A locked wheel dragged along the floor reads 1.0 here at any speed, which is
+                    // what a fraction should say. Below the floor neither the tyre nor the ground is
+                    // really moving and the fraction is 0/0, so that wheel contributes nothing
+                    // rather than a made-up number.
+                    float scale = Mathf.Max(Mathf.Abs(surface), Mathf.Abs(alongRoll));
+                    if (scale > SlipFractionFloor)
+                    {
+                        float fraction = slip / scale;
+                        slipFractionSum += fraction;
+                        slipFractionSamples++;
+                        result.peakSlipFraction = Mathf.Max(result.peakSlipFraction, fraction);
+                    }
                 }
             }
 
             result.meanAbsSlip = slipSamples > 0 ? slipSum / slipSamples : 0f;
+            result.meanSlipFraction = slipFractionSamples > 0 ? slipFractionSum / slipFractionSamples : 0f;
             result.meanSpeed = speedSum / TurnSteps;
 
             // PER WHEEL, ALWAYS — everything above this line is a total or a mean over all wheels,
