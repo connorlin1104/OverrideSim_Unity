@@ -22,6 +22,10 @@ using UnityEngine;
 // Deliberately NOT done here: forcing the bodies to sleep at Start. That hides an unsettled field
 // rather than fixing it, and the next person to nudge a piece in the scene view would get the tax
 // back with no way to see why. Settle, save, and let FieldAtRestValidation fail if it drifts.
+//
+// Also deliberately not done: settling unconditionally. This measures first and leaves an
+// already-still field alone — see Settle() for the pin that a needless re-bake pushed from 0.8 mm
+// of creep to 3.6.
 public static class SettleFieldPieces
 {
     // This tool's idea of "at rest" must be at least as strict as FieldAtRestValidation's, or it
@@ -39,6 +43,12 @@ public static class SettleFieldPieces
     // and this window is deliberately longer than the validator's 2 s so a pause cannot be mistaken
     // for a settle.
     private const int RestSteps = 250;
+
+    // How many times to settle-and-check before giving up and saying so. Measured: the field needs
+    // one pass, and the one case that needed two (a pin standing in a cup) was done after the
+    // second. More than this and something is genuinely not at rest, which is a report, not a
+    // reason to keep simulating.
+    private const int MaxPasses = 4;
 
     [MenuItem("Tools/RoboSim/Field & Pieces/Settle Pieces (bake the match start)", false, 30)]
     private static void SettleOpenScene()
@@ -78,6 +88,11 @@ public static class SettleFieldPieces
         // with every collider in a child, so a pin that merely rotates in place swings its own
         // transform through a metre-long arc. Measuring the root reported one of these pins
         // "travelling 986 mm" when its centre of mass moved 15.
+        // Hand any Transform a tool has already moved to PhysX before reading the bodies — outside
+        // play mode that does not happen on its own, and the "how far did this piece travel" numbers
+        // below would otherwise be measured from where the piece used to be.
+        Physics.SyncTransforms();
+
         var startCom = new List<Vector3>();
         var startLow = new List<float>();
         foreach (Rigidbody rb in bodies)
@@ -86,6 +101,89 @@ public static class SettleFieldPieces
             startLow.Add(LowestPoint(rb));
         }
 
+        // MEASURE FIRST, and settle only if the measurement says to.
+        //
+        // This order is the whole point, and it was learned the expensive way. A field that is
+        // already still does not need baking, and baking it anyway is not free: settling simulates
+        // until every body has been slow for 2.5 s and then writes down wherever each one happened
+        // to be, which for a piece that micro-slides is a pose part-way through a slide rather than
+        // the end of one. Measured on the pin standing in Cup1: authored, it crept 0.8 mm over the
+        // validator's window; re-baked by an unconditional settle, 3.6 mm — over budget, from a
+        // pose that had been comfortably inside it. Every one of the field's sixteen pins-in-cups
+        // is already under 1 mm, so on the shipped field this now does nothing at all, which is the
+        // correct amount of work.
+        //
+        // When it DOES need to settle, one pass is not always enough — "slow right now" is not
+        // "will stay put", since a body can be under the speed threshold on its way somewhere — so
+        // it re-measures and goes again. The check is FieldAtRestValidation's own, so this settles
+        // to exactly the standard the field is held to rather than to a private idea of rest.
+        int passes = 0;
+        int settledAt = -1;
+        float drift = WorstDrift(bodies, out string worstPiece);
+        while (drift > FieldAtRestValidation.DriftTolerance && passes < MaxPasses)
+        {
+            passes++;
+            settledAt = SimulateToRest(bodies);
+            drift = WorstDrift(bodies, out worstPiece);
+        }
+
+        if (passes == 0)
+            return $"Settle Field Pieces: {bodies.Count} dynamic piece(s), ALREADY AT REST — nothing " +
+                   $"was moved. Worst piece ({worstPiece}) creeps {drift * 100f:0.00} mm over the next " +
+                   $"{FieldAtRestValidation.Steps * ValidationUtil.StepSeconds:0.0} s, inside the " +
+                   $"{FieldAtRestValidation.DriftTolerance * 100f:0.0} mm budget.";
+
+        var moved = new List<(float d, string line)>();
+        float total = 0f;
+        int over5 = 0, sunk = 0;
+        for (int i = 0; i < bodies.Count; i++)
+        {
+            if (bodies[i] == null) continue;
+            float d = Vector3.Distance(bodies[i].worldCenterOfMass, startCom[i]);
+            float rose = LowestPoint(bodies[i]) - startLow[i];
+            total += d;
+            if (d > 0.05f) over5++;
+            if (rose > 0.01f) sunk++;
+            moved.Add((d, $"{bodies[i].name}: centre of mass {d * 100f:0.0} mm, " +
+                          $"lifted {rose * 100f:+0.0;-0.0} mm out of the floor"));
+        }
+        moved.Sort((a, b) => b.d.CompareTo(a.d));
+
+        EditorSceneManager.MarkSceneDirty(bodies[0].gameObject.scene);
+
+        string when = settledAt < 0
+            ? $"NOTHING SETTLED within {MaxSteps * ValidationUtil.StepSeconds:0.0} s — something in this field is still " +
+              "moving, and baking that pose would only freeze a frame of it. Look at the fastest " +
+              "piece before trusting this scene"
+            : $"came to rest after {settledAt * ValidationUtil.StepSeconds:0.00} s of simulation";
+
+        string held = drift <= FieldAtRestValidation.DriftTolerance
+            ? $"holds: worst piece ({worstPiece}) creeps {drift * 100f:0.00} mm over the next " +
+              $"{FieldAtRestValidation.Steps * ValidationUtil.StepSeconds:0.0} s, under the " +
+              $"{FieldAtRestValidation.DriftTolerance * 100f:0.0} mm a field at rest is allowed"
+            : $"DOES NOT HOLD after {passes} pass(es): {worstPiece} still creeps {drift * 100f:0.00} mm " +
+              $"over the next {FieldAtRestValidation.Steps * ValidationUtil.StepSeconds:0.0} s. " +
+              "Field At Rest will fail on this scene — find what that piece is balanced on";
+
+        var lines = new List<string>
+        {
+            $"Settle Field Pieces: {bodies.Count} dynamic piece(s), {when} " +
+            $"({passes} pass(es)).",
+            $"  {over5} piece(s) moved more than 5 mm; total centre-of-mass travel " +
+            $"{total * 100f:0} mm, mean {total / bodies.Count * 100f:0.0} mm.",
+            $"  {sunk} piece(s) were starting below where they rest — i.e. inside the floor or a " +
+            "goal — and are now on top of it.",
+            $"  {held}."
+        };
+        for (int i = 0; i < Mathf.Min(moved.Count, 10); i++) lines.Add("    " + moved[i].line);
+        if (moved.Count > 10) lines.Add($"    ...and {moved.Count - 10} more");
+        return string.Join("\n", lines);
+    }
+
+    // Simulate until every body has been slower than RestSpeed for RestSteps in a row, then bake the
+    // poses it reached. Returns the step it settled on, or -1 if it never did.
+    private static int SimulateToRest(List<Rigidbody> bodies)
+    {
         var pose = new Dictionary<Transform, (Vector3 pos, Quaternion rot)>();
         int settledAt = -1;
 
@@ -93,6 +191,7 @@ public static class SettleFieldPieces
         Physics.simulationMode = SimulationMode.Script;
         try
         {
+            Stop(bodies);
             int still = 0;
             for (int s = 0; s < MaxSteps; s++)
             {
@@ -123,42 +222,73 @@ public static class SettleFieldPieces
             (Vector3 pos, Quaternion rot) p = pose[t];
             t.SetPositionAndRotation(p.pos, p.rot);
         }
+        Physics.SyncTransforms();
+        return settledAt;
+    }
 
-        var moved = new List<(float d, string line)>();
-        float total = 0f;
-        int over5 = 0, sunk = 0;
+    // How far the worst piece creeps over the validator's window, starting from the poses currently
+    // in the scene. Puts every pose back afterwards, so measuring costs nothing but time — this
+    // asks "would the saved scene pass?", it does not get to change the answer.
+    private static float WorstDrift(List<Rigidbody> bodies, out string worstPiece)
+    {
+        // Outside play mode a Transform written by a tool has NOT reached the body yet, and
+        // worldCenterOfMass reads the body. Without this the measurement is taken from wherever the
+        // piece used to be: a mutation test that lifted a pin 50 mm into the air was reported as
+        // "already at rest", because the 50 mm had not been handed to PhysX and the fall it then
+        // simulated looked like the piece arriving rather than leaving.
+        Physics.SyncTransforms();
+
+        var startCom = new List<Vector3>();
+        var pose = new List<(Vector3 pos, Quaternion rot)>();
+        foreach (Rigidbody rb in bodies)
+        {
+            startCom.Add(rb != null ? rb.worldCenterOfMass : Vector3.zero);
+            pose.Add(rb != null
+                ? (rb.transform.position, rb.transform.rotation)
+                : (Vector3.zero, Quaternion.identity));
+        }
+
+        SimulationMode previous = Physics.simulationMode;
+        Physics.simulationMode = SimulationMode.Script;
+        try
+        {
+            // The validator measures from a freshly opened scene, so it starts from a dead stop.
+            // Leaving the previous pass's velocities in place would measure something else.
+            Stop(bodies);
+            for (int i = 0; i < FieldAtRestValidation.Steps; i++)
+                Physics.Simulate(ValidationUtil.StepSeconds);
+        }
+        finally { Physics.simulationMode = previous; }
+
+        float worst = 0f;
+        worstPiece = null;
         for (int i = 0; i < bodies.Count; i++)
         {
             if (bodies[i] == null) continue;
             float d = Vector3.Distance(bodies[i].worldCenterOfMass, startCom[i]);
-            float rose = LowestPoint(bodies[i]) - startLow[i];
-            total += d;
-            if (d > 0.05f) over5++;
-            if (rose > 0.01f) sunk++;
-            moved.Add((d, $"{bodies[i].name}: centre of mass {d * 100f:0.0} mm, " +
-                          $"lifted {rose * 100f:+0.0;-0.0} mm out of the floor"));
+            if (d <= worst && worstPiece != null) continue;
+            worst = d;
+            worstPiece = bodies[i].name;
         }
-        moved.Sort((a, b) => b.d.CompareTo(a.d));
 
-        EditorSceneManager.MarkSceneDirty(bodies[0].gameObject.scene);
-
-        string when = settledAt < 0
-            ? $"NOTHING SETTLED within {MaxSteps * ValidationUtil.StepSeconds:0.0} s — something in this field is still " +
-              "moving, and baking that pose would only freeze a frame of it. Look at the fastest " +
-              "piece before trusting this scene"
-            : $"came to rest after {settledAt * ValidationUtil.StepSeconds:0.00} s of simulation";
-
-        var lines = new List<string>
+        for (int i = 0; i < bodies.Count; i++)
         {
-            $"Settle Field Pieces: {bodies.Count} dynamic piece(s), {when}.",
-            $"  {over5} piece(s) moved more than 5 mm; total centre-of-mass travel " +
-            $"{total * 100f:0} mm, mean {total / bodies.Count * 100f:0.0} mm.",
-            $"  {sunk} piece(s) were starting below where they rest — i.e. inside the floor or a " +
-            "goal — and are now on top of it."
-        };
-        for (int i = 0; i < Mathf.Min(moved.Count, 10); i++) lines.Add("    " + moved[i].line);
-        if (moved.Count > 10) lines.Add($"    ...and {moved.Count - 10} more");
-        return string.Join("\n", lines);
+            if (bodies[i] == null) continue;
+            bodies[i].transform.SetPositionAndRotation(pose[i].pos, pose[i].rot);
+        }
+        Physics.SyncTransforms();
+        Stop(bodies);
+        return worst;
+    }
+
+    private static void Stop(List<Rigidbody> bodies)
+    {
+        foreach (Rigidbody rb in bodies)
+        {
+            if (rb == null) continue;
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+        }
     }
 
     private static float LowestPoint(Rigidbody rb)

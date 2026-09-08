@@ -33,12 +33,17 @@ public static class FieldAtRestValidation
 
     public static void RunBatchValidate() => ValidationUtil.RunBatch("Field At Rest", Run);
 
-    private const int Steps = 200;             // 2.0 s — the window the symptom lives in
+    // The window the symptom lives in, and how far a piece may creep inside it. These two are
+    // internal because SettleFieldPieces settles TO them: "at rest" means "this check would pass",
+    // and a tool that has to satisfy a standard should read the standard rather than keep its own
+    // copy of it. One settle pass is not always enough — a pin standing in a cup was still moving
+    // 3.5 mm after the first — so the settle tool now measures with these and goes again.
+    internal const int Steps = 200;             // 2.0 s
 
     // A piece may creep this far as the solver polishes its contacts. Chosen from the measured
     // split, which is not close: after settling the worst piece moves under 0.5 mm, and before
     // settling sixteen pins moved 15 mm each.
-    private const float DriftTolerance = 0.03f;    // 3 mm
+    internal const float DriftTolerance = 0.03f;    // 3 mm
 
     // How deep a piece may sit inside STATIC geometry — the ground box, a goal wall, the perimeter.
     //
