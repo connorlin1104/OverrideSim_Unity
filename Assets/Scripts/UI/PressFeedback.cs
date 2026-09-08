@@ -31,10 +31,23 @@ public class PressFeedback : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     private RectTransform rect;
     private Graphic graphic;          // the button's image; tinted on press (may be null)
+    private Selectable selectable;    // this object's Button, if any; a disabled one never presses
     private Vector3 baseScale = Vector3.one;
     private Vector2 basePos;
     private Color baseColor = Color.white;
     private bool pressed;
+
+    // The colour the button rests at and springs back to. An owner script that RETINTS the button
+    // at runtime (MatchLoadButton greys itself out while no loader can spawn) must write it here
+    // rather than straight onto the Image: Update lerps the graphic back toward this value every
+    // frame, so a colour written to the Image alone is wiped within a few frames. Assigning it does
+    // not snap — the graphic slides to the new colour at lerpSpeed, so the state change reads as a
+    // short fade instead of a pop.
+    public Color BaseColor
+    {
+        get => baseColor;
+        set => baseColor = value;
+    }
 
     void Awake()
     {
@@ -46,9 +59,15 @@ public class PressFeedback : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         Button button = GetComponent<Button>();
         graphic = (button != null ? button.targetGraphic as Graphic : null) ?? GetComponent<Graphic>();
         if (graphic != null) baseColor = graphic.color;
+        selectable = button != null ? button : GetComponent<Selectable>();
     }
 
-    public void OnPointerDown(PointerEventData eventData) => pressed = true;
+    // A greyed-out control must not animate a press it will never act on. The EventSystem still
+    // delivers pointer events to the OTHER components on a non-interactable Selectable — Button
+    // filters them internally, we don't — so without this check the disabled Match Load button
+    // sank in and flashed exactly like a live one while doing nothing.
+    public void OnPointerDown(PointerEventData eventData) =>
+        pressed = selectable == null || selectable.IsInteractable();
     public void OnPointerUp(PointerEventData eventData) => pressed = false;
 
     void OnDisable()

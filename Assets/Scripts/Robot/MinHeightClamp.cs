@@ -46,6 +46,17 @@ public class MinHeightClamp : MonoBehaviour
     {
         if (cols == null || cols.Length == 0) return;
 
+        // A SLEEPING body has nothing to clamp. It cannot have sunk since it fell asleep — it is not
+        // being integrated — and it cannot have been sunk BEFORE, because this ran every step while it
+        // was awake and lifted it then. Anything that does move a sleeping piece (rb.position, a
+        // contact) wakes it, so the check below is back on the very step it could matter.
+        //
+        // This is the whole reason the check is here: on a settled field all 73 pieces are asleep and
+        // every one of them was still reading bounds on 12-13 colliders every step — ~950
+        // Collider.bounds calls and 73 managed FixedUpdate crossings per step, 100 times a second, to
+        // conclude nothing had happened.
+        if (rb == null || rb.IsSleeping()) return;
+
         float bottom = float.PositiveInfinity;
         foreach (Collider c in cols) bottom = Mathf.Min(bottom, c.bounds.min.y);
 

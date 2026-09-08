@@ -223,14 +223,16 @@ public static class JoystickSettings
     }
 }
 
-// Whether the match loaders spawn automatically when the robot drives onto their tape (the
-// default), or only when the player presses the field scene's Match Load button. Manual mode
-// exists for drivers who want the piece to fall INTO the robot (the manual spawn adds extra
-// height) instead of picking it off the loader.
+// Whether the match loaders spawn automatically when the robot drives onto their tape, or — the
+// DEFAULT — only when the player presses the field scene's Match Load button. Manual is the
+// default because it is the one the driver is in charge of: the manual spawn drops from extra
+// height so the piece falls INTO the robot, and a piece that appears the instant you touch the
+// tape lands wherever the robot happened to be, whether or not it was ready for it. Ticking the
+// box in Settings restores spawn-on-arrival.
 public static class MatchLoadSettings
 {
     public const string AutomaticPrefKey = "AutomaticMatchloading";
-    public const bool DefaultAutomatic = true;
+    public const bool DefaultAutomatic = false;
 
     public static bool Automatic
     {

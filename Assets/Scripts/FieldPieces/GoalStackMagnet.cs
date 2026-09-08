@@ -117,8 +117,12 @@ public class GoalStackMagnet : MonoBehaviour
     public bool keepDroppedOrientation = true;
 
     [Header("Stack")]
-    [Tooltip("Most pieces this goal holds; further pieces are simply not captured (they stay loose on top).")]
-    public int maxStack = 6;
+    [Tooltip("Most pieces this goal holds; further pieces are simply not captured (they stay loose on top). " +
+             "This is a HEADROOM cap, not a physical one — the stake itself only runs ~2.4u above the pocket, " +
+             "so at the 0.86u pitch the pieces above roughly the third slot are already off the end of the post " +
+             "and are held by the magnet alone. Raise it for more capacity; lower it to stop the column growing " +
+             "past the stake.")]
+    public int maxStack = 10;
     [Tooltip("Per-piece-type rest height / stack spacing, matched by name prefix. Baked from the piece meshes by the Add Goal Stack Magnets tool; tune here.")]
     public List<PieceProfile> pieceProfiles = new List<PieceProfile>();
 
@@ -400,13 +404,32 @@ public class GoalStackMagnet : MonoBehaviour
     // Capture = a slow, free piece whose center is inside the small window around the next slot.
     private void TryCapture(Vector3 nextSlot, Vector3 up, float dt)
     {
-        // Superset sphere for the broad scan (the exact cylinder gates are below). The gate region
-        // reaches captureHeight above the slot (the post top) and restHeight above the surface.
+        // Superset sphere for the broad scan (the exact cylinder gates are below).
+        //
+        // The region the gates actually accept is a CYLINDER on the stack axis, not a ball centred on
+        // the slot: radius captureRadius, running from captureVerticalWindow below the slot up to
+        // captureHeight above it (plus the tallest profile's restHeight, since the gate measures each
+        // candidate from ITS OWN slot). That cylinder is tall and thin, and sitting a sphere on its
+        // BOTTOM to cover the top meant sweeping ~2x the volume actually needed — the biggest slice of
+        // it empty floor below the goal. Centring on the cylinder's middle and sizing to it halves the
+        // colliders PhysX has to hand back, 100 times a second, on all 9 goals.
+        //
+        // The margin is 2x maxRest, and it is why this is a strict superset rather than a tighter fit:
+        // OverlapSphere returns COLLIDERS, but the gates below test each piece's CENTRE OF MASS — and a
+        // cup is a ring, so its centre of mass sits in the hole with no collider anywhere near it. The
+        // margin is the reach from a piece's centre of mass out to its own shell. It works out LARGER
+        // than the slack the old sphere happened to leave (0.87 vs 0.55 world units at the tightest
+        // point, on the shipped goals), so nothing that was captured before can fall outside this.
+        // Fewer hits also means less risk of silently truncating against overlapScratch.
         float maxRest = 0f;
         foreach (PieceProfile p in pieceProfiles)
             if (p != null && p.restHeight > maxRest) maxRest = p.restHeight;
-        float scanRadius = captureRadius + Mathf.Max(captureHeight, captureVerticalWindow) + maxRest;
-        int hits = Physics.OverlapSphereNonAlloc(nextSlot, scanRadius, overlapScratch);
+        float lowest = -captureVerticalWindow;              // gate floor, relative to the slot surface
+        float highest = maxRest + captureHeight;            // gate ceiling
+        Vector3 scanCentre = nextSlot + up * ((lowest + highest) * 0.5f);
+        float halfLength = (highest - lowest) * 0.5f;
+        float scanRadius = Mathf.Sqrt(captureRadius * captureRadius + halfLength * halfLength) + 2f * maxRest;
+        int hits = Physics.OverlapSphereNonAlloc(scanCentre, scanRadius, overlapScratch);
 
         // Of everything eligible in the window, seat the LOWEST piece — the one nearest this
         // (bottom-most) open slot. Capture is one-per-step and fills bottom-up, so taking the lowest
