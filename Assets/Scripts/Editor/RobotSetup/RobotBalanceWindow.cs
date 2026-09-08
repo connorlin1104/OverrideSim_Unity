@@ -559,6 +559,7 @@ public class RobotBalanceWindow : EditorWindow
         {
             if (body == null || body == root) continue;
             if (body.jointType != ArticulationJointType.PrismaticJoint) continue;
+            if (WheelDroopRig.IsDroop(body)) continue;   // millimetres of wheel droop is not a lift
             if (body.linearLockX == ArticulationDofLock.LockedMotion) continue; // some other axis slides
             if (body.transform.parent == null) continue;
 

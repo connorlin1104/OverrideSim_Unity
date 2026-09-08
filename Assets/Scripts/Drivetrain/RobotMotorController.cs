@@ -368,6 +368,17 @@ public class RobotMotorController : MonoBehaviour
         for (int i = 0; i < colliders.Count; i++)
             owners[i] = colliders[i].GetComponentInParent<ArticulationBody>(true);
 
+        // The link each one is JOINTED to — its nearest ancestor body, which is not the same thing
+        // as its nearest ancestor. See the exemption below.
+        var jointParents = new Dictionary<ArticulationBody, ArticulationBody>();
+        foreach (ArticulationBody body in root.GetComponentsInChildren<ArticulationBody>(true))
+        {
+            ArticulationBody parent = null;
+            for (Transform t = body.transform.parent; t != null && parent == null; t = t.parent)
+                parent = t.GetComponent<ArticulationBody>();
+            jointParents[body] = parent;
+        }
+
         int ignored = 0;
         for (int i = 0; i < colliders.Count; i++)
         {
@@ -375,8 +386,16 @@ public class RobotMotorController : MonoBehaviour
             {
                 ArticulationBody a = owners[i], b = owners[j];
                 if (a == null || b == null || a == b) continue;
-                // Parent and child of the same joint are never collided by PhysX anyway.
-                if (a.transform.IsChildOf(b.transform) || b.transform.IsChildOf(a.transform)) continue;
+                // Parent and child of the same JOINT are never collided by PhysX anyway. This used
+                // to ask whether one was a hierarchy descendant of the other, which is a different
+                // question and was only accidentally the same one: every link was jointed straight
+                // to the chassis, so descendant and child coincided. The moment a link went in
+                // BETWEEN — the wheel droop links, WheelDroopRig — the chassis and the wheels became
+                // grandparent and grandchild, PhysX started colliding them, and this exemption
+                // silently skipped exactly the pairs that needed clearing: 654V_v2 threw itself onto
+                // its back inside 1.5 s, gaining height as it went.
+                if (jointParents.TryGetValue(a, out ArticulationBody aParent) && aParent == b) continue;
+                if (jointParents.TryGetValue(b, out ArticulationBody bParent) && bParent == a) continue;
                 if (!OverlapsAtRest(colliders[i], colliders[j], out float depth)) continue;
 
                 Physics.IgnoreCollision(colliders[i], colliders[j], true);
@@ -387,6 +406,93 @@ public class RobotMotorController : MonoBehaviour
         }
         return ignored;
     }
+
+    // Size every droop spring from the mass this robot actually measures, the way the wheel drives
+    // are sized. The rig tool bakes a value too — edit-mode simulation never runs Awake — but a
+    // robot that has since gained a mechanism, or arrived from a player's CAD at a different weight,
+    // must not be left holding a spring tuned for someone else's robot: sag scales with the share of
+    // the weight each wheel carries, so the wrong stiffness is the wrong ride height and the wrong
+    // split. Travel and the stops are geometry and stay exactly as the rig built them.
+    // ROBOSIM_DROOP_OFF=1 locks every droop joint rigid, so any batch validator can be run against
+    // the drivetrain as it was before the travel existed. The A/B switch, as ROBOSIM_TYRE_OFF is for
+    // the tyre: two changes landed together here and only a switch can say which one moved a number.
+    private static bool DroopDisabled =>
+        System.Environment.GetEnvironmentVariable("ROBOSIM_DROOP_OFF") == "1";
+
+    private void BakeDroopSprings(ArticulationBody root)
+    {
+        if (root == null || allWheels.Length == 0) return;
+        DrivetrainTuning.DroopSpring(DrivetrainTuning.MeasureTotalMass(root), allWheels.Length,
+            Physics.gravity.y, out float stiffness, out float damping);
+
+        foreach (ArticulationBody wheel in allWheels)
+        {
+            Transform parent = wheel != null ? wheel.transform.parent : null;
+            ArticulationBody droop = parent != null ? parent.GetComponent<ArticulationBody>() : null;
+            if (droop == null || droop.jointType != ArticulationJointType.PrismaticJoint) continue;
+            if (!droop.name.StartsWith(WheelDroopNamePrefix)) continue;
+
+            if (DroopDisabled)
+            {
+                droop.linearLockX = ArticulationDofLock.LockedMotion;
+                continue;
+            }
+
+            ArticulationDrive d = droop.xDrive;
+            d.stiffness = stiffness;
+            d.damping = damping;
+            droop.xDrive = d;
+        }
+    }
+
+    // A wheel on a droop link has to be allowed to move up into the frame.
+    //
+    // PhysX never collides the two links of a joint, which is why a wheel bolted straight to the
+    // chassis can sit inside the frame rails as it does on every real robot. WheelDroopRig puts a
+    // link BETWEEN them, and that exemption does not reach across it: the wheel and the chassis
+    // become grandchild and grandparent, and PhysX starts collidng them. Clearing the pairs that
+    // already overlap at rest is not enough either, because the whole point of the droop joint is
+    // that the wheel MOVES — a few millimetres up, straight into frame it did not overlap when it
+    // was parked.
+    //
+    // So the exemption is restored explicitly across the droop: a wheel link and the link its droop
+    // joints to never collide, whatever the travel does. They are millimetres apart by construction
+    // and mechanically one assembly; nothing is being hidden that a real robot would feel.
+    public static int IgnoreAcrossDroop(ArticulationBody root)
+    {
+        if (root == null) return 0;
+        int cleared = 0;
+        foreach (ArticulationBody droop in root.GetComponentsInChildren<ArticulationBody>(true))
+        {
+            if (droop == null || droop == root) continue;
+            if (droop.jointType != ArticulationJointType.PrismaticJoint) continue;
+            if (!droop.name.StartsWith(WheelDroopNamePrefix)) continue;
+
+            ArticulationBody above = null;
+            for (Transform t = droop.transform.parent; t != null && above == null; t = t.parent)
+                above = t.GetComponent<ArticulationBody>();
+            if (above == null) continue;
+
+            foreach (Collider below in droop.GetComponentsInChildren<Collider>(true))
+            {
+                if (below == null || below.isTrigger) continue;
+                foreach (Collider other in above.GetComponentsInChildren<Collider>(true))
+                {
+                    if (other == null || other.isTrigger) continue;
+                    // Only colliders the LINK above owns: anything under another body of its own is
+                    // that body's business, and jointing across it is not what this is about.
+                    if (other.GetComponentInParent<ArticulationBody>(true) != above) continue;
+                    Physics.IgnoreCollision(below, other, true);
+                    cleared++;
+                }
+            }
+        }
+        return cleared;
+    }
+
+    // The name the drivetrain rig gives a droop link. Kept here rather than reaching into the editor
+    // assembly, which the runtime cannot see; WheelDroopRig.DroopNamePrefix is pinned to it.
+    public const string WheelDroopNamePrefix = "WheelDroop_";
 
     // Below this, an "overlap" is two boxes touching at a shared face, not one part inside another.
     // 0.001 units is 0.1 mm at this project's scale.
@@ -426,6 +532,7 @@ public class RobotMotorController : MonoBehaviour
             root.solverIterations = solverIterations;
             root.solverVelocityIterations = solverVelocityIterations;
             IgnoreBuiltInSelfOverlaps(root);
+            IgnoreAcrossDroop(root);
         }
 
         // Snapshot the player's feel prefs once. Entering the field scene always re-runs Awake, so
@@ -469,6 +576,8 @@ public class RobotMotorController : MonoBehaviour
         // brake — a fine deadband when the only two values written were "brake" and "stall", and far
         // too coarse now that a load share moves the value continuously: the brake range would have
         // had about thirteen distinct settings in it. See SetForceLimit, which quantises onto this.
+        BakeDroopSprings(root);
+
         forceLimitEpsilon = Mathf.Max(tuning.brakeTorque * 0.05f, 1e-4f);
         for (int i = 0; i < wheelForceLimit.Length; i++) wheelForceLimit[i] = tuning.stallTorque;
 
@@ -822,6 +931,25 @@ public class RobotMotorController : MonoBehaviour
     // trick: the chase camera reads the robot in its LateUpdate and therefore always sees the true
     // physics pose. Lean the robot before the camera has looked at it and the camera follows the
     // lean, cancelling most of it and wobbling the aim for the rest.
+    // Put the physics pose back BEFORE the step, not just before the next frame.
+    //
+    // PoseForRender leans the root transform for the camera and undoes it on the next render. That
+    // was enough while every link below the chassis was revolute: a wheel's joint coordinate is an
+    // ANGLE about its own axle, and shifting the chassis a couple of millimetres does not write to
+    // it. The droop links (WheelDroopRig) are prismatic and their coordinate IS a vertical offset —
+    // exactly what a lean about a pivot ahead of or behind the wheels produces — so a FixedUpdate
+    // landing between two renders reads the leaned pose and the cosmetic lean becomes real physics.
+    // Measured by ChassisLeanValidation: 2.7 mm on 654V_v1 and 2.1 on v3, against a 0.8 mm floor for
+    // re-running the identical simulation, and gone the moment the droop joints are locked.
+    private void UnposeBeforePhysics()
+    {
+        if (!leanPosed || rootBody == null) return;
+        Transform t = rootBody.transform;
+        if (t.position != posedPosition || t.rotation != posedRotation) return;  // physics moved on
+        t.SetPositionAndRotation(physicsPosition, physicsRotation);
+        leanPosed = false;
+    }
+
     private void PoseForRender()
     {
         if (rootBody == null || !isActiveAndEnabled) return;
@@ -900,6 +1028,15 @@ public class RobotMotorController : MonoBehaviour
     // manualInput is the path a scripted routine is supposed to take anyway.
     public void ApplyStep(float dt)
     {
+        // Before anything reads the transform: put back the pose PhysX last wrote. PoseForRender
+        // leans the root for the camera and undoes it on the next rendered frame, which leaves the
+        // leaned pose in place for any step that lands in between. Harmless while every link below
+        // the chassis was revolute — a joint ANGLE about an axle does not care that the chassis
+        // moved 2 mm — and not harmless at all once the droop links made that offset a prismatic
+        // joint COORDINATE. In FixedUpdate this only fixed the play path; edit-mode harnesses call
+        // ApplyStep directly and never run FixedUpdate, which is why 654V_v3 still leaked 2.2 mm.
+        UnposeBeforePhysics();
+
         // Arcade Drive (Left Stick controls Forward/Backward, Right Stick controls Turning).
         float throttleTarget;
         float turnTarget;

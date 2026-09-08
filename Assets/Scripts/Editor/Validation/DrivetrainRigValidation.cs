@@ -52,7 +52,8 @@ public static class DrivetrainRigValidation
             int checks = WheelLinksLandBesideTheirWheel();
             checks += LinkKeepsTheWrappersScale();
             checks += EveryShippedRobotIsFullyRigged(out string rigReport);
-            return $"Validate Drivetrain Rig: PASSED ({checks} checks).\n{rigReport}";
+            checks += AWheelOnADroopLinkStillIgnoresTheChassis(out string droopReport);
+            return $"Validate Drivetrain Rig: PASSED ({checks} checks).\n{rigReport}{droopReport}";
         }
         finally
         {
@@ -207,9 +208,65 @@ public static class DrivetrainRigValidation
                 $"'{firstBald}') — a driven wheel that cannot touch the ground spins in mid-air at " +
                 "full torque while the robot rides on the others.");
 
-            checks += 4;
+            // 5) EVERY WHEEL DROOPS, OR NONE DOES. The droop link (WheelDroopRig) gives each wheel a
+            //    couple of millimetres of give so a rigid rail stops resting on two of its three
+            //    wheels. A rail with droop on two and rigid on the third is WORSE than either: the
+            //    rigid one has no give, so it takes the whole rail and the other two idle.
+            int drooping = 0;
+            foreach (ArticulationBody wheel in AllWheels(motor))
+            {
+                ArticulationBody droop = DroopOf(wheel);
+                if (droop != null) drooping++;
+            }
+            ValidationUtil.Assert(drooping == 0 || drooping == left + right,
+                $"'{prefab.name}' has {drooping} of {left + right} wheels on a droop link — mixing " +
+                "them is worse than either, because the rigid wheel has no give and takes the whole " +
+                "rail. Run Tools/RoboSim/Robot/Mechanisms/Insert Wheel Droop.");
+
+            // 6) THE DROOP AXIS IS THE CHASSIS'S UP, 7) THE WHEEL RESTS WHERE THE CAD PUT IT AND HAS
+            //    SOMEWHERE TO GO, 8) THE SPRING HOLDS AN EVEN SHARE AT THE SAG IT IS SPECIFIED FOR.
+            //    None of these read as a broken joint when the robot runs. A sideways axis reads as
+            //    a robot that falls over; a spring off by a factor reads as the wrong ride height and
+            //    a load split that is wrong in a way only a probe can see.
+            if (drooping > 0)
+            {
+                float mass = DrivetrainTuning.MeasureTotalMass(prefab.GetComponent<ArticulationBody>());
+                DrivetrainTuning.DroopSpring(mass, left + right, Physics.gravity.y,
+                    out float wantK, out float wantC);
+                float wantTravel = DrivetrainTuning.DroopSagAtEvenShare * DrivetrainTuning.DroopTravelInShares;
+                Transform chassis = prefab.transform;
+
+                foreach (ArticulationBody wheel in AllWheels(motor))
+                {
+                    ArticulationBody droop = DroopOf(wheel);
+                    if (droop == null) continue;
+                    Vector3 axis = droop.transform.TransformDirection(droop.anchorRotation * Vector3.right);
+                    float off = Vector3.Angle(axis, chassis.up);
+                    ValidationUtil.Assert(Mathf.Min(off, 180f - off) <= MaxDroopAxisDeg,
+                        $"'{prefab.name}/{droop.name}' slides {off:0.0} deg off the chassis's up — a " +
+                        "droop joint that is not vertical does not hold the robot up, it drops it.");
+
+                    ArticulationDrive d = droop.xDrive;
+                    ValidationUtil.Assert(droop.linearLockX == ArticulationDofLock.LimitedMotion,
+                        $"'{prefab.name}/{droop.name}' is not limited along its travel — an unlimited " +
+                        "droop joint lets the chassis sit straight down on the frame.");
+                    ValidationUtil.Assert(Mathf.Abs(d.lowerLimit) <= 1e-4f
+                                          && Mathf.Abs(d.upperLimit - wantTravel) <= wantTravel * 0.05f,
+                        $"'{prefab.name}/{droop.name}' travels {d.lowerLimit:0.###}..{d.upperLimit:0.###} " +
+                        $"and should travel 0..{wantTravel:0.###} — zero is the wheel hanging where the " +
+                        "CAD put it, and the top is the bump stop.");
+                    ValidationUtil.Assert(Mathf.Abs(d.stiffness - wantK) <= wantK * 0.05f
+                                          && Mathf.Abs(d.damping - wantC) <= wantC * 0.05f,
+                        $"'{prefab.name}/{droop.name}' has a spring of {d.stiffness:0}/{d.damping:0} " +
+                        $"and this robot's mass wants {wantK:0}/{wantC:0} — the sag under an even " +
+                        "share is the ride height and the load split at once.");
+                    checks += 4;
+                }
+            }
+
+            checks += 5;
             lines.AppendLine($"  {prefab.name}: {left} left / {right} right, {links} link(s), " +
-                             "every wheel collided and rigged.");
+                             $"{drooping} on droop links, every wheel collided and rigged.");
         }
 
         // A sweep that found no robots is not a pass. The Robots folder has moved before.
@@ -242,6 +299,75 @@ public static class DrivetrainRigValidation
     // Assembly:3' is unrigged" are different amounts of help at 2am.
     private static string FirstName(System.Collections.Generic.List<Transform> parts)
         => parts.Count == 0 ? string.Empty : $" (e.g. '{parts[0].name}')";
+
+    // THE SILENT ONE. PhysX never collides the two links of a joint, which is how a wheel bolted
+    // straight to the chassis sits inside the frame rails as it does on every real robot. The droop
+    // link goes BETWEEN them, so the wheel and the chassis become grandchild and grandparent and
+    // that exemption stops applying — and the whole point of the droop joint is that the wheel MOVES,
+    // straight up into frame it did not overlap when it was parked, so clearing only the rest-pose
+    // overlaps is not enough either. RobotMotorController.IgnoreAcrossDroop restores it.
+    //
+    // WHAT IT LOOKS LIKE WHEN IT IS MISSING, measured 2026-09-07: 654V_v2 threw itself onto its back
+    // within 1.5 s of landing, GAINING height as it went, with every wheel reading 100 mm off the
+    // floor and 98% of its weight through the chassis. Nothing in the joint was wrong — the axis, the
+    // travel and the spring all measured correct — which is exactly why this is asserted rather than
+    // left to be noticed.
+    private static int AWheelOnADroopLinkStillIgnoresTheChassis(out string report)
+    {
+        var lines = new System.Text.StringBuilder();
+        int checks = 0;
+        foreach (GameObject prefab in RoboSimPaths.RobotPrefabs())
+        {
+            if (prefab.GetComponent<RobotMotorController>() == null) continue;
+
+            ArticulationBody root = ValidationUtil.SpawnOnBareFloor(prefab, out RobotMotorController motor);
+            motor.Initialise();
+
+            int pairs = 0, colliding = 0;
+            string first = null;
+            foreach (ArticulationBody wheel in AllWheels(motor))
+            {
+                if (DroopOf(wheel) == null) continue;
+                foreach (Collider w in wheel.GetComponentsInChildren<Collider>(true))
+                {
+                    if (w == null || w.isTrigger) continue;
+                    foreach (Collider c in root.GetComponentsInChildren<Collider>(true))
+                    {
+                        if (c == null || c.isTrigger) continue;
+                        if (c.GetComponentInParent<ArticulationBody>(true) != root) continue;
+                        pairs++;
+                        if (Physics.GetIgnoreCollision(w, c)) continue;
+                        colliding++;
+                        first ??= $"{wheel.name}/{w.name} <-> {c.name}";
+                    }
+                }
+            }
+            if (pairs == 0) { lines.AppendLine($"  {prefab.name}: no droop links to check."); continue; }
+
+            ValidationUtil.Assert(colliding == 0,
+                $"'{prefab.name}': {colliding} of {pairs} wheel-to-chassis collider pairs still collide " +
+                $"after Initialise (e.g. {first}). A wheel on a droop link travels UP into the frame; " +
+                "if the chassis is still solid to it, the robot fights itself and throws itself over. " +
+                "RobotMotorController.IgnoreAcrossDroop is what clears them.");
+            lines.AppendLine($"  {prefab.name}: {pairs} wheel-to-chassis pairs, all cleared across the droop.");
+            checks++;
+        }
+        ValidationUtil.Assert(checks > 0, "no robot with droop links was checked");
+        report = lines.ToString();
+        return checks;
+    }
+
+    // How far a droop joint may point off the chassis's up before it stops holding the robot up.
+    private const float MaxDroopAxisDeg = 2f;
+
+    // The droop link a wheel hangs on, or null if this robot has none.
+    private static ArticulationBody DroopOf(ArticulationBody wheel)
+    {
+        Transform parent = wheel != null ? wheel.transform.parent : null;
+        ArticulationBody body = parent != null ? parent.GetComponent<ArticulationBody>() : null;
+        return body != null && body.jointType == ArticulationJointType.PrismaticJoint
+               && body.name.StartsWith(RobotMotorController.WheelDroopNamePrefix) ? body : null;
+    }
 
     private static Transform Child(Transform parent, string name)
     {

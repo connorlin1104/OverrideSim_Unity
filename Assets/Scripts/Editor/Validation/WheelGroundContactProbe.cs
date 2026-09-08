@@ -413,7 +413,8 @@ public static class WheelGroundContactProbe
                 sb.AppendLine($"      {Short(wheels[w].name),-6} {(isLeft[w] ? 'L' : 'R')}  " +
                               $"touching {(float)touchSteps[w] / sampled,4:0%} of steps  " +
                               $"mean load {loadSum[w] / sampled / evenShare,5:0%} of even  " +
-                              $"under {DeadLoadFraction:0%} for {(float)deadSteps[w] / sampled,4:0%} of steps  {air}");
+                              $"under {DeadLoadFraction:0%} for {(float)deadSteps[w] / sampled,4:0%} of steps  " +
+                              $"droop {DroopMm(wheels[w]),5:0.00} mm  {air}");
             }
 
             // Where the weight goes when it does not go through a wheel.
@@ -508,6 +509,16 @@ public static class WheelGroundContactProbe
         for (int i = 0; i < n; i++)
             if (!own.Contains(hits[i].collider)) best = Mathf.Min(best, hits[i].distance - 0.01f);
         return float.IsPositiveInfinity(best) ? 1f : Mathf.Max(best, 0f);
+    }
+
+    // How far this wheel's droop joint is compressed right now, in mm. Zero when the robot has no
+    // droop links at all, which is what a robot rigged before WheelDroopRig reads.
+    private static float DroopMm(ArticulationBody wheel)
+    {
+        Transform parent = wheel != null ? wheel.transform.parent : null;
+        ArticulationBody droop = parent != null ? parent.GetComponent<ArticulationBody>() : null;
+        if (droop == null || droop.jointType != ArticulationJointType.PrismaticJoint) return 0f;
+        return droop.jointPosition.dofCount > 0 ? droop.jointPosition[0] * 100f : 0f;
     }
 
     private static string Short(string name)

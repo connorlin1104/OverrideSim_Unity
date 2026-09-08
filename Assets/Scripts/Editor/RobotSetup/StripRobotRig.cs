@@ -138,11 +138,18 @@ public static class StripRobotRig
 
     // Moves each WheelLink_* wrapper's children up to the wrapper's parent (keeping world placement),
     // then deletes the now-empty wrapper. Returns how many wrappers were removed.
+    //
+    // WheelDroop_* wrappers go the same way, and must: a strip that left them behind would leave the
+    // robot with six prismatic links holding nothing, which the next rig would then joint the wheels
+    // to all over again. They are flattened AFTER the wheel links so a droop link's contents (its
+    // wheel link) have already moved up into it by the time it is emptied.
     private static int FlattenWheelLinks(GameObject root, bool useUndo)
     {
         List<Transform> wrappers = new List<Transform>();
         foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
             if (t != null && t.name.StartsWith(RobotPartClassifier.WheelLinkNamePrefix)) wrappers.Add(t);
+        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
+            if (t != null && t.name.StartsWith(RobotMotorController.WheelDroopNamePrefix)) wrappers.Add(t);
 
         int removed = 0;
         foreach (Transform wrapper in wrappers)

@@ -286,6 +286,7 @@ public static class TipOverValidation
     {
         foreach (ArticulationBody b in prefab.GetComponentsInChildren<ArticulationBody>(true))
             if (b.jointType == ArticulationJointType.PrismaticJoint
+                && !WheelDroopRig.IsDroop(b)          // millimetres of wheel droop is not a lift
                 && b.linearLockX != ArticulationDofLock.LockedMotion
                 && b.xDrive.upperLimit > b.xDrive.lowerLimit) return true;
         return false;
@@ -300,6 +301,7 @@ public static class TipOverValidation
         var found = new List<ArticulationBody>();
         foreach (ArticulationBody b in root.GetComponentsInChildren<ArticulationBody>(true))
             if (b != root && b.jointType == ArticulationJointType.PrismaticJoint
+                && !WheelDroopRig.IsDroop(b)          // millimetres of wheel droop is not a lift
                 && b.linearLockX != ArticulationDofLock.LockedMotion
                 && b.xDrive.upperLimit > b.xDrive.lowerLimit) found.Add(b);
         return found;

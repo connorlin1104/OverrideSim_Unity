@@ -516,6 +516,14 @@ public class RigDrivetrainArticulation
         motorSo.FindProperty("rightJoystickAction").objectReferenceValue = rightActionRef;
         motorSo.ApplyModifiedProperties();
 
+        // 6b) Give every wheel its couple of millimetres of droop. AFTER the controller is wired,
+        //     because WheelDroopRig reads the drive wheels off it; and after the wheel links are
+        //     jointed straight to the chassis, so the guard above still checks the thing that
+        //     matters — that a wheel is not jointed to a MECHANISM. The droop link then slides in
+        //     between, and RobotMotorController.IgnoreAcrossDroop restores the collision exemption
+        //     PhysX only grants a joint's immediate parent and child.
+        WheelDroopRig.Insert(robot, out string droopReport);
+
         // 7) Re-bake the drives now that the robot is knowable (mass, wheel count, gearing).
         DrivetrainTuning.Result tuning = ApplyDriveTuning(robot, useUndo: true);
 
@@ -530,7 +538,7 @@ public class RigDrivetrainArticulation
         Debug.Log($"{UndoName}: rigged '{robot.name}' — root ArticulationBody (mass {RootMass}) + " +
                   $"{leftLinks.Count} left / {rightLinks.Count} right wheel links, tagged Player, " +
                   $"motor controller wired ({(leftActionRef != null && rightActionRef != null ? "actions restored" : "ACTIONS MISSING")}), " +
-                  $"solver: {tgsState}.\n{DescribeTuning(tuning)}\n{linkSummary}", robot);
+                  $"solver: {tgsState}, droop: {droopReport}.\n{DescribeTuning(tuning)}\n{linkSummary}", robot);
     }
 
     // --- Drive tuning bake ---------------------------------------------------------------------

@@ -92,6 +92,50 @@ public static class DrivetrainTuning
     // case, which no velocity can see. A tenth of the weight is a hand on the frame.
     public const float ExternalLateralForceFraction = 0.1f;
 
+    // WHEEL DROOP (see WheelDroopRig, which builds the joint, and RobotMotorController.Initialise,
+    // which re-bakes these onto it from the mass it measures at runtime).
+    //
+    // How far a wheel rides up into its droop travel under an even share of the robot's weight —
+    // 0.02 u is 2 mm, the world being 10 units to the METRE. This is the axle-to-bearing clearance
+    // and the flex in wheels the prefabs name "4 OD Flex Wheel - 45A" and "2 Flex Wheel - 30A", not
+    // a suspension: nothing at this scale is something a driver feels.
+    //
+    // THE SHARE DOES NOT DEPEND ON IT. Scaling every spring together scales the squash, not the
+    // split. What it buys is ride height — the chassis settles about this much lower — and the
+    // spring's natural frequency, sqrt(g / sag), which at 2 mm is 70 rad/s and nine steps to a cycle.
+    public const float DroopSagAtEvenShare = 0.02f;
+
+    // Total travel as a multiple of that sag: a wheel may carry three times its share before it
+    // bottoms out on the stop and goes rigid, which is what a bump stop is for.
+    public const float DroopTravelInShares = 3f;
+
+    // Fraction of critical damping for the share of the robot one spring holds up.
+    public const float DroopDampingRatio = 0.7f;
+
+    // The droop link's mass, taken OUT OF the wheel link rather than added to the robot: every
+    // number below is derived from the total mass, so a link that quietly added a few hundred grams
+    // would move the whole shipped tune.
+    //
+    // AS SMALL AS THE SOLVER WILL TOLERATE, because the wheel pays for it. At 0.05 (a tenth of a
+    // 0.5 kg wheel) the wheel's rotational inertia dropped 10% with it, and a lighter wheel stops
+    // sooner under the same brake torque: 360RpmDrivetrain read five of six wheels LOCKED while the
+    // chassis was still moving after release (WheelTyreValidation.EveryWheelRollsOutTogether). The
+    // droop link only ever translates and carries no collider, so it needs mass for the solver's
+    // sake and nothing else.
+    public const float DroopMass = 0.01f;
+
+    // The spring, in force per world unit and force per unit per second. One place, so the rig tool
+    // that bakes it and the controller that re-bakes it cannot drift apart.
+    public static void DroopSpring(float totalMass, int wheelCount, float gravity,
+        out float stiffness, out float damping)
+    {
+        int n = Mathf.Max(wheelCount, 1);
+        float mass = Mathf.Max(totalMass, 0f);
+        float weightShare = mass * Mathf.Abs(gravity) / n;
+        stiffness = weightShare / Mathf.Max(DroopSagAtEvenShare, 1e-4f);
+        damping = DroopDampingRatio * 2f * Mathf.Sqrt(stiffness * mass / n);
+    }
+
     // Used when a robot's colliders/materials can't be measured (a robot rigged before
     // GeneratePartColliders, or a unit test with no scene). These are the 654V numbers.
     public const float FallbackWheelRadius = 0.37f;

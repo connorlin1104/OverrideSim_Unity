@@ -55,6 +55,7 @@ public static class RaisedLiftOverlapProbe
             var lifts = new List<ArticulationBody>();
             foreach (ArticulationBody b in root.GetComponentsInChildren<ArticulationBody>(true))
                 if (b != root && b.jointType == ArticulationJointType.PrismaticJoint
+                    && !WheelDroopRig.IsDroop(b)      // millimetres of wheel droop is not a lift
                     && b.linearLockX != ArticulationDofLock.LockedMotion
                     && b.xDrive.upperLimit > b.xDrive.lowerLimit) lifts.Add(b);
 
