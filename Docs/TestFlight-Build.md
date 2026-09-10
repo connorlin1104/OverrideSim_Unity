@@ -103,7 +103,12 @@ thing that gets an upload rejected at processing. It fills 4 slots plus the proj
 5. Organizer opens -> **Distribute App -> App Store Connect -> Upload** -> accept automatic signing
 6. Processing 5-20 min, email on completion
    - **No export-compliance prompt** — `ITSAppUsesNonExemptEncryption` answers it off the binary
-   - "build number already used" -> bump to 5, save, rebuild, re-archive
+   - "build number already used" -> bump the number, save, rebuild, re-archive. **Bump it in Unity**
+     (Player Settings -> Identification -> Build), then **File -> Save Project**. Bumping it in
+     Xcode looks like it worked and is undone by the next export: Unity rewrites `Info.plist` from
+     Player Settings every build, Append included, which is the same reason
+     `IosPlistPostProcessor` has to re-add its keys each time. A number already uploaded cannot be
+     reused, so skip past every one you spent in Xcode
    - Uploading does **not** submit for review
 
 ---
