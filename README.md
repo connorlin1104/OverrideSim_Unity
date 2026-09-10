@@ -9,9 +9,9 @@ carried and scored.
 
 - **App Store:** RoboSimL 1.0, submitted 2026-09-09
 - **Support page:** <https://overridesimunity.web.app/>
-- **The repo is named `OverrideSim_Unity`** because the project began as *OverrideSim*. The app was
-  renamed to RoboSimL before release; the repo, the Firebase project id and the internal folder
-  names kept the old one rather than break every path that referenced them
+- **The project began as *OverrideSim*.** The app, and now this repository, are RoboSimL. The
+  Firebase project id (`overridesimunity`) and some internal folder paths still carry the old name,
+  because renaming those would break every reference to them for no user-visible gain
 
 ---
 
@@ -30,7 +30,7 @@ without it and you get text pointer files where the robots should be, and Unity 
 
 ```
 git lfs install
-git clone git@github.com:connorlin1104/OverrideSim_Unity.git
+git clone git@github.com:connorlin1104/RoboSimL.git
 ```
 
 Already cloned without LFS? `git lfs install && git lfs pull`.
