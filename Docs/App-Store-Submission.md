@@ -7,6 +7,7 @@ Copy fenced blocks verbatim. `<ANGLE_BRACKETS>` = a decision only you can make.
   compliance, the three Info.plist keys, screenshot capture at Apple's sizes without a device
 - **All blockers closed** — the name sweep landed 2026-09-02 (commit `7b2f324`: app, scene,
   Player Settings, web pages deployed; App Store Connect fields re-entered)
+- **Next** — build 4 to TestFlight and the two on-device tests: `Docs/TestFlight-Build.md`
 
 ---
 
@@ -88,6 +89,7 @@ Copy fenced blocks verbatim. `<ANGLE_BRACKETS>` = a decision only you can make.
 | Name | `RoboSimL` (8 / 30). Fine to ship; see **Choosing the name** if you want to revisit. |
 | Subtitle | `Drive your own custom robot` (27 / 30) |
 | Bundle ID | `com.connorlin.overridesim` — **keep it.** A bundle id cannot be changed once a build has been uploaded, it is never shown to users, and it does not have to match the app name. |
+| Developer name | **`Ansis Atteka`** — shown on the product page under the app name, and **not editable**. The app ships on his individual Apple Developer team (`F4BSZ5A7JP`) because Program enrollment requires 18+; an individual account always displays the holder's legal name. Changing it means an Organization account, which needs a D-U-N-S number and a legal entity — post-1.0 at the earliest. Not a review risk, just don't be surprised by it on the live listing. |
 | SKU | `ROBOSIM-IOS-001` (internal only, never shown) |
 | Primary language | English (U.S.) |
 | Primary category | **Games** → subcategory **Simulation**, second subcategory left blank |
@@ -456,9 +458,15 @@ a second Hosting site (`firebase hosting:sites:create robosim`) and point the li
   - [x] ~~Keyword row matching that name — the three lists differ~~
   - [x] ~~Privacy Policy URL + Support URL~~
   - [x] ~~App Privacy questionnaire~~
-- **Test on device before submitting**
+- **Test on device before submitting** — the whole procedure, build to result, is
+  `Docs/TestFlight-Build.md`. TestFlight is the only route to the phone; run these **in this order**
+  - [x] ~~Submit-a-Robot end to end~~ — 2026-09-09, from the phone on TestFlight. Two FBX sent under
+        different names; both landed in `uploads/` with their `.json` sidecars. The **inbox reply
+        channel was proven at the same time**, which the checklist never asked for and should have:
+        an arrival and a note written to `inbox/<uploaderId>.json` both appeared on the home screen,
+        and the button entered the code. See `Robot-Submissions.md` for the one trap — an arrival
+        whose code no robot in the installed build uses is dropped in silence
   - [ ] Launch in airplane mode — catalog and inbox fetches must fail silently
-  - [ ] Submit-a-Robot end to end, since the reviewer may try it
   - [ ] Every robot in the shipping build is one you have the right to ship
 
 Needs nothing from you: export compliance, and the three Info.plist keys.
