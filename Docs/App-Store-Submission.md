@@ -490,11 +490,10 @@ a second Hosting site (`firebase hosting:sites:create robosim`) and point the li
   - [x] ~~Launch in airplane mode~~ — 2026-09-09, run by Connor on the TestFlight build after
         the submit test, so the uploader id existed and the inbox fetch was really exercised.
         Reported working; no failure or hang seen
-  - [ ] Every robot in the shipping build is one you have the right to ship. Four ship:
+  - [x] ~~Every robot in the shipping build is one you have the right to ship~~ — confirmed by
+        Connor 2026-09-09: all four are his team's and he has permission to publish them, which is
+        what makes the "No third-party content" answer in App Information correct. Four ship:
         `360 RPM Drivetrain`, `654V v1` (private, code `654V-1104`), `654V v2`, and `654V v3`
-        — whose catalog id is `ryan-cascaderobot`. That last one is the only entry naming
-        somebody else, so it is the one to be sure about. Content rights in **App Information**
-        is answered "No third-party content", which is the answer that assumes all four are
-        yours or your team's to publish
+        — whose catalog id is `ryan-cascaderobot`, a teammate's name rather than a third party
 
 Needs nothing from you: export compliance, and the three Info.plist keys.
