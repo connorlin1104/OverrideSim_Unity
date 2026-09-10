@@ -139,3 +139,9 @@ InitTestScene*.unity*
 # Pure local state — deleting it costs one slower deploy, and committing it makes every deploy
 # from a second machine look like a diff.
 /.firebase/
+
+# App Store screenshots, written by Tools > RoboSim > Utilities > Capture Game View. Output, not
+# source: each is a ~5 MB PNG re-capturable from the scene in seconds, and a full set is ten of
+# them per device size. FBX go through LFS here, PNGs do not — so one `git add -A` would weld
+# ~50 MB into every future clone, permanently. The uploaded set lives in App Store Connect.
+/[Ss]tore[Ss]creenshots/
