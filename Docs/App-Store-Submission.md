@@ -7,7 +7,8 @@ Copy fenced blocks verbatim. `<ANGLE_BRACKETS>` = a decision only you can make.
   compliance, the three Info.plist keys, screenshot capture at Apple's sizes without a device
 - **All blockers closed** — the name sweep landed 2026-09-02 (commit `7b2f324`: app, scene,
   Player Settings, web pages deployed; App Store Connect fields re-entered)
-- **Next** — build 4 to TestFlight and the two on-device tests: `Docs/TestFlight-Build.md`
+- **Next** — screenshots are captured and both on-device tests have passed (2026-09-09). What is
+  left is the robot-rights question at the bottom of the checklist, and pressing Submit
 
 ---
 
@@ -115,11 +116,15 @@ changed later without a new build.
 Use this one. One line — don't paste the wrap:
 
 ```
-Drive the robot before you build it. Send your CAD and get it back as a machine you can actually drive — real joints, real weight, real drivetrain.
+Drive the robot before you build it. Send your team's 3D model and get it back as a machine you can actually drive — real joints, real weight, real drivetrain.
 ```
 
-- 147 / 170
+- 159 / 170
 - First sentence is the whole pitch; it is the only part most people read
+- **It said "Send your CAD" until 2026-09-09.** The app does not take CAD — `AcceptedExtensions`
+  is fbx/urdf/zip and the picker will not list anything else — so that line was an instruction a
+  reader could follow all the way to a file the app cannot see. "3D model" is the version that
+  stays true for a browsing reader; the description is where the format gets named outright
 - No adjectives and no claim that the app is exciting — that is what made the old one read as an ad
 - Alternates, if you want a different angle:
   - Driver-practice angle (141) — `Put hours on the sticks before the robot exists. Send your team's CAD and drive it on a full field — same joints, same mass, same drivetrain.`
@@ -156,8 +161,8 @@ reassign what each one does. Switch a mechanism between one-button toggle and tw
 drive and turn sensitivity. Choose which end of the robot the sticks treat as the front.
 
 YOUR ROBOT IN THE APP
-Send us your robot's CAD from inside the app and we will build it into a drivable robot and send it
-back to you. Choose whether it is listed for everyone or unlocked only by a code you pass to your
+Send us your robot from inside the app — an FBX exported out of your CAD, or a URDF — and we will
+build it into a drivable robot and send it back to you. Choose whether it is listed for everyone or unlocked only by a code you pass to your
 own team. It takes a few days and we tell you when it is done — or tell you what to re-export if
 the file cannot be made to drive.
 
@@ -228,7 +233,7 @@ Landscape only (the app is landscape-locked).
 2. **Set the Scale slider to 1x** — above 1x Unity renders at the window's size, not the target's,
    and you get a correctly-framed shot at the wrong pixel count
 3. Enter Play mode, drive to the shot, press **Cmd+Shift+S**
-   (or **RoboSim -> Screenshots -> Capture Game View**)
+   (or **Tools -> RoboSim -> Utilities -> Capture Game View**)
 
 - Output: `StoreScreenshots/` beside `Assets/`, named for the size captured
 - A capture that misses an accepted size is named `WRONG-SIZE` and warns in the console
@@ -279,9 +284,11 @@ authorise a file upload in the optional "Submit a Robot" flow. It is created sil
 moment, contains no personal data, and is never surfaced to the user.
 
 "ROBOT CODES" ARE NOT ACCOUNTS
-Settings > Account holds short codes we email to a team after we have set their robot up; entering
-one adds that robot to the picker. A code is a capability, not a login. No code is required to use
-the app, and every robot present at launch is drivable without one.
+Settings > Account holds short codes we issue to a team after we have set their robot up; entering
+one adds that robot to the picker. A code reaches the team either by email or as a one-line notice
+inside the app, read from the inbox described under NETWORK USE below. A code is a capability, not a
+login. No code is required to use the app, and every robot present at launch is drivable without
+one.
 
 USER-GENERATED CONTENT (Guideline 1.2)
 Players may send us their own robot CAD from Settings > Account > Submit a Robot. Nothing a player
@@ -296,11 +303,12 @@ profiles, no way for one user to contact another, and no user-visible content st
 Abuse or takedown requests reach us at the support address in the listing.
 
 TESTING "SUBMIT A ROBOT" (optional)
-The form asks for a team name, an optional robot name, an email address and a 3D model file. The
-app has no native file picker: it lists files in its own Documents folder, which is exposed to the
-iOS Files app. To exercise it you would first need to copy a .fbx, .urdf or .zip file into the app's
-folder in Files. This flow is not required for any other part of the app and skipping it affects
-nothing.
+The form asks for a team name, an optional robot name, an email address, optional notes, a choice of
+who may use the finished robot, and a model file. The app has no native file picker: it lists files
+in its own Documents folder, which is exposed to the iOS Files app. To exercise it you would first
+need to copy a .fbx, .urdf or .zip file into the app's folder in Files — the form states the path,
+Files > On My iPhone (or iPad) > RoboSimL. This flow is not required for any other part of the app
+and skipping it affects nothing.
 
 NETWORK USE
 On launch the app makes two read-only HTTPS requests to Firebase Cloud Storage: one for the index of
@@ -309,9 +317,10 @@ app is fully usable offline and on a restricted network.
 
 DATA COLLECTED
 Only what a player types into the Submit a Robot form: team name, robot name, email address,
-free-text notes, and the file itself, plus app version and timestamp. It is used to build the robot
-and to reply. All settings are stored on-device and never transmitted. There is no analytics SDK, no
-advertising SDK, and no tracking of any kind.
+free-text notes, their choice of who may use the finished robot, and the file itself — plus the app
+version, the device platform string, the time of submission, and the anonymous upload ID the file is
+filed under. It is used to build the robot and to reply. All settings are stored on-device and never
+transmitted. There is no analytics SDK, no advertising SDK, and no tracking of any kind.
 
 AUDIENCE
 Middle- and high-school robotics teams. No violence, no mature themes, no social features.
@@ -447,10 +456,18 @@ a second Hosting site (`firebase hosting:sites:create robosim`) and point the li
   - [x] ~~`productName` + home-screen title -> the final name (blocker 3)~~
   - [x] ~~`microphoneUsageDescription` cleared~~
 - **Screenshots**
-  - [ ] iPhone 6.9" — 2868 x 1320
-  - [ ] iPad 13" — 2752 x 2064, Game view Scale slider at 1x
+  - [x] ~~iPhone 6.9" — 2868 x 1320~~ — 8 captured 2026-09-09, every file verified at exactly
+        2868 x 1320
+  - [x] ~~iPad 13" — 2752 x 2064, Game view Scale slider at 1x~~ — 8 captured, all exactly
+        2752 x 2064. First real use of `StoreScreenshotCapture`, and the 4:3 layout it renders had
+        never been seen before: nothing clips, and the lowest controls clear the bottom edge by
+        ~20 px, which is where the home indicator would sit
 - **Web** (only once the name is final)
   - [x] ~~`Web/index.html` and `Web/privacy.html` renamed, then `firebase deploy --only hosting`~~
+  - [ ] **Redeploy** — `Web/index.html` was edited 2026-09-09 and the live page is still the old
+        one. It told players to send `.step` or `.f3d` "if you can", which the app has never
+        accepted; anyone who followed it copied a file into the folder and got "No robot files
+        found." Run `firebase deploy --only hosting`
   - URLs do not change, so nothing gets re-entered in App Store Connect
 - **App Store Connect**
   - [x] ~~Final name entered~~
@@ -458,6 +475,10 @@ a second Hosting site (`firebase hosting:sites:create robosim`) and point the li
   - [x] ~~Keyword row matching that name — the three lists differ~~
   - [x] ~~Privacy Policy URL + Support URL~~
   - [x] ~~App Privacy questionnaire~~
+  - [ ] **Re-paste three blocks changed 2026-09-09** — promotional text and the description both
+        said "send your CAD", and the review notes were behind the app on two points: how a robot
+        code reaches a team (in-app now, not email only) and what the sidecar actually carries.
+        Free to edit now; after 1.0 is live, description edits need a new version
 - **Test on device before submitting** — the whole procedure, build to result, is
   `Docs/TestFlight-Build.md`. TestFlight is the only route to the phone; run these **in this order**
   - [x] ~~Submit-a-Robot end to end~~ — 2026-09-09, from the phone on TestFlight. Two FBX sent under
@@ -466,7 +487,14 @@ a second Hosting site (`firebase hosting:sites:create robosim`) and point the li
         an arrival and a note written to `inbox/<uploaderId>.json` both appeared on the home screen,
         and the button entered the code. See `Robot-Submissions.md` for the one trap — an arrival
         whose code no robot in the installed build uses is dropped in silence
-  - [ ] Launch in airplane mode — catalog and inbox fetches must fail silently
-  - [ ] Every robot in the shipping build is one you have the right to ship
+  - [x] ~~Launch in airplane mode~~ — 2026-09-09, run by Connor on the TestFlight build after
+        the submit test, so the uploader id existed and the inbox fetch was really exercised.
+        Reported working; no failure or hang seen
+  - [ ] Every robot in the shipping build is one you have the right to ship. Four ship:
+        `360 RPM Drivetrain`, `654V v1` (private, code `654V-1104`), `654V v2`, and `654V v3`
+        — whose catalog id is `ryan-cascaderobot`. That last one is the only entry naming
+        somebody else, so it is the one to be sure about. Content rights in **App Information**
+        is answered "No third-party content", which is the answer that assumes all four are
+        yours or your team's to publish
 
 Needs nothing from you: export compliance, and the three Info.plist keys.
