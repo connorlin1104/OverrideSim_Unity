@@ -1212,7 +1212,7 @@ public class BuildHomeScene
         // at launch, and the inbox notice for one submitted from this device), so the update caveat
         // would now be the misleading half.
         TextMeshProUGUI hint = CreateText("SubmitHint", content.transform,
-            "Send your robot CAD to get set up. Will take a few days to process, you will be " +
+            "Send your robot to get set up. Will take a few days to process, you will be " +
             "notified when it gets complete.", 26f);
         SetLayoutHeight(hint.gameObject, 96f);
 
@@ -1238,15 +1238,15 @@ public class BuildHomeScene
         SetLayoutHeight(parts.sharing.gameObject, 72f);
 
         // Which format to send, said immediately above the button that picks one — the only moment
-        // the advice can still change what someone exports. The refinement is the part worth saying:
-        // the extension is now something almost every exporter offers, and the mesh density is what
-        // decides whether the file is 40 MB or 200.
+        // the advice can still change what someone exports.
         TextMeshProUGUI formatHint = CreateText("SubmitFormatHint", content.transform,
             RobotFilePicker.FormatAdvice, 24f);
         formatHint.fontStyle = FontStyles.Italic;
-        // Three lines at 24pt across this panel. A fixed height does not grow with the text, so
-        // check the character count against this before editing FormatAdvice: 112 characters wrapped
-        // to three lines here and 120 wrapped to four. The current advice is 104.
+        // A fixed height does not grow with the text, so check the character count against this
+        // before editing FormatAdvice. Measured at 24pt across this panel: ~35 characters to the
+        // line, so up to 70 fits two lines at 60, up to 112 fits three at 90, and 120 needs four.
+        // The current advice is 106 — deliberately kept under 112 so adding the Files path cost no
+        // height at all.
         SetLayoutHeight(formatHint.gameObject, 90f);
 
         parts.chooseFile = CreateButton("ChooseFileButton", content.transform, "Choose File", 36f, NeutralColor);

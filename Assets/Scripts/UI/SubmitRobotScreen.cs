@@ -6,7 +6,7 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // The "Submit a Robot" screen: a player picks their robot file, says who they are, and sends it in.
-// An FBX is what the screen asks for, at a low mesh refinement; .urdf/.zip are the other way in.
+// An FBX is what the screen asks for; .urdf/.zip are the other way in.
 // CAD (.step/.f3d/.f3z) was accepted until it wasn't worth the Fusion round-trip it cost —
 // RobotFilePicker.AcceptedExtensions carries both the list and the reason.
 //
@@ -100,8 +100,11 @@ public class SubmitRobotScreen : MonoBehaviour
         }
         if (inbox.Count == 0)
         {
-            SetStatus($"No robot files found. Copy your {RobotFilePicker.AcceptedList} into this " +
-                      "app's folder using the Files app, then tap Choose File again.");
+            // Said as a path, not as "this app's folder": this fires at the exact moment someone has
+            // failed to find the folder, so the reply has to be the directions rather than a
+            // restatement of the thing they just tried.
+            SetStatus($"No robot files found. In Files, copy your {RobotFilePicker.AcceptedList} " +
+                      "to On My iPhone (or iPad) > RoboSimL, then tap Choose File again.");
             return;
         }
 

@@ -37,9 +37,14 @@ public static class RobotUploadService
     // uploader is handed that code when the robot comes back, and a code they hold is a code they
     // can pass on. "Only me" and "my team" therefore built the SAME catalog entry — the only real
     // difference being that one of them told the uploader they'd given up a right they still had.
+    //
+    // The first option read "Just my team" until 2026-09-09. Most senders are not on a team, and the
+    // ones who are do not think of an owner code as a team thing — it is a link they hand out. So it
+    // now names the reach rather than a group, which says the same thing to both kinds of sender and
+    // is the literal truth about what the option does.
     public static readonly string[] SharingOptions =
     {
-        "Just my team — anyone I give the code to",
+        "Just me and anyone I give the code to",
         "Anyone — list it publicly",
     };
 

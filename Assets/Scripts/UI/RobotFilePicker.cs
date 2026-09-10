@@ -38,12 +38,20 @@ public static class RobotFilePicker
     // The preference, said in full where a player is choosing a file. Lives here rather than in the
     // screen so the advice and the list it describes cannot drift apart.
     //
-    // It asks for a refinement setting rather than a file size because refinement is the control the
-    // sender actually has in front of them. "Keep it under 100 MB" is a number nobody can act on
-    // without knowing which slider moves it.
+    // It used to go on to ask for "Low or Medium refinement", and that came out on 2026-09-09
+    // because it confused the people it was aimed at. A sender who already knows what their exporter
+    // calls that setting did not need telling; a sender who does not reads a second instruction they
+    // cannot follow, immediately after the one sentence this line exists to land — send the mesh,
+    // send an FBX. The size lever is on this side of the pipeline anyway (see AcceptedExtensions
+    // above): an oversized FBX decimates in minutes, and a robot nobody sends does not.
+    // The second sentence is the one people actually get stuck on: there is no file dialog on a
+    // phone, so a robot that never gets copied into the app's own folder is a robot the picker
+    // cannot see. Naming the exact path beats "this app's folder" — the folder is only reachable by
+    // walking Files > On My iPhone, and nothing on screen says so. "(or iPad)" is not padding: the
+    // build targets both (targetDevice 2) and the row is literally named On My iPad there.
     public const string FormatAdvice =
-        "Send your robot as an FBX — export it from your CAD at Low or Medium refinement. " +
-        "URDF and ZIP also work.";
+        "Send your robot as an FBX. URDF and ZIP also work. " +
+        "In Files, copy it to On My iPhone (or iPad) > RoboSimL.";
 
     // The short form, for one-line status messages. Every accepted extension is named: the list is
     // three long now, so there is nothing to leave out for brevity's sake.

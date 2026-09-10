@@ -9389,7 +9389,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Send your robot CAD to get set up. Will take a few days to process, you
+  m_text: Send your robot to get set up. Will take a few days to process, you
     will be notified when it gets complete.
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -12550,7 +12550,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: "Who can use it:  Just my team \u2014 anyone I give the code to"
+  m_text: "Who can use it:  Just me and anyone I give the code to"
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -14721,8 +14721,8 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: "Send your robot as an FBX \u2014 export it from your CAD at Low or Medium
-    refinement. URDF and ZIP also work."
+  m_text: "Send your robot as an FBX. URDF and ZIP also work. In Files, copy it to
+    On My iPhone (or iPad) > RoboSimL."
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}

@@ -191,8 +191,15 @@ For that folder to be visible in the iOS Files app the build needs `UIFileSharin
 If a native picker is added later, `ROBOSIM_NATIVE_FILE_PICKER` is the seam in `RobotFilePicker`.
 
 Accepted: `.fbx`, `.urdf`, `.zip` (a URDF needs its meshes, hence the archive). The screen asks for
-an FBX exported at **Low or Medium refinement**, because refinement is set in the exporter before the
-app ever sees a file, and on this geometry it is the only control that moves the size much.
+an FBX and nothing else — `RobotFilePicker.FormatAdvice` is the whole of what it says.
+
+It used to add "export it from your CAD at Low or Medium refinement", and that came out on
+2026-09-09. Refinement is still the sender's only real lever on size (*Why a submission is 100 MB*
+below), so the advice was true — it just did not survive contact with the screen it was on. A sender
+who knows the setting does not need telling, and a sender who does not is handed a second
+instruction, in the same breath as the first, with nowhere in the app to learn what it means. The
+sentence that has to land is *send an FBX*. Say the refinement part to a sender directly when a file
+comes in too big — by then it is one person, one file, and an answerable question.
 
 **CAD is no longer accepted.** `.step`, `.stp`, `.f3d` and `.f3z` were all on the list until
 2026-08-17 and are now refused. *Why a submission is 100 MB* below has the whole trade; the short
@@ -277,7 +284,8 @@ polygonal. What settled it is that the error is measured at the ratio actually u
 where the Fusion round-trip's cost was real every single time.
 
 **So what to tell a sender is one line: export at Low or Medium.** It is one dropdown in every CAD
-package, and everything past it is handled on this side.
+package, and everything past it is handled on this side. Say it *to them*, though — it is no longer
+on the submit screen, for the reason in *How a player picks a file* above.
 
 ## Setting up a submission when it arrives
 
@@ -338,6 +346,20 @@ fingerprint of its own text. Two consequences worth knowing —
 
 Leave old items in the file. Every one of them is filtered on the device, and the file is also what a
 player re-reads after a reinstall.
+
+**When an arrival doesn't appear, it is one of exactly two things**, and neither says anything on
+screen — `OnInboxFetched` drops the item and the dialog opens without it, or doesn't open at all.
+Either would otherwise be a notice that promises a robot and delivers nothing, so the silence is
+deliberate; it just means the diagnosis is yours to make.
+
+- **No robot in the installed build uses that code.** Test codes are the usual cause: the catalog is
+  compiled in, so a code you invent for a test matches nothing until a build carrying it lands. Check
+  `RobotModelCatalog.asset` for an entry that is `visibility: Private` *and* names the code.
+- **The code is already held on that device.** Settings → Account lists them, and **Forget Codes**
+  clears them. The give-away is the robot already sitting in the picker's Private column.
+
+A note has neither test, which makes it the useful control: if the note shows and the arrival beside
+it does not, the fetch, the JSON and the dialog are all fine and the code is the problem.
 
 The uploader id is the only thing guarding an inbox (the rules above make `/inbox` publicly
 readable). It is minted on the first submission and lives only in that device's PlayerPrefs, so a
