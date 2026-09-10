@@ -464,10 +464,13 @@ a second Hosting site (`firebase hosting:sites:create robosim`) and point the li
         ~20 px, which is where the home indicator would sit
 - **Web** (only once the name is final)
   - [x] ~~`Web/index.html` and `Web/privacy.html` renamed, then `firebase deploy --only hosting`~~
-  - [ ] **Redeploy** — `Web/index.html` was edited 2026-09-09 and the live page is still the old
+  - [x] ~~**Redeploy** — `Web/index.html` was edited 2026-09-09 and the live page is still the old
         one. It told players to send `.step` or `.f3d` "if you can", which the app has never
         accepted; anyone who followed it copied a file into the folder and got "No robot files
-        found." Run `firebase deploy --only hosting`
+        found."~~ — deployed 2026-09-09 and checked against the live site, not assumed: `curl` of
+        `https://overridesimunity.web.app/` is byte-identical to `Web/index.html`, so the page a
+        reviewer opens from the Support URL now names .fbx/.urdf/.zip and says outright that CAD
+        formats cannot be read
   - URLs do not change, so nothing gets re-entered in App Store Connect
 - **App Store Connect**
   - [x] ~~Final name entered~~
@@ -475,10 +478,14 @@ a second Hosting site (`firebase hosting:sites:create robosim`) and point the li
   - [x] ~~Keyword row matching that name — the three lists differ~~
   - [x] ~~Privacy Policy URL + Support URL~~
   - [x] ~~App Privacy questionnaire~~
-  - [ ] **Re-paste three blocks changed 2026-09-09** — promotional text and the description both
+  - [x] ~~**Re-paste three blocks changed 2026-09-09** — promotional text and the description both
         said "send your CAD", and the review notes were behind the app on two points: how a robot
         code reaches a team (in-app now, not email only) and what the sidecar actually carries.
-        Free to edit now; after 1.0 is live, description edits need a new version
+        Free to edit now; after 1.0 is live, description edits need a new version~~ — all three
+        re-pasted 2026-09-09 from unwrapped copies. The markdown source hard-wraps at 100 chars and
+        App Store Connect preserves line breaks, so pasting straight from this doc puts breaks
+        mid-sentence in the live listing; the paste files had the paragraphs joined and the
+        ALL-CAPS headings left on their own lines
 - **Test on device before submitting** — the whole procedure, build to result, is
   `Docs/TestFlight-Build.md`. TestFlight is the only route to the phone; run these **in this order**
   - [x] ~~Submit-a-Robot end to end~~ — 2026-09-09, from the phone on TestFlight. Two FBX sent under
